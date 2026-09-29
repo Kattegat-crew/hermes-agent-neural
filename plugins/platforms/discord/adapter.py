@@ -2164,6 +2164,14 @@ class DiscordAdapter(DiscordAuthorizationMixin, DiscordMediaMixin, DiscordThread
                 await self.leave_voice_channel(guild_id)
             except Exception as e:  # pragma: no cover - defensive logging
                 logger.debug("[%s] Error leaving voice channel %s: %s", self.name, guild_id, e)
+        # Cancel all background typing loops
+        typing_tasks = list(self._typing_tasks.values())
+        for task in typing_tasks:
+            task.cancel()
+        if typing_tasks:
+            await asyncio.gather(*typing_tasks, return_exceptions=True)
+        self._typing_tasks.clear()
+
         # Cancel the bot task before closing: after a connect() timeout client.start() may still run
         # and discord.py's reconnect loop can ignore the closed flag mid-handshake.
         await self._cancel_bot_task()
@@ -4374,12 +4382,18 @@ class DiscordAdapter(DiscordAuthorizationMixin, DiscordMediaMixin, DiscordThread
         TYPING_START is unreliable for bots in DMs; 429 sleeps ``retry_after``; CancelledError ends it."""
         if not self._client:
             return
+        chat_id = str(chat_id)
+        if chat_id in getattr(self, "_typing_paused", ()):
+            return
+        # Don't start a duplicate loop
         if chat_id in self._typing_tasks:
             return
 
         async def _typing_loop() -> None:
             try:
                 while True:
+                    if chat_id in getattr(self, "_typing_paused", ()):
+                        return
                     try:
                         route = discord.http.Route(
                             "POST", "/channels/{channel_id}/typing", channel_id=chat_id,
@@ -4406,8 +4420,11 @@ class DiscordAdapter(DiscordAuthorizationMixin, DiscordMediaMixin, DiscordThread
                 self._typing_tasks.pop(chat_id, None)
         self._typing_tasks[chat_id] = asyncio.create_task(_typing_loop())
 
-    async def stop_typing(self, chat_id: str) -> None:
+    async def stop_typing(self, chat_id: str, metadata=None) -> None:
         """Stop the persistent typing indicator for a channel."""
+        chat_id = str(chat_id)
+        if hasattr(self, "pause_typing_for_chat"):
+            self.pause_typing_for_chat(chat_id)
         task = self._typing_tasks.pop(chat_id, None)
         if task:
             task.cancel()
@@ -6278,6 +6295,10 @@ class DiscordAdapter(DiscordAuthorizationMixin, DiscordMediaMixin, DiscordThread
         else:
             msg_type = MessageType.TEXT
         effective_channel = auto_threaded_channel or message.channel
+        if hasattr(self, "resume_typing_for_chat"):
+            self.resume_typing_for_chat(str(effective_channel.id))
+
+        # Determine chat type
         if isinstance(message.channel, discord.DMChannel):
             chat_type = "dm"
             chat_name = message.author.name
