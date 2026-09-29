@@ -256,6 +256,57 @@ async def test_typing_restartable_after_error():
         "Should restart typing after previous failure"
 
 
+@pytest.mark.asyncio
+async def test_typing_not_respawned_during_delivery():
+    """stop_typing pauses typing for the chat so send_typing during response delivery cannot restart the loop."""
+    adapter = DiscordAdapter(PlatformConfig(enabled=True, token="***"))
+    adapter._client = MagicMock()
+    adapter._client.http = MagicMock()
+    adapter._client.http.request = AsyncMock()
+    adapter._typing_tasks = {}
+
+    await adapter.send_typing("12345")
+    assert "12345" in adapter._typing_tasks
+
+    await adapter.stop_typing("12345")
+    assert "12345" not in adapter._typing_tasks
+    assert "12345" in adapter._typing_paused
+
+    # Repeated send_typing calls during response delivery must be ignored
+    await adapter.send_typing("12345")
+    assert "12345" not in adapter._typing_tasks
+
+    # After delivery completes and unpauses, typing can start again for the next message
+    adapter.resume_typing_for_chat("12345")
+    await adapter.send_typing("12345")
+    assert "12345" in adapter._typing_tasks
+
+    await adapter.stop_typing("12345")
+
+
+@pytest.mark.asyncio
+async def test_disconnect_cancels_active_typing_tasks():
+    """disconnect() must cancel and clear all background typing loops."""
+    adapter = DiscordAdapter(PlatformConfig(enabled=True, token="***"))
+    adapter._client = MagicMock()
+    adapter._client.http = MagicMock()
+    adapter._client.http.request = AsyncMock()
+    adapter._client.close = AsyncMock()
+    adapter._typing_tasks = {}
+
+    await adapter.send_typing("chan_a")
+    await adapter.send_typing("chan_b")
+    assert len(adapter._typing_tasks) == 2
+
+    task_a = adapter._typing_tasks["chan_a"]
+    task_b = adapter._typing_tasks["chan_b"]
+
+    await adapter.disconnect()
+    assert len(adapter._typing_tasks) == 0
+    assert task_a.cancelled()
+    assert task_b.cancelled()
+
+
 # ---------------------------------------------------------------------------
 # #66797 — outbound MEDIA video must reach channel.send as a real attachment
 # ---------------------------------------------------------------------------
