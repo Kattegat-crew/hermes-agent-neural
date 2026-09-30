@@ -1,0 +1,90 @@
+# =====================================================================
+# vps-dev-guardian — Integración cron PROPUESTA (NO instalada)
+# =====================================================================
+# RECOMENDACIÓN: usar /etc/cron.d/ (NO el crontab de usuario root).
+#
+# Diferencia crítica de formato entre los dos destinos posibles:
+#
+#   * /etc/cron.d/vps-dev-guardian  →  SÍ exige campo de usuario tras los
+#     5 campos de tiempo. Ejecutar como el usuario hermes (dueño del
+#     estado) es válido y directo:
+#       */15 * * * *  hermes  /usr/bin/python3 ... check
+#   * crontab de root (/var/spool/cron/crontabs/root)  →  NO admite campo
+#     de usuario. Las líneas existentes del watchdog legacy pausado no lo
+#     tienen. Una línea con "hermes" tras los 5 campos haría que cron
+#     intentara ejecutar un comando llamado "hermes" (el monitor nunca
+#     correría). Para correr como hermes desde el crontab de root habría
+#     que envolver con runuser Y fijar HOME explícito (cron no la define
+#     como la del usuario objetivo):
+#       */15 * * * *  runuser -u hermes -- env HOME=/opt/hermes-agent-data/home /usr/bin/python3 ... check
+#
+# Ventajas de /etc/cron.d/ (por eso se recomienda):
+#   - formato con usuario explícito (auditable con un vistazo);
+#   - archivo versionable y separado de las 14 entradas activas ajenas
+#     que hoy viven en el crontab de root (menor riesgo de edición);
+#   - no requiere runuser ni ajustes de HOME.
+#
+# Estado actual verificado (root, /var/spool/cron/crontabs/root):
+#   línea 8: # PAUSED native-migration review: */15 ... vps_health_watchdog.py
+#   línea 9: # PAUSED native-migration review: 0 9 ... vps_health_watchdog.py --always-notify
+# Ambas siguen pausadas y NADIE las toca en esta propuesta. NADA de lo
+# siguiente está instalado: es material de referencia para el día de la
+# reactivación, que requiere autorización humana explícita.
+# =====================================================================
+
+# --- PROPUESTA A (RECOMENDADA): /etc/cron.d/vps-dev-guardian ---
+# Archivo nuevo /etc/cron.d/vps-dev-guardian, dueño root:root, modo 0644
+# (obligatorio: cron ignora archivos con permisos más abiertos). Nota:
+# /etc/cron.d NO soporta % sin escapar (no se usa aquí) y cada línea
+# termina en newline.
+
+# PERIÓDICO (revisión silenciosa cada 15 min, sin resumen)
+*/15 * * * * hermes /usr/bin/python3 /opt/hermes-agent/ops/monitor/vps_dev_guardian/vps_dev_guardian.py check >> /var/log/vps-dev-guardian.log 2>&1
+
+# RESUMEN único diario 09:00 America/Bogota (el servidor está en -05)
+0 9 * * * hermes /usr/bin/python3 /opt/hermes-agent/ops/monitor/vps_dev_guardian/vps_dev_guardian.py summary >> /var/log/vps-dev-guardian.log 2>&1
+
+# --- PROPUESTA B (alternativa si se insistiera en el crontab de root):
+# SIN campo de usuario; corre como root pero ejecuta el monitor como
+# hermes vía runuser, con HOME explícito (cron no la define para el
+# usuario objetivo, y el estado/secret resuelven rutas relativas a HOME):
+# */15 * * * * runuser -u hermes -- env HOME=/opt/hermes-agent-data/home /usr/bin/python3 /opt/hermes-agent/ops/monitor/vps_dev_guardian/vps_dev_guardian.py check >> /var/log/vps-dev-guardian.log 2>&1
+# 0 9 * * *   runuser -u hermes -- env HOME=/opt/hermes-agent-data/home /usr/bin/python3 /opt/hermes-agent/ops/monitor/vps_dev_guardian/vps_dev_guardian.py summary >> /var/log/vps-dev-guardian.log 2>&1
+# (Variante solo-root no propuesta: dejaría el estado con dueño root y
+# requeriría chown -R hermes:hermes del estado después; evitada.)
+
+# Notas para el reviewer antes de reactivar:
+# 1. FORMATO SEGÚN DESTINO (hallazgo del reviewer 2026-09-29 22:0x):
+#    /etc/cron.d → campo usuario SÍ (usar hermes, propuesta A).
+#    crontab de root → campo usuario NO (usar runuser + HOME, propuesta B).
+#    Instalar la línea de una propuesta en el destino de la otra rompe el
+#    monitor en silencio (cron interpretaría "hermes" como comando).
+# 2. El summary usa el stamp atómico last_summary_date.txt: emite UNA vez por
+#    día aunque coincida con un check de las 09:00 (verificado en tests).
+#    El stamp solo se escribe tras entrega exitosa (si la entrega está activa).
+# 3. El monitor es SOLO LECTURA: sin kill/restart/drop_caches ni tocar sesiones WhatsApp.
+# 4. Vigía queda NO monitoreado (diseño no resuelto, marcado [--] en el reporte).
+# 5. ENTREGA DISCORD (opt-in explícito): desactivada por defecto. Para activarla
+#    el día de la reactivación (requiere autorización humana explícita):
+#      - En la línea: prefijo de entorno ANTES del usuario en /etc/cron.d no
+#        es estándar; usar CRON_ENV en el propio script no aplica. Lo simple
+#        y seguro: dejar el secret en el archivo privado 0600
+#        /opt/hermes-agent-data/home/secrets/vps-dev-guardian/discord_webhook_url.txt
+#        y activar el modo con la variable de entorno de la línea. En
+#        /etc/cron.d la forma portable es env var en la línea vía wrapper:
+#          */15 * * * * hermes VPS_GUARDIAN_DELIVERY=discord /usr/bin/python3 ... check
+#        (soportado por Vixie cron moderno como asignación inicial; si el
+#        cron local no lo soporta, envolver con: /usr/bin/env VPS_GUARDIAN_DELIVERY=discord /usr/bin/python3 ...)
+#      - NO poner el webhook URL en el crontab (es legible): usar el archivo
+#        de secret 0600. Si se usara entorno, /etc/environment con permisos
+#        restringidos.
+#    Sin opt-in, el monitor funciona igual pero solo dedup localmente (marca
+#    'local-only'): los incidentes se registran en el log y nadie recibe
+#    aviso externo. Con v1.1.1, si la entrega se activa más tarde con un
+#    incidente aún abierto, la alerta se entrega UNA vez; y la recuperación
+#    SOLO sale si hubo alerta externa exitosa (sin cierres huérfanos).
+# 6. Umbral de fallos consecutivos: por defecto 2 (30 min con cron */15 antes de
+#    la primera alerta). Ajustable con VPS_GUARDIAN_FAILURE_THRESHOLD=N (mínimo 1).
+# 7. Umbrales reales del código: RAM >85%, CPU load5/núcleos >1.0 sostenido
+#    (via consecutivos), disco >75% warn / >85% crit, bridge timeout 5 s.
+# 8. Log: /var/log/vps-dev-guardian.log (rotar con logrotate si hace falta).
