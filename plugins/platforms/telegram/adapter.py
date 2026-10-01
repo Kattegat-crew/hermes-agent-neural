@@ -256,6 +256,19 @@ _TELEGRAM_IMAGE_EXTENSIONS = {".png", ".jpg", ".jpeg", ".webp", ".gif"}
 # froze inbound on every platform (#91969).
 _FLOOD_INLINE_WAIT_CAP_SECS = 5.0
 
+# 2026-09-30 edit-flood livelock (bitacora incidente-telegram-livelock):
+# progress edits that keep re-firing against a 429 re-extend the bot-wide
+# punishment (764s -> 6563s over 11h).  Three brakes, adapter-side so EVERY
+# edit path inherits them: (1) a server wait past this cap is ABANDONED,
+# never slept or re-fired; (2) consecutive flood failures on a chat open a
+# local cooldown during which further progress edits are skipped at zero
+# API cost (finalizes always pass — delivery is never suppressed);
+# (3) a post-flood-wait retry that answers "message is not modified" is an
+# idempotent success, not a retryable failure.
+_FLOOD_ABANDON_WAIT_SECS = 300.0
+_FLOOD_EDIT_FAILURE_LIMIT = 3
+_FLOOD_EDIT_COOLDOWN_SECS = 120.0
+
 
 def _flood_cap_result(wait: float) -> "SendResult":
     """The shared fail-closed SendResult for an over-cap flood wait."""
@@ -894,6 +907,9 @@ class TelegramAdapter(BasePlatformAdapter):
         # penalties, hanging final delivery). Dedup here so a saturated preview
         # goes quiet until finalize. Bounded: entries are dropped on finalize.
         self._last_overflow_preview: Dict[tuple, str] = {}
+        # Per-chat flood brakes for progress edits (see _FLOOD_ABANDON_WAIT_SECS).
+        # value = {"until": monotonic deadline, "fails": consecutive flood count}
+        self._edit_flood_state: Dict[str, Dict[str, float]] = {}
         # Background task that runs post-connect housekeeping (command-menu
         # registration + DM-topic setup) off the connect path so a slow Bot
         # API call (e.g. a set_my_commands stall for certain tokens) cannot
@@ -5851,6 +5867,29 @@ class TelegramAdapter(BasePlatformAdapter):
             self._status_message_ids[key] = str(result.message_id)
         return result
 
+    def _note_edit_flood_failure(self, chat_id: str, wait: float) -> None:
+        """Count a flood failure on a chat's progress edits; open a cooldown past the limit."""
+        key = str(chat_id)
+        st = self._edit_flood_state.setdefault(key, {"until": 0.0, "fails": 0.0})
+        st["fails"] += 1
+        st["until"] = time.monotonic() + min(
+            _FLOOD_EDIT_COOLDOWN_SECS, max(wait, _FLOOD_EDIT_COOLDOWN_SECS / 2)
+        )
+        if st["fails"] >= _FLOOD_EDIT_FAILURE_LIMIT:
+            st["until"] = time.monotonic() + _FLOOD_EDIT_COOLDOWN_SECS
+
+    def _edit_flood_cooldown_active(self, chat_id: str) -> bool:
+        st = self._edit_flood_state.get(str(chat_id))
+        if not st:
+            return False
+        if time.monotonic() >= st["until"]:
+            self._edit_flood_state.pop(str(chat_id), None)
+            return False
+        return True
+
+    def _clear_edit_flood_state(self, chat_id: str) -> None:
+        self._edit_flood_state.pop(str(chat_id), None)
+
     async def edit_message(
         self,
         chat_id: str,
@@ -5924,6 +5963,16 @@ class TelegramAdapter(BasePlatformAdapter):
             # edit later.
             self._last_overflow_preview.pop(_preview_key, None)
 
+        if not finalize and self._edit_flood_cooldown_active(chat_id):
+            # Flood brake (2026-09-30 livelock): recent consecutive 429s on this
+            # chat — skip progress edits locally instead of re-burning the bot's
+            # rate budget.  Finalizes always pass below; delivery is never lost.
+            return SendResult(
+                success=True,
+                message_id=message_id,
+                raw_response={"skipped_reason": "edit_flood_cooldown"},
+            )
+
         try:
             if not finalize:
                 await self._bot.edit_message_text(
@@ -5931,6 +5980,7 @@ class TelegramAdapter(BasePlatformAdapter):
                     message_id=int(message_id),
                     text=content,
                 )
+                self._clear_edit_flood_state(chat_id)
                 if _saturated_preview:
                     self._last_overflow_preview[_preview_key] = content
                 return SendResult(success=True, message_id=message_id)
@@ -5988,6 +6038,7 @@ class TelegramAdapter(BasePlatformAdapter):
                     message_id=int(message_id),
                     text=truncated,
                 )
+                self._clear_edit_flood_state(chat_id)
                 self._last_overflow_preview[_preview_key] = truncated
                 return SendResult(success=True, message_id=message_id)
             # Flood control / RetryAfter — short waits are retried inline,
@@ -5996,11 +6047,23 @@ class TelegramAdapter(BasePlatformAdapter):
             retry_after = getattr(e, "retry_after", None)
             if retry_after is not None or "retry after" in err_str:
                 wait = retry_after if retry_after else 1.0
+                if not finalize and wait > _FLOOD_ABANDON_WAIT_SECS:
+                    # 2026-09-30 livelock brake: multi-minute penalties are the
+                    # bot-wide debt spiral — abandon this progress edit outright
+                    # (never sleep it, never re-fire it) and cool the chat down.
+                    logger.warning(
+                        "[%s] Telegram flood control retry_after=%.1fs > %.0fs; "
+                        "abandoning progress edit instead of sleeping (chat %s)",
+                        self.name, wait, _FLOOD_ABANDON_WAIT_SECS, chat_id,
+                    )
+                    self._note_edit_flood_failure(chat_id, wait)
+                    return _flood_cap_result(wait)
                 logger.warning(
                     "[%s] Telegram flood control, waiting %.1fs",
                     self.name, wait,
                 )
                 if wait > _FLOOD_INLINE_WAIT_CAP_SECS:
+                    self._note_edit_flood_failure(chat_id, wait)
                     return _flood_cap_result(wait)
                 await asyncio.sleep(wait)
                 try:
@@ -6009,14 +6072,23 @@ class TelegramAdapter(BasePlatformAdapter):
                         message_id=int(message_id),
                         text=content,
                     )
-                    return SendResult(success=True, message_id=message_id)
                 except Exception as retry_err:
+                    retry_str = str(retry_err).lower()
+                    if "not modified" in retry_str:
+                        # Content already matches server state: the wait
+                        # succeeded in landing a previous edit.  Idempotent
+                        # success — the 2026-09-30 livelock loop died here.
+                        self._clear_edit_flood_state(chat_id)
+                        return SendResult(success=True, message_id=message_id)
                     safe_retry_error = _redact_telegram_error_text(retry_err)
                     logger.error(
                         "[%s] Edit retry failed after flood wait: %s",
                         self.name, safe_retry_error,
                     )
+                    self._note_edit_flood_failure(chat_id, wait)
                     return SendResult(success=False, error=safe_retry_error)
+                self._clear_edit_flood_state(chat_id)
+                return SendResult(success=True, message_id=message_id)
             # Transient network errors (ConnectError, timeouts, server
             # disconnects) should not permanently disable progress-message
             # editing.  Mark the result retryable so the caller knows it
