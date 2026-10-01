@@ -1885,6 +1885,7 @@ class GatewaySlashCommandsMixin:
                         excluded_providers=excluded_provs,
                     )
                 except Exception:
+                    logger.warning("[/model] list_picker_providers failed", exc_info=True)
                     providers = []
 
                 if providers:

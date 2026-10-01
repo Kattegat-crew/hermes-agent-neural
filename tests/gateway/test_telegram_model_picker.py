@@ -72,3 +72,93 @@ class TestTelegramModelPicker:
         assert "`model_1`" in edit_kwargs["text"]
 
 
+class TestProviderKeyboardCaseFolding:
+    """group_providers() lowercases slugs; the keyboard must still resolve
+    user-defined providers whose config key keeps its original case
+    (NaN-Builders, B.AI) — regression for the 2026-10-01 picker outage.
+    The session conftest mocks the whole ``telegram`` package, so button
+    attributes are unreadable MagicMocks; stub the two keyboard classes
+    with real lightweight stand-ins to inspect callback_data.
+    """
+
+    class _Btn:
+        def __init__(self, text, callback_data=None):
+            self.text = text
+            self.callback_data = callback_data
+
+    class _Markup:
+        def __init__(self, rows):
+            self.inline_keyboard = rows
+
+    _PROVIDERS = [
+        {"slug": "moa", "name": "Mixture of Agents", "total_models": 4, "models": ["a"]},
+        {"slug": "NaN-Builders", "name": "NaN-Builders", "total_models": 13, "models": ["glm5.3-flash"]},
+        {"slug": "nous", "name": "Nous Portal", "total_models": 56, "models": ["a"]},
+        {"slug": "opencode-go", "name": "OpenCode Go", "total_models": 43, "models": ["a"]},
+        {"slug": "openai-codex", "name": "ChatGPT or Codex Subscription", "total_models": 9, "models": ["a"]},
+        {"slug": "opencode-free", "name": "OpenCode Free", "total_models": 3, "models": ["a"]},
+        {"slug": "B.AI", "name": "B.AI", "total_models": 2, "models": ["a"]},
+    ]
+
+    def _keyboard_callbacks(self, providers, page=0):
+        import plugins.platforms.telegram.adapter as m
+
+        real_btn, real_markup = m.InlineKeyboardButton, m.InlineKeyboardMarkup
+        m.InlineKeyboardButton = self._Btn
+        m.InlineKeyboardMarkup = self._Markup
+        try:
+            adapter = _make_adapter()
+            keyboard, _ = adapter._build_provider_keyboard(list(providers), page)
+        finally:
+            m.InlineKeyboardButton = real_btn
+            m.InlineKeyboardMarkup = real_markup
+        return [b.callback_data for row in keyboard.inline_keyboard for b in row]
+
+    def test_mixed_case_user_defined_providers_get_buttons(self):
+        callbacks = self._keyboard_callbacks(self._PROVIDERS)
+        assert "mp:NaN-Builders" in callbacks
+        assert "mp:B.AI" in callbacks
+
+    def test_group_rows_resolve_lowercase_members_with_raw_slugs(self):
+        callbacks = self._keyboard_callbacks(self._PROVIDERS)
+        assert "mpg:opencode" in callbacks
+        assert "mp:opencode-go" not in callbacks  # folded into the group
+        assert "mp:opencode-free" not in callbacks
+
+    def test_group_drill_callback_resolves_mixed_case_members(self):
+        # PROVIDER_GROUPS members are lowercase-declared; state providers may
+        # keep raw case. The mpg: drill lookup must be case-insensitive too.
+        import plugins.platforms.telegram.adapter as m
+
+        from hermes_cli.models import PROVIDER_GROUPS
+        assert "opencode-go" in {s for g in PROVIDER_GROUPS.values() for s in g[2]}
+        state = {
+            "providers": [
+                {"slug": "OpenCode-Go", "name": "OpenCode Go", "total_models": 43, "models": ["a"]},
+                {"slug": "opencode-free", "name": "OpenCode Free", "total_models": 3, "models": ["a"]},
+            ],
+            "current_model": "x", "current_provider": "", "session_key": "s",
+            "on_model_selected": AsyncMock(), "msg_id": 1,
+        }
+        adapter = _make_adapter()
+        adapter._model_picker_state["1"] = state
+        real_btn, real_markup = m.InlineKeyboardButton, m.InlineKeyboardMarkup
+        m.InlineKeyboardButton = self._Btn
+        m.InlineKeyboardMarkup = self._Markup
+        try:
+            query = AsyncMock()
+            query.data = "mpg:opencode"
+            query.answer = AsyncMock()
+            query.edit_message_text = AsyncMock()
+            import asyncio
+            asyncio.get_event_loop_policy().new_event_loop().run_until_complete(
+                adapter._handle_model_picker_callback(query, "mpg:opencode", "1")
+            )
+            kb = query.edit_message_text.call_args[1]["reply_markup"]
+        finally:
+            m.InlineKeyboardButton = real_btn
+            m.InlineKeyboardMarkup = real_markup
+        callbacks = [b.callback_data for row in kb.inline_keyboard for b in row]
+        assert "mp:OpenCode-Go" in callbacks
+
+
