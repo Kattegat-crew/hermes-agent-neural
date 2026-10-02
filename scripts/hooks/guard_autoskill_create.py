@@ -35,7 +35,8 @@ import sys
 import time
 from pathlib import Path
 
-SKILLS = Path(os.environ.get('HERMES_SKILLS_ROOT', '/opt/hermes/skills'))
+# F6 nativo (02-oct-2026): canon de skills en /opt/hermes-agent/skills (era /opt/hermes/skills, docker)
+SKILLS = Path(os.environ.get('HERMES_SKILLS_ROOT', '/opt/hermes-agent/skills'))
 CORE = SKILLS / 'core'
 HOOK_DIR = Path(__file__).resolve().parent
 DIRS_ESCRITURA = [Path('/opt/data/state'), Path('/tmp')]
