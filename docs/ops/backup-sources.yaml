@@ -36,6 +36,7 @@ dev:
     - /opt/hermes-agent-data/.env
     - /opt/hermes-agent-data/scripts
     - /opt/hermes-agent-data/git-mirror
+    - /opt/hermes-agent-data/backups/git
     - /root/.engram
     - /opt/vault
     - /opt/vps-brain
