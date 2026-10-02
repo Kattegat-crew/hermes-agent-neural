@@ -1,0 +1,516 @@
+diff --git a/opt/hermes-agent-data/scripts/mcp_fleet_probe.py b/mcp_fleet_probe.py
+index 2eef57b241..957321165e 100755
+--- a/opt/hermes-agent-data/scripts/mcp_fleet_probe.py
++++ b/mcp_fleet_probe.py
+@@ -60,11 +60,108 @@ PROBES = {
+ }
+ DEFAULT_PROBES = [("whoami", {}), ("list_projects", {}), ("get_version", {})]
+ 
++# FASE1: sondas OBLIGATORIAS — el veredicto HEALTHY exige que esta operación
++# concreta tenga éxito. Para pg_ro el SELECT 1 es obligatorio (evidencia real
++# de que el PostgreSQL responde, no sólo de que el proceso MCP vive).
++REQUIRED_PROBES = {
++    "pg_ro": ("execute_sql", {"sql": "select 1 as ok"}),
++}
++
+ AUTH_RE = re.compile(
+     r"\b401\b|\b403\b|unauthorized|forbidden|bad credentials|invalid[_ -]?token|"
+     r"token (expired|revoked)|expired|authentication|permission denied|"
+     r"insufficient|not authorized", re.I)
+ 
++# FASE1 (fix revisión): evidencia OBLIGATORIA en el cuerpo de la sonda obligatoria.
++# R4-segunda-mitad: para pg_ro no basta is_error=False — el cuerpo DEBE evidenciar
++# que el SELECT 1 devolvió la fila con valor 1 (o {"ok": 1} top-level).
++REQUIRED_EVIDENCE = {
++    # por nombre de TOOL (independiente del nombre del server en config):
++    # execute_sql debe evidenciar la fila del SELECT 1 con valor 1.
++    "execute_sql": "select1",
++}
++
++# ============================================================================
++# FASE1 — Clasificación VERAZ por servidor: HEALTHY / DEGRADED / FAILED / UNVERIFIED
++#
++# Reglas inquebrantables (el watchdog nunca embellece):
++#   R1  Error de la tool de sonda  -> NUNCA HEALTHY (FAILED o DEGRADED).
++#   R2  Sonda ausente (el server no expone la tool de sonda) -> UNVERIFIED,
++#       jamás HEALTHY: sin evidencia operativa no hay veredicto sano.
++#   R3  Args de sonda validados contra el schema REAL que anuncia el server
++#       (inputSchema) antes de llamar; inválido -> UNVERIFIED (config vencida),
++#       nunca se "inventa" que la llamada pasó.
++#   R4  pg_ro: éxito del SELECT 1 es OBLIGATORIO para HEALTHY.
++#   R5  Fallo de conexión/initialize/list_tools -> FAILED (catalogo 0 tools
++#       también: conexión viva que no sirve catálogo no es operativa).
++#   R6  Autenticación rota (401/403/expired) -> FAILED con detalle AUTH.
++# ============================================================================
++
++STATES = ("HEALTHY", "DEGRADED", "FAILED", "UNVERIFIED")
++
++
++def classify(name, connect_ok, tools_count, probe_status, probe_detail="",
++             probe_tool=None, required_probe=None, required_ok=False,
++             args_invalid=False):
++    """Clasificación pura (sin I/O) — testeable sin red.
++
++    connect_ok     : initialize() y list_tools() éxito
++    tools_count    : nº de tools del catálogo (None si no se llegó)
++    probe_status   : 'OK' | 'APP_ERROR' | 'AUTH' | 'TIMEOUT' | 'EXC' | None
++    required_probe : (tool, args) obligatoria para HEALTHY si aplica al server
++    required_ok    : la sonda obligatoria tuvo éxito (si hay una)
++    args_invalid   : los args de la sonda no validan contra el inputSchema real
++    """
++    # R5: sin conexión o catálogo vacío no hay nada que operar.
++    if not connect_ok:
++        return "FAILED", "conexión/initialize/list_tools falló: " + (probe_detail or "")[:180]
++    if not tools_count:
++        return "FAILED", "catálogo vacío (0 tools) tras conectar"
++
++    # R3: args que no validan contra el schema real -> sin evidencia válida.
++    if args_invalid:
++        return "UNVERIFIED", f"args de sonda inválidos contra inputSchema: {probe_detail}"[:220]
++
++    # R2/R3: sin llamada efectiva -> UNVERIFIED (jamás HEALTHY).
++    if probe_status is None:
++        if isinstance(probe_detail, str) and probe_detail.startswith("ARGS-INVALID"):
++            # R3: args que no validan contra el schema real del server.
++            return "UNVERIFIED", f"args de sonda inválidos contra inputSchema: {probe_detail}"[:220]
++        return "UNVERIFIED", f"sonda ausente (tool {probe_tool!r} no expuesta; {tools_count} tools)"
++
++    # R1/R6: la tool respondió ERROR.
++    if probe_status in ("AUTH", "TIMEOUT", "EXC"):
++        return "FAILED", f"sonda {probe_tool} falló ({probe_status}): {probe_detail}"[:200]
++    if probe_status == "APP_ERROR":
++        if AUTH_RE.search(probe_detail or ""):
++            return "FAILED", f"sonda {probe_tool} devolvió error de auth: {probe_detail}"[:200]
++        # Error de aplicación/argumentos: el server vive y responde, pero la
++        # operación de lectura no tuvo éxito -> DEGRADED (nunca HEALTHY: R1).
++        return "DEGRADED", f"sonda {probe_tool} devolvió error de tool: {probe_detail}"[:200]
++
++    # probe_status == 'OK': la tool de sonda tuvo éxito…
++    if required_probe is not None and not required_ok:
++        # R4: sonda obligatoria sin éxito (p.ej. pg_ro SELECT 1) -> UNVERIFIED.
++        return ("UNVERIFIED",
++                f"sonda aplicable OK pero sonda obligatoria {required_probe[0]!r} sin éxito")
++    return "HEALTHY", ""
++
++
++def validate_args_against_schema(args, schema):
++    """Valida los args de la sonda contra el inputSchema REAL de la tool.
++
++    Devuelve (ok, detalle). Sin schema o con schema vacío se acepta (el server
++    no declara restricciones); si hay schema, jsonschema manda.
++    """
++    if not schema:
++        return True, ""
++    try:
++        import jsonschema
++        jsonschema.validate(args, schema)
++        return True, ""
++    except Exception as ex:
++        return False, f"{type(ex).__name__}: {ex}"[:200]
++
+ 
+ def load_dotenv(p):
+     d = {}
+@@ -217,6 +314,283 @@ def probe_via_cli(name, timeout=150):
+     return e
+ 
+ 
++def _oauth_handshake_verdict(r):
++    """F4: veredicto veraz para servers OAuth validados por handshake CLI.
++
++    El handshake sólo prueba conexión+catálogo, NO una operación real.
++    Sin sonda operativa el veredicto veraz es UNVERIFIED (jamás HEALTHY);
++    el fallo de handshake sí es FAILED. Función pura, testeable sin red.
++    """
++    if r.get("status") != "OK":
++        return "FAILED", "handshake falló"
++    return ("UNVERIFIED",
++            "handshake OAuth OK sin sonda operativa (vía CLI): "
++            "sin evidencia de operación real -> UNVERIFIED")
++
++
++def apply_verdict(e, verdict, reason):
++    """Fija el veredicto FASE1 en el dict de resultado y su status legacy."""
++    e["verdict"] = verdict
++    e["reason"] = reason
++    e["status"] = {"HEALTHY": "OK", "DEGRADED": "DEGRADED",
++                   "FAILED": "FAIL", "UNVERIFIED": "UNVERIFIED"}[verdict]
++
++
++def _parse_textual_json(txt):
++    """Parsea el texto concatenado de content como JSON (si aplica).
++
++    Devuelve (obj, es_json). Tolerante: muchos servers embeben el JSON en un
++    bloque de texto con preámbulo; se intenta el primer '{'/'[' en adelante.
++    """
++    if not txt or not isinstance(txt, str):
++        return None, False
++    s = txt.strip()
++    try:
++        return json.loads(s), True
++    except Exception:
++        pass
++    # Recorte conservador: sólo si el texto parece JSON embebido.
++    for opener in ("{", "["):
++        i = s.find(opener)
++        if i > 0:
++            try:
++                return json.loads(s[i:]), True
++            except Exception:
++                continue
++    return None, False
++
++
++def _walk_ok_false(obj, depth=0):
++    """Busca recursivamente envelopes semánticos de error en la estructura.
++
++    Conservador: sólo señales EXPLÍCITAS de envelope —
++      * {'ok': False} o {'success': False} (booleanos explícitos, no 0/null),
++      * key 'error' no vacía SÓLO cuando el mismo envelope declara fallo
++        ('ok' es False o 'status' es 'error'/'failed').
++    Así datos legítimos del cliente (p.ej. {'ok': 0, 'count': 0}, o texto que
++    menciona 'error' en un campo) no se confunden con un fallo.
++    """
++    if depth > 6 or not isinstance(obj, (dict, list)):
++        return None
++    if isinstance(obj, dict):
++        for key in ("ok", "success"):
++            if key in obj and obj[key] is False:
++                return f'{{"{key}": false}}'
++        status = obj.get("status")
++        envelope_fails = ("ok" in obj and obj["ok"] is False) or (
++            isinstance(status, str) and status.lower() in ("error", "failed", "failure"))
++        err = obj.get("error")
++        if envelope_fails and err not in (None, "", [], {}, False):
++            return f'"error": {json.dumps(err)[:80]}'
++        for v in obj.values():
++            hit = _walk_ok_false(v, depth + 1)
++            if hit:
++                return hit
++    else:
++        for v in obj:
++            hit = _walk_ok_false(v, depth + 1)
++            if hit:
++                return hit
++    return None
++
++
++def _analyze_body_text(txt):
++    """F1: analiza el CUERPO textual de una tool 'exitosa' según el protocolo.
++
++    Devuelve None si no hay evidencia de error semántico, o (kind, señal) con
++    kind in ('auth', 'app'). Sólo se marca error cuando hay evidencia SEMÁNTICA
++    explícita (JSON con ok/success=false o key 'error'), nunca por regex amplia
++    sobre datos legítimos del cliente.
++    """
++    obj, es_json = _parse_textual_json(txt)
++    if es_json:
++        hit = _walk_ok_false(obj)
++        if hit:
++            hit_l = hit.lower()
++            if AUTH_RE.search(hit_l) or AUTH_RE.search(txt[:200]):
++                return "auth", hit
++            return "app", hit
++        return None
++    # No-JSON: sólo señal explícita de envelope de error textual, jamás regex
++    # amplia (un 'error' suelto en datos del cliente no es evidencia).
++    stripped = txt.strip()
++    if stripped.startswith("{") or stripped.startswith("["):
++        return None
++    return None
++
++
++def _structured_error(res):
++    """F3: extrae evidencia de error del structuredContent (si existe).
++
++    Prioridad sobre content textual: si el envelope estructurado declara
++    error, manda. Devuelve None o ('auth'|'app', señal).
++    """
++    sc = getattr(res, "structuredContent", None)
++    if sc is None:
++        sc = getattr(res, "structured_content", None)  # alias snake mcp 2.x
++    if not isinstance(sc, dict):
++        return None
++    hit = _walk_ok_false(sc)
++    if not hit:
++        return None
++    hit_l = hit.lower()
++    if AUTH_RE.search(hit_l) or AUTH_RE.search(json.dumps(sc)[:200]):
++        return "auth", hit
++    return "app", hit
++
++
++def _evidence_select1(txt):
++    """F2: evidencia de que el SELECT 1 realmente devolvió la fila con 1.
++
++    Acepta (conservador): {"rows": [{"ok": 1, ...}]} (o cualquier fila con el
++    valor 1), {"ok": 1} top-level, o lista [[1]]/[[1, ...]]. Rechaza: cuerpo
++    vacío, no-JSON, JSON sin filas, o filas cuyo ok/valor sea 0/False/otro.
++    Devuelve (evidencia, detalle) — evidencia True sólo con prueba real.
++    """
++    obj, es_json = _parse_textual_json(txt)
++    if not es_json or obj is None:
++        return False, "cuerpo vacío o no-JSON: sin evidencia del resultado"
++    rows = None
++    if isinstance(obj, dict):
++        if obj.get("ok") == 1 or obj.get("ok") is True:
++            return True, 'evidencia {"ok": 1}'
++        for key in ("rows", "result", "results", "data"):
++            v = obj.get(key)
++            if isinstance(v, list):
++                rows = v
++                break
++    elif isinstance(obj, list):
++        rows = obj
++    if rows is None:
++        return False, "JSON sin lista de filas: sin evidencia del resultado"
++    if not rows:
++        return False, "0 filas: sin evidencia del resultado"
++    for row in rows:
++        if isinstance(row, dict):
++            for v in row.values():
++                if v == 1 or v is True:
++                    return True, f"evidencia fila con valor 1: {json.dumps(row)[:80]}"
++        elif isinstance(row, list):
++            if any(v == 1 for v in row):
++                return True, f"evidencia fila [1]: {json.dumps(row)[:80]}"
++        elif row == 1:
++            return True, "evidencia valor escalar 1"
++    return False, f"filas sin valor 1: {json.dumps(rows)[:80]}"
++
++
++async def call_tool_checked(session, tool, a, tools_by_name):
++    """Llama la sonda validando args contra el inputSchema REAL del catálogo.
++
++    Devuelve (probe_status, detalle). probe_status:
++    'OK' | 'APP_ERROR' | 'AUTH' | 'TIMEOUT' | 'EXC' | None (sonda ausente/args inválidos).
++    F1/F3: además de isError/is_error, se analizan el structuredContent (prioritario)
++    y el cuerpo textual como JSON semántico — un server que devuelve
++    {"ok": false, "error": ...} con is_error=False NO es éxito.
++    """
++    tmeta = tools_by_name.get(tool)
++    if tmeta is None:
++        return None, f"tool {tool!r} no está en el catálogo del server"
++    ok, det = validate_args_against_schema(a, tmeta.get("inputSchema"))
++    if not ok:
++        # R3: no se llama con args que el server declara inválidos.
++        return None, f"ARGS-INVALID {tool}: {det}"
++    try:
++        res = await asyncio.wait_for(session.call_tool(tool, a), timeout=60)
++    except asyncio.TimeoutError:
++        return "TIMEOUT", f"call_tool {tool} excedió 60s"
++    except Exception as ex:
++        return "EXC", f"{type(ex).__name__}: {ex}"[:200]
++    txt = "\n".join([(getattr(c, "text", None) or "") for c in (res.content or [])])[:400]
++    # mcp 2.0 renombró `isError` → `is_error`; tolerar ambas.
++    _err = getattr(res, "isError", None)
++    if _err is None:
++        _err = getattr(res, "is_error", False)
++    # F3: structuredContent con error tiene PRIORIDAD (superficie distinta,
++    # mismo root cause que F1).
++    struct_err = _structured_error(res)
++    if _err or struct_err:
++        kind, señal = struct_err if struct_err else (None, None)
++        if kind is None:
++            analyzed = _analyze_body_text(txt)
++            kind = analyzed[0] if analyzed else (
++                "auth" if AUTH_RE.search(txt) else "app")
++            señal = analyzed[1] if analyzed else txt[:120]
++        if kind == "auth":
++            return "AUTH", f"{señal} | {txt[:180]}"[:200]
++        return "APP_ERROR", f"{señal} | {txt[:180]}"[:200]
++    # F1: protocolo dice success — verificar que el CUERPO no declare error.
++    body_err = _analyze_body_text(txt)
++    if body_err:
++        kind, señal = body_err
++        detalle = f"cuerpo con error semántico (is_error=False): {señal} | {txt[:180]}"
++        return ("AUTH", detalle[:200]) if kind == "auth" else ("APP_ERROR", detalle[:200])
++    return "OK", txt[:200]
++
++
++async def evaluate_on_session(name, session, e, list_timeout=90):
++    """Corre la sonda FASE1 sobre una sesión MCP ya inicializada.
++
++    SIEMPRE cierra con un veredicto explícito en e (nunca deja 'sin veredicto').
++    """
++    tl = await asyncio.wait_for(session.list_tools(), timeout=list_timeout)
++    e["tools"] = len(tl.tools)
++    tools_by_name = {t.name: {"inputSchema": t.input_schema} for t in tl.tools}
++
++    probe_list = PROBES.get(name) or DEFAULT_PROBES
++    req = REQUIRED_PROBES.get(name)
++    # Sondas candidatas; la obligatoria va primero y sin duplicar.
++    ordered = ([req] if req else []) + [p for p in probe_list if p != req]
++    main_status = main_detail = main_tool = None
++    required_ok = False
++    for tool, a in ordered:
++        if tool not in tools_by_name:
++            continue
++        e["probe"] = tool
++        st, det = await call_tool_checked(session, tool, a, tools_by_name)
++        if st is None and det.startswith("ARGS-INVALID"):
++            # conservar el detalle para el veredicto UNVERIFIED (R3)
++            main_status, main_detail, main_tool = None, det, tool
++            break
++        if req is not None and (tool, a) == req:
++            required_ok = (st == "OK")
++            if st is None:
++                # sonda obligatoria ausente o args inválidos: sin evidencia válida
++                apply_verdict(e, "UNVERIFIED",
++                              f"sonda obligatoria {tool!r} sin llamada posible: {det}"[:200])
++                return e
++            if st != "OK":
++                # R4: la sonda obligatoria falló -> nunca HEALTHY.
++                v, rr = classify(name, True, e["tools"], st, det, tool,
++                                 required_probe=req, required_ok=False)
++                apply_verdict(e, v, rr)
++                return e
++            # F2: el protocolo dijo OK, pero la operación obligatoria exige
++            # EVIDENCIA del resultado (p.ej. pg_ro: la fila del SELECT 1 con 1).
++            # Cuerpo vacío / no-JSON / ok=0 -> sin evidencia -> NUNCA HEALTHY.
++            ev = REQUIRED_EVIDENCE.get(tool)
++            if ev == "select1":
++                ev_ok, ev_det = _evidence_select1(det)
++                required_ok = ev_ok
++                if not ev_ok:
++                    apply_verdict(e, "DEGRADED",
++                                  f"sonda {tool} OK según protocolo pero sin evidencia "
++                                  f"del resultado obligatorio: {ev_det}"[:200])
++                    return e
++            # la obligatoria tuvo éxito: si también está en probe_list es la
++            # sonda principal; si no, sigue una sonda de catálogo.
++            if main_status is None and (tool, a) in probe_list:
++                main_status, main_detail, main_tool = st, det, tool
++            continue
++        if main_status is None:
++            main_status, main_detail, main_tool = st, det, tool
++        break
++    # Clasificar con la sonda principal (puede ser la obligatoria ya OK).
++    v, rr = classify(name, True, e["tools"], main_status, main_detail or "", main_tool,
++                     required_probe=req, required_ok=required_ok)
++    apply_verdict(e, v, rr)
++    return e
++
++
+ async def probe(name, spec, expand, timeout=90):
+     from mcp import ClientSession, StdioServerParameters
+     from mcp.client.stdio import stdio_client
+@@ -229,33 +603,8 @@ async def probe(name, spec, expand, timeout=90):
+     env.setdefault("HOME", "/opt/hermes-agent-data")
+     headers = {k: expand(v) for k, v in (spec.get("headers") or {}).items()}
+     started = time.time()
+-    e = {"server": name, "tools": None, "probe": None, "status": "?", "detail": "", "secs": 0}
+-
+-    async def run(s, names):
+-        for tool, a in (PROBES.get(name) or DEFAULT_PROBES):
+-            if tool not in names:
+-                continue
+-            e["probe"] = tool
+-            try:
+-                res = await asyncio.wait_for(s.call_tool(tool, a), timeout=60)
+-            except Exception as ex:
+-                e.update(status="FAIL", detail=f"{type(ex).__name__}: {ex}"[:200])
+-                return
+-            txt = "\n".join([(getattr(c, "text", None) or "") for c in (res.content or [])])[:400]
+-            # mcp 2.0 renombró `isError` → `is_error`; tolerar ambas.
+-            _err = getattr(res, "isError", None)
+-            if _err is None:
+-                _err = getattr(res, "is_error", False)
+-            if _err:
+-                if AUTH_RE.search(txt):
+-                    e.update(status="AUTH", detail=txt[:200])
+-                else:
+-                    # error de aplicación/argumentos: el server vive y responde
+-                    e.update(status="OK", detail=("aviso de tool: " + txt)[:200])
+-            else:
+-                e.update(status="OK", detail=txt[:200])
+-            return
+-        e.update(status="OK", detail=f"sin sonda aplicable ({len(names)} tools)")
++    e = {"server": name, "tools": None, "probe": None, "status": "?", "detail": "", "secs": 0,
++         "verdict": None, "reason": ""}
+ 
+     state = {"done": False}
+     try:
+@@ -264,17 +613,13 @@ async def probe(name, spec, expand, timeout=90):
+                 r, w = _streams[0], _streams[1]
+                 async with ClientSession(r, w) as s:
+                     await asyncio.wait_for(s.initialize(), timeout=60)
+-                    tl = await asyncio.wait_for(s.list_tools(), timeout=timeout)
+-                    e["tools"] = len(tl.tools)
+-                    await run(s, {t.name for t in tl.tools})
++                    await evaluate_on_session(name, s, e, list_timeout=timeout)
+                     state["done"] = True
+         else:
+             async with stdio_client(StdioServerParameters(command=cmd, args=args, env=env)) as (r, w):
+                 async with ClientSession(r, w) as s:
+                     await asyncio.wait_for(s.initialize(), timeout=60)
+-                    tl = await asyncio.wait_for(s.list_tools(), timeout=timeout)
+-                    e["tools"] = len(tl.tools)
+-                    await run(s, {t.name for t in tl.tools})
++                    await evaluate_on_session(name, s, e, list_timeout=timeout)
+                     state["done"] = True
+     except Exception as ex:
+         if state["done"]:
+@@ -283,9 +628,14 @@ async def probe(name, spec, expand, timeout=90):
+             e["detail"] = ((e["detail"] + " ") if e["detail"] else "") + f"[teardown: {type(ex).__name__}]"
+         else:
+             import traceback as _tb
+-            e.update(status="CONN-FAIL",
+-                     detail=(f"{type(ex).__name__}: {ex}"[:200] + " || " + _tb.format_exc()[-300:])[:600])
++            e["detail"] = (f"{type(ex).__name__}: {ex}"[:200] + " || " + _tb.format_exc()[-300:])[:600]
++            apply_verdict(e, "FAILED",
++                          f"conexión fallida antes de catálogo: {type(ex).__name__}: {ex}"[:200])
+     e["secs"] = round(time.time() - started, 1)
++    if e["verdict"] is None:
++        # No debería pasar (evaluate_on_session siempre cierra veredicto), pero
++        # jamás inventamos un HEALTHY por defecto: sin veredicto -> UNVERIFIED.
++        apply_verdict(e, "UNVERIFIED", "sonda terminó sin veredicto explícito")
+     return e
+ 
+ 
+@@ -314,13 +664,19 @@ async def main():
+         try:
+             spec = servers[n] or {}
+             if _needs_oauth(n) and not (spec.get("headers") or {}):
+-                # OAuth sin header estático: validar con el cliente real
+-                results.append(probe_via_cli(n))
++                # OAuth sin header estático: validar con el cliente real.
++                # El handshake sólo prueba conexión+catálogo, NO operación ->
++                # sin evidencia operativa el veredicto veraz es UNVERIFIED.
++                r = probe_via_cli(n)
++                # F4: handshake CLI = conexión+catálogo, no operación real.
++                r["verdict"], r["reason"] = _oauth_handshake_verdict(r)
++                results.append(r)
+             else:
+                 results.append(await probe(n, spec, expand))
+         except Exception:
+             results.append({"server": n, "status": "CRASH", "tools": None,
+-                            "detail": traceback.format_exc()[-200:], "secs": 0, "probe": None})
++                            "detail": traceback.format_exc()[-200:], "secs": 0, "probe": None,
++                            "verdict": "FAILED", "reason": "excepción del propio watchdog en la sonda"})
+ 
+     bad = [r for r in results if r["status"] not in ("OK",)]
+     prev_ts = None
+@@ -338,15 +694,18 @@ async def main():
+ 
+     if a.verbose:
+         for r in results:
+-            print(f"{r['server']:20s} {r['status']:10s} tools={str(r['tools']):>4} {r['secs']:>5}s  {r['probe'] or ''}")
+-        print(f"== {len(results) - len(bad)}/{len(results)} OK · parques hoy: {parks_n} ==")
++            print(f"{r['server']:20s} {r.get('verdict') or r['status']:10s} "
++                  f"tools={str(r['tools']):>4} {r['secs']:>5}s  {r['probe'] or ''}"
++                  + (f"  [{r.get('reason', '')}]" if r.get('reason') else ""))
++        print(f"== {len(results) - len(bad)}/{len(results)} sin fallo · parques hoy: {parks_n} ==")
+ 
+     out = []
+     if bad:
+         out.append(f"⚠️ MCPs con fallo ({len(bad)}/{len(results)}):")
+         for r in bad:
+-            out.append(f"• {r['server']} — {r['status']} · tools={r['tools']} · {r['probe'] or 'sin sonda'}"
+-                       f"\n    {r['detail']}")
++            out.append(f"• {r['server']} — {r.get('verdict') or r['status']} · tools={r['tools']} · "
++                       f"{r['probe'] or 'sin sonda'}"
++                       f"\n    {r.get('reason', '') + (' — ' if r.get('reason') else '')}{r['detail']}")
+     if fixed:
+         out.append(f"🔧 Permisos de token auto-sanados (root→hermes): {', '.join(fixed)}")
+     if badperm:

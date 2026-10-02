@@ -1,0 +1,58 @@
+[
+ {
+  "caso": "A1 JSON textual con 401 en cuerpo (is_error=False)",
+  "verdict": "FAILED",
+  "res": "PASS",
+  "detalle": "sonda whoami falló (AUTH): cuerpo con error semántico (is_error=False): {\"ok\": false} | {\"ok\": false, \"error\": {\"type\": \"auth\", \"message\": \""
+ },
+ {
+  "caso": "A2 pg_ro SELECT1 con cuerpo sin fila ok=1 (solo is_error=False)",
+  "verdict": "FAILED",
+  "res": "PASS",
+  "detalle": "sonda execute_sql falló (AUTH): Error executing tool execute_sql: expired session: token expired | Error executing tool execute_sql: expired"
+ },
+ {
+  "caso": "A3 pg_ro SELECT1 cuerpo no-JSON",
+  "verdict": "FAILED",
+  "res": "PASS",
+  "detalle": "sonda execute_sql falló (AUTH): Error executing tool execute_sql: expired session: token expired | Error executing tool execute_sql: expired"
+ },
+ {
+  "caso": "A4 required probe con excepción token expired",
+  "verdict": "FAILED",
+  "res": "PASS",
+  "detalle": "sonda execute_sql falló (AUTH): Error executing tool execute_sql: expired session: token expired | Error executing tool execute_sql: expired"
+ },
+ {
+  "caso": "A5 todas las sondas ausentes",
+  "verdict": "UNVERIFIED",
+  "res": "PASS",
+  "detalle": "sonda ausente (tool None no expuesta; 2 tools)"
+ },
+ {
+  "caso": "A6 args inválidos contra inputSchema (sql=123)",
+  "verdict": "FAILED",
+  "res": "PASS",
+  "detalle": "sonda execute_sql falló (AUTH): Error executing tool execute_sql: expired session: token expired | Error executing tool execute_sql: expired"
+ },
+ {
+  "caso": "A7 barrido exhaustivo classify() (120 combos)",
+  "verdict": "OK",
+  "res": "PASS",
+  "detalle": "0 falsos HEALTHY en 120 combos"
+ },
+ {
+  "caso": "A8 comando inexistente",
+  "verdict": "FAILED",
+  "res": "PASS",
+  "detalle": "conexión fallida antes de catálogo: FileNotFoundError: [Errno 2] No such file or directory: '/inexistentísimo/binario'"
+ },
+ {
+  "caso": "A9 error teardown post-veredicto preserva DEGRADED",
+  "verdict": "FAILED",
+  "res": "FAIL verdict=FAILED",
+  "detalle": "conexión fallida antes de catálogo: ExceptionGroup: unhandled errors in a TaskGroup (1 sub-exception)"
+ }
+]
+
+== 8/9 PASS, 1 hallazgos ==

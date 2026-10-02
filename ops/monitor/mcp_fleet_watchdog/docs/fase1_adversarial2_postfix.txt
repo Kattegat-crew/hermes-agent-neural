@@ -1,0 +1,34 @@
+[
+ {
+  "caso": "B1 pg_ro SELECT1 is_error=False pero cuerpo ok=0 (sin evidencia de 1)",
+  "verdict": "DEGRADED",
+  "res": "ok",
+  "detalle": "sonda execute_sql OK según protocolo pero sin evidencia del resultado obligatorio: filas sin valor 1: [{\"ok\": 0}]"
+ },
+ {
+  "caso": "B2 pg_ro SELECT1 cuerpo vacío sin error",
+  "verdict": "DEGRADED",
+  "res": "ok",
+  "detalle": "sonda execute_sql OK según protocolo pero sin evidencia del resultado obligatorio: cuerpo vacío o no-JSON: sin evidencia del resultado"
+ },
+ {
+  "caso": "B3 pg_ro SELECT1 cuerpo no-JSON sin error",
+  "verdict": "DEGRADED",
+  "res": "ok",
+  "detalle": "sonda execute_sql OK según protocolo pero sin evidencia del resultado obligatorio: cuerpo vacío o no-JSON: sin evidencia del resultado"
+ },
+ {
+  "caso": "B4 JSON textual con 401 en cuerpo, is_error=False",
+  "verdict": "FAILED",
+  "res": "ok",
+  "detalle": "sonda whoami falló (AUTH): cuerpo con error semántico (is_error=False): {\"ok\": false} | {\"ok\": false, \"error\": \"401 Unauthorized: invalid token\"}"
+ },
+ {
+  "caso": "B5 JSON textual error de app, is_error=False",
+  "verdict": "DEGRADED",
+  "res": "ok",
+  "detalle": "sonda whoami devolvió error de tool: cuerpo con error semántico (is_error=False): {\"ok\": false} | {\"ok\": false, \"error\": \"boom interno\"}"
+ }
+]
+
+== 5/5 ok, 0 FALSOS HEALTHY confirmados ==
