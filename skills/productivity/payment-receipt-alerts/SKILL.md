@@ -80,7 +80,29 @@ El **valor + nombre** permiten a la cajera emparejar con la persona que tiene al
 - **No guardar secretos** en el repo ni en el chat: van materializados en `/opt/data/secrets/` (chmod 600).
 - **No mezclar** la hora del encabezado (UTC) con la del cuerpo (hora local Colombia) al construir el aviso.
 
+## Arquitectura en Producción (Actualizado 02/10/2026)
+
+El sistema opera bajo un patrón de **dos capas (Tiempo Real + Consistencia Eventual)**:
+
+### 1. Capa de Tiempo Real (ActivePieces)
+- Polling cada 60 segundos (`*/1 * * * *` en BullMQ) en bandejas Gmail.
+- Ingesta, parseo de HTML a campos estructurados, escritura granular a Google Sheets y alerta a Discord.
+- **Mapeo oficial de Google Sheets:**
+  - **Lucky Brothers:** Flow `e2yTTyYCWj0DAWHTX8lLw` → Spreadsheet `1bAcrcBjddAAqxo8V3xnwmOElk_9bAay5G-w1ZREUfGo` | `sheetId: 1686104785` (pestaña `Bre-B Lucky — Pagos`).
+  - **Casino Golden Game:** Flow `ybZF7O6TgBbKiAvvVvdHV` → Spreadsheet `1j0vsPs4R4owvm_gisidizO0j0xckeZpK4z-Mev2xYu0` | `sheetId: 720415717` (pestaña `Bre-B Golden — Pagos`).
+
+### 2. Capa de Red de Seguridad (Reconciliador Cron)
+- Ejecución periódica cada 4 horas (`0 */4 * * *`) en Ragnar:
+  `/usr/bin/flock -n /tmp/reconcile_breb.lock /usr/bin/python3 /root/breb-reports/reconcile_breb.py --tenant all --apply >> /root/breb-reports/reconcile.log 2>&1`
+- Concilia contra Gmail completo, inyecta pagos caídos por fallas de red y purga registros corruptos usando **Google Sheets API v4** sin sobreescribir pestañas de informes (`Informe Septiembre`, `Informe Octubre`).
+
+### 3. Regla Crítica de Operación (ActivePieces Worker Cache)
+- `ap-worker` compila y almacena en memoria RAM (`cached`) y disco (`/opt/docker/activepieces/cache/v11/flows/{flowVersionId}/cache.json`) las versiones publicadas.
+- **NUNCA** modificar `sheetId` o configuraciones mediante `UPDATE` directo en PostgreSQL (`ap-db`) sin purgar la caché y ejecutar `LOCK_AND_PUBLISH` vía la API REST de ActivePieces; de lo contrario, el worker seguirá ejecutando en memoria los IDs obsoletos.
+
 ## Referencias
 
 - `references/bre-b-bbva-receipt-format.md` — muestra real del recibo BBVA Bre-B, tabla de campos, regexes y volumetría.
 - `scripts/read_receipts.py` — lector/parser re-ejecutable del buzón (refresh + Gmail API + rate-limit safe).
+- `scripts/reconcile_breb.py` — script de conciliación no destructiva con Google Sheets API v4.
+
