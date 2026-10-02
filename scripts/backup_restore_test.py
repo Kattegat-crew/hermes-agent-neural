@@ -28,18 +28,19 @@ import tempfile
 from datetime import datetime, timezone
 from pathlib import Path
 
-RAIZ = Path("/root/hermes-agent-legacy-docker")
+RAIZ = Path("/opt/hermes-agent")          # repo de codigo: docs/ de la declaracion
+DATA = Path("/opt/hermes-agent-data")     # estado nativo (F6, 29-sep-2026)
 DECLARACION = RAIZ / "docs/ops/backup-sources.yaml"
-ESTADO = RAIZ / "data/state/backup-restore-test.json"
+ESTADO = DATA / "state/backup-restore-test.json"
 
 # Muestra: un config, un secreto, un código, memorias y dos bases SQLite
 MUESTRA = [
-    "/root/hermes-agent-legacy-docker/data/config.yaml",
-    "/root/hermes-agent-legacy-docker/data/.env",
-    "/root/hermes-agent-legacy-docker/data/kanban.db",
-    "/root/hermes-agent-legacy-docker/data/verification_evidence.db",
-    "/root/hermes-agent-legacy-docker/data/profiles/roshi/memories/MEMORY.md",
-    "/root/hermes-agent-legacy-docker/data/scripts/vps_master_backup.py",
+    "/opt/hermes-agent-data/config.yaml",
+    "/opt/hermes-agent-data/.env",
+    "/opt/hermes-agent-data/kanban.db",
+    "/opt/hermes-agent-data/verification_evidence.db",
+    "/opt/hermes-agent-data/profiles/roshi/memories/MEMORY.md",
+    "/opt/hermes-agent-data/scripts/vps_master_backup.py",
 ]
 
 
@@ -129,7 +130,7 @@ def main() -> int:
 
     import yaml
     dev = yaml.safe_load(DECLARACION.read_text(encoding="utf-8")).get("dev", {})
-    llave = Path(dev.get("llave", str(RAIZ / "data/backup-keys/master-backup.key")))
+    llave = Path(dev.get("llave", str(DATA / "backup-keys/master-backup.key")))
 
     log("=== PRUEBA DE RESTAURACIÓN ===")
     log("(un respaldo no probado es una esperanza, no un respaldo)")

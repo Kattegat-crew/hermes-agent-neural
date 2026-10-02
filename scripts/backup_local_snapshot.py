@@ -28,10 +28,11 @@ import time
 from datetime import datetime, timezone
 from pathlib import Path
 
-RAIZ = Path("/root/hermes-agent-legacy-docker")
+RAIZ = Path("/opt/hermes-agent")          # repo de codigo: docs/ de la declaracion
+DATA = Path("/opt/hermes-agent-data")     # estado nativo (F6, 29-sep-2026)
 DECLARACION = RAIZ / "docs/ops/backup-sources.yaml"
-ESTADO = RAIZ / "data/state/backup-local.json"
-STAGING_CREDS = RAIZ / "data/backups/staging/dumps/_creds"
+ESTADO = DATA / "state/backup-local.json"
+STAGING_CREDS = DATA / "backups/staging/dumps/_creds"
 
 
 def log(msg: str) -> None:
@@ -87,7 +88,7 @@ def main() -> int:
     decl = cargar_declaracion()
     dev = decl.get("dev", {})
     repo = os.environ.get("LOCAL_RESTIC_REPO", dev.get("repo_local", "/root/hermes-backups/restic-local"))
-    llave = Path(dev.get("llave", str(RAIZ / "data/backup-keys/master-backup.key")))
+    llave = Path(dev.get("llave", str(DATA / "backup-keys/master-backup.key")))
     if not llave.is_file():
         log(f"ERROR: falta la llave {llave}")
         return 2
@@ -100,7 +101,7 @@ def main() -> int:
     # 2. Fuentes declaradas que existen
     fuentes = [f for f in dev.get("fuentes", []) if Path(f).exists()]
     faltantes = [f for f in dev.get("fuentes", []) if not Path(f).exists()]
-    staging = RAIZ / "data/backups/staging/dumps"
+    staging = DATA / "backups/staging/dumps"
     if staging.is_dir():
         fuentes.append(str(staging))
     log(f"  fuentes: {len(fuentes)} presentes · {len(faltantes)} ausentes · credenciales espejadas: {len(espejados)}")

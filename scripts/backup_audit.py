@@ -30,10 +30,11 @@ import urllib.request
 from datetime import datetime, timezone
 from pathlib import Path
 
-RAIZ = Path("/root/hermes-agent-legacy-docker")
+RAIZ = Path("/opt/hermes-agent")          # repo de codigo: docs/ de la declaracion
+DATA = Path("/opt/hermes-agent-data")     # estado nativo (F6, 29-sep-2026)
 DECLARACION = RAIZ / "docs/ops/backup-sources.yaml"
-ESTADO = RAIZ / "data/state/backup-audit.json"
-MAESTRO = RAIZ / "data/scripts/vps_master_backup.py"
+ESTADO = DATA / "state/backup-audit.json"
+MAESTRO = DATA / "scripts/vps_master_backup.py"
 
 MAX_HORAS_LOCAL = 36.0
 MAX_HORAS_OFFSITE = 36.0
@@ -89,7 +90,7 @@ def fuentes_del_snapshot(repo: str, llave: Path) -> list:
 
 
 def manifiesto_mas_reciente() -> dict:
-    ms = sorted(glob.glob(str(RAIZ / "data/backups/manifests/*.json")), key=os.path.getmtime)
+    ms = sorted(glob.glob(str(DATA / "backups/manifests/*.json")), key=os.path.getmtime)
     if not ms:
         return {}
     try:
@@ -134,7 +135,7 @@ def main() -> int:
     dev = decl.get("dev", {})
     repo_local = dev.get("repo_local", "/root/hermes-backups/restic-local")
     repo_off = dev.get("repo_offsite", "rclone:onedrive:Backups/.250")
-    llave = Path(dev.get("llave", str(RAIZ / "data/backup-keys/master-backup.key")))
+    llave = Path(dev.get("llave", str(DATA / "backup-keys/master-backup.key")))
 
     # 1. capa local
     snaps_l, err_l = snapshots(repo_local, llave)
