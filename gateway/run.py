@@ -5529,6 +5529,7 @@ class TurnRunner:
         progress_msg_id = None   # ID of the current progress message to edit
         can_edit = ctx.progress_grouping != "separate"  # "separate" = one message per tool (pre-v0.9 behavior)
         _last_edit_ts = 0.0      # Throttle edits to avoid Telegram flood control
+        _start_ts = time.monotonic()  # Start timestamp for live elapsed time counter
         _PROGRESS_EDIT_INTERVAL = 1.5  # Minimum seconds between edits
 
         _progress_len_fn = (
@@ -5587,7 +5588,14 @@ class TurnRunner:
             return await adapter.edit_message(**kwargs)
 
         def _progress_text(lines: list) -> str:
-            return "\n".join(str(line) for line in lines)
+            raw_text = "\n".join(str(line) for line in lines)
+            if getattr(ctx, "progress_grouping", "accumulate") == "replace" and raw_text.strip():
+                elapsed_secs = max(0, int(time.monotonic() - _start_ts))
+                mm, ss = divmod(elapsed_secs, 60)
+                timer_badge = f"⏱️ [{mm:02d}:{ss:02d}]"
+                if not raw_text.startswith("⏱️"):
+                    return f"{timer_badge} · {raw_text}"
+            return raw_text
 
         def _split_progress_groups(lines: list) -> list[list]:
             """Partition progress lines into platform-sized editable bubbles."""
@@ -5746,7 +5754,7 @@ class TurnRunner:
 
                 if can_edit and progress_msg_id is not None:
                     # Try to edit the existing progress message
-                    full_text = "\n".join(progress_lines)
+                    full_text = _progress_text(progress_lines)
                     result = await _edit_progress_message(progress_msg_id, full_text)
                     if not result.success:
                         _err = (getattr(result, "error", "") or "").lower()
@@ -5786,7 +5794,7 @@ class TurnRunner:
                 else:
                     if can_edit:
                         # First tool: send all accumulated text as new message
-                        full_text = "\n".join(progress_lines)
+                        full_text = _progress_text(progress_lines)
                         result = await adapter.send(
                             chat_id=ctx.source.chat_id,
                             content=full_text,

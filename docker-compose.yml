@@ -42,7 +42,7 @@ services:
       - /:/host:rw,rslave
       - /var/run/docker.sock:/var/run/docker.sock
       - ./data/vault:/opt/vault:ro
-      - /root/tools/graphs:/opt/graphs:ro
+      - /opt/tools/graphs:/opt/graphs:ro
       - /opt/vps-brain:/opt/vps-brain
     env_file:
       - .env

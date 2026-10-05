@@ -137,7 +137,7 @@ def main() -> int:
 
     objetivos = []
     if args.origen in ("local", "ambos"):
-        objetivos.append(("local", dev.get("repo_local", "/root/hermes-backups/restic-local")))
+        objetivos.append(("local", dev.get("repo_local", "/opt/hermes-backups/restic-local")))
     if args.origen in ("offsite", "ambos"):
         objetivos.append(("offsite", dev.get("repo_offsite", "rclone:onedrive:Backups/.250")))
 

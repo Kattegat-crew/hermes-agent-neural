@@ -4,6 +4,23 @@ Instructions for AI coding assistants and developers working on the hermes-agent
 
 **Never give up on the right solution.**
 
+## Development Governance: Spec-Driven Development (SDD) & Memory Protocol
+
+All agents (`agy`, `codex`, `opencode2`, `hermes`) and human contributors MUST adhere to the SDD methodology and memory lifecycle:
+
+- **Session Continuity & Systems Map (Read on Start)**:
+  - [`PROJECT_MEMORY.md`](file:///opt/hermes-agent/PROJECT_MEMORY.md): Current active focus, last session handover, and next immediate actions. Read on start; update on session close.
+  - [`ARCHITECTURE.md`](file:///opt/hermes-agent/ARCHITECTURE.md): Active services map, running daemons, system invariants, and the **Reusable Code Catalog**. Consult before writing any code.
+- **Mandatory Specification Lifecycle**: No feature, architectural refactor, or non-trivial change may be implemented without an approved specification in [`.specs/`](file:///opt/hermes-agent/.specs/).
+- **Rulebooks**:
+  - [`.agents/rules/01-sdd-workflow.md`](file:///opt/hermes-agent/.agents/rules/01-sdd-workflow.md): The 4-phase lifecycle (Spec -> Design -> Tasks -> TDD Verification).
+  - [`.agents/rules/02-vps-guardrails.md`](file:///opt/hermes-agent/.agents/rules/02-vps-guardrails.md): Strict FHS boundaries (`/opt/`), zero secrets, process and VPS hygiene.
+  - [`.agents/rules/03-code-standards.md`](file:///opt/hermes-agent/.agents/rules/03-code-standards.md): Quality gates, type hints, isolation, and testing rigor.
+  - [`.agents/rules/04-memory-and-reuse.md`](file:///opt/hermes-agent/.agents/rules/04-memory-and-reuse.md): Session start/close lifecycle and zero-code-duplication mandate.
+- **Invariants**: CONCEPTS > CODE. Never write code without an approved spec. Never reinvent code that already exists.
+
+
+
 ## What Hermes Is
 
 Hermes is a personal AI agent that runs the same agent core across a CLI, a

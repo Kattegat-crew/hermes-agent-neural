@@ -8,12 +8,13 @@
 #
 set -euo pipefail
 
-REPO_DIR="/root/hermes-agent-legacy-docker"
-LOG_FILE="${REPO_DIR}/scripts/sync-upstream.log"
+REPO_DIR="/opt/hermes-agent"
+DATA_DIR="/opt/hermes-agent-data"  # F6 nativo (02-oct-2026)
+LOG_FILE="/var/log/hermes-sync.log"
 LOCK_FILE="/tmp/hermes-sync.lock"
-WATERMARK_FILE="${REPO_DIR}/scripts/.last_notified_tag"
+WATERMARK_FILE="${DATA_DIR}/state/.last_notified_tag"
 
-ENV_FILE="${REPO_DIR}/data/.env"
+ENV_FILE="${DATA_DIR}/.env"
 DISCORD_BOT_TOKEN="${DISCORD_BOT_TOKEN:-}"
 if [ -z "$DISCORD_BOT_TOKEN" ] && [ -f "$ENV_FILE" ]; then
     DISCORD_BOT_TOKEN=$(grep -E "^DISCORD_BOT_TOKEN=" "$ENV_FILE" 2>/dev/null | cut -d'=' -f2- | tr -d '"\r\n' || echo "")
@@ -56,7 +57,7 @@ payload = {
         "description": f"Hola Jesús, se detectó una nueva versión oficial de **NousResearch/hermes-agent**.\n\n**Compatibilidad:** {status_text}\n\nCuando desees actualizar el entorno, recuerda coordinar la ventana de mantenimiento externa con Toallín.",
         "color": color,
         "fields": [
-            {"name": "Comando de Aplicación", "value": f"`/root/hermes-agent-legacy-docker/scripts/sync-upstream.sh --apply {tag}`", "inline": False},
+            {"name": "Comando de Aplicación", "value": f"`/opt/hermes-agent/scripts/sync-upstream.sh --apply {tag}`", "inline": False},
             {"name": "Garantías de Seguridad", "value": "• Snapshot preventivo de WhatsApp\n• Validación de guardrails en sandbox antes de tocar main\n• Cero downtime intempestivo", "inline": False}
         ],
         "footer": {"text": "NeuralCrew Labs • Hermes Fleet Watcher"}

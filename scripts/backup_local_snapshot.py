@@ -87,7 +87,7 @@ def main() -> int:
     t0 = time.time()
     decl = cargar_declaracion()
     dev = decl.get("dev", {})
-    repo = os.environ.get("LOCAL_RESTIC_REPO", dev.get("repo_local", "/root/hermes-backups/restic-local"))
+    repo = os.environ.get("LOCAL_RESTIC_REPO", dev.get("repo_local", "/opt/hermes-backups/restic-local"))
     llave = Path(dev.get("llave", str(DATA / "backup-keys/master-backup.key")))
     if not llave.is_file():
         log(f"ERROR: falta la llave {llave}")

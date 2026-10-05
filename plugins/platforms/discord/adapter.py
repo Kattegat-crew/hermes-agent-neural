@@ -143,6 +143,7 @@ _DISCORD_NONCONVERSATIONAL_HISTORY_MESSAGE_PATTERNS = (
     # failure).  New sends are marked at send time — these regexes only keep
     # legacy messages from partitioning history after an upgrade.
     re.compile(r"^\s*❓\s+\*\*Hermes needs your input\*\*[\s\S]*$", re.IGNORECASE),
+    re.compile(r"^\s*(?:❓|🐢)\s+\*\*(?:Hermes|Roshi|[^\*]+)\s+(?:needs your input|necesita tu decisión)\*\*[\s\S]*$", re.IGNORECASE),
     re.compile(r"^\s*⚠️\s+\*\*Command Approval Required\*\*[\s\S]*$", re.IGNORECASE),
     re.compile(r"^\s*⚠️\s+Subagent failed\b[\s\S]*$", re.IGNORECASE),
 )
@@ -7888,17 +7889,30 @@ class DiscordAdapter(BasePlatformAdapter):
             if not channel:
                 channel = await self._client.fetch_channel(int(target_id))
 
+            extra_lang = (self.config.extra or {}).get("language") if hasattr(self, "config") and self.config else None
+            try:
+                from agent.i18n import get_language
+                lang = extra_lang or get_language()
+            except Exception:
+                lang = extra_lang or "en"
+            is_spanish = bool(lang and str(lang).lower().startswith("es"))
+
+            bot_name = "Hermes"
+            if self._client and getattr(self._client, "user", None):
+                bot_name = getattr(self._client.user, "display_name", None) or getattr(self._client.user, "name", None) or "Hermes"
+            elif os.environ.get("HERMES_PROFILE"):
+                bot_name = os.environ.get("HERMES_PROFILE").capitalize()
+
+            is_roshi = "roshi" in bot_name.lower() or os.environ.get("HERMES_PROFILE", "").lower() == "roshi"
+            icon = "🐢" if is_roshi else "❓"
+            if is_spanish:
+                prompt_title = f"{icon} {bot_name} necesita tu decisión"
+            else:
+                prompt_title = f"{icon} {bot_name} needs your input"
+
             # Discord embed description limit is 4096; trim conservatively.
             max_desc = 4088
             body = str(question or "").strip()
-            if len(body) > max_desc:
-                body = body[: max_desc - 3] + "..."
-
-            embed = discord.Embed(
-                title="❓ Hermes needs your input",
-                description=body,
-                color=discord.Color.orange(),
-            )
 
             # Normalise choices: LLMs sometimes emit `[{"description": "..."}]`
             # instead of bare strings, which would render as raw Python repr on
@@ -7911,19 +7925,13 @@ class DiscordAdapter(BasePlatformAdapter):
                 if isinstance(c, dict):
                     # Prefer the canonical LLM tool-call user-facing keys
                     # in the order the LLM is most likely to emit them.
-                    # 'name' and 'value' are deliberately NOT here: they're
-                    # Discord-component-shaped fields that could appear in
-                    # dicts that aren't meant to be choices (e.g., a
-                    # developer-error wiring that passes a Button-shaped
-                    # object). Picking them would leak raw enum values
-                    # or 4-char model identifiers onto user-facing buttons.
-                    # If a dict has none of the canonical keys, drop it
-                    # rather than picking some random field — a garbage
-                    # button label is worse than no button at all.
                     for key in ("label", "description", "text", "title"):
                         v = c.get(key)
                         if isinstance(v, str) and v.strip():
                             return v.strip()
+                    val = c.get("value")
+                    if isinstance(val, str) and val.strip() and (" " in val or c.get("recommended") is not None):
+                        return val.strip()
                     return ""
                 if isinstance(c, (list, tuple)):
                     return " ".join(_flatten_choice(x) for x in c).strip()
@@ -7937,9 +7945,38 @@ class DiscordAdapter(BasePlatformAdapter):
             clean_choices = clean_choices[:24]
 
             if clean_choices:
+                formatted_choices = "\n\n".join(
+                    f"**{i + 1}.** {c}" for i, c in enumerate(clean_choices)
+                )
+                if is_spanish:
+                    options_section = f"\n\n**Opciones:**\n{formatted_choices}"
+                else:
+                    options_section = f"\n\n**Choices:**\n{formatted_choices}"
+                full_desc = body + options_section
+                if len(full_desc) > max_desc:
+                    full_desc = full_desc[: max_desc - 3] + "..."
+                embed_description = full_desc
+            else:
+                if len(body) > max_desc:
+                    body = body[: max_desc - 3] + "..."
+                embed_description = body
+
+            embed = discord.Embed(
+                title=prompt_title,
+                description=embed_description,
+                color=discord.Color.orange(),
+            )
+
+            if clean_choices:
+                if is_spanish:
+                    field_name = "Opciones"
+                    field_value = "Elige una opción con los botones o pulsa ✏️ Otra respuesta para escribir."
+                else:
+                    field_name = "Choices"
+                    field_value = "Pick one below, or click ✏️ Other to type a custom answer."
                 embed.add_field(
-                    name="Choices",
-                    value="Pick one below, or click ✏️ Other to type a custom answer.",
+                    name=field_name,
+                    value=field_value,
                     inline=False,
                 )
                 view = ClarifyChoiceView(
@@ -7947,24 +7984,38 @@ class DiscordAdapter(BasePlatformAdapter):
                     clarify_id=clarify_id,
                     allowed_user_ids=self._allowed_user_ids,
                     allowed_role_ids=self._allowed_role_ids,
+                    is_spanish=is_spanish,
                 )
             else:
+                if is_spanish:
+                    field_name = "Respuesta"
+                    field_value = "Responde en este canal con tu respuesta."
+                else:
+                    field_name = "Reply"
+                    field_value = "Reply in this channel with your answer."
                 embed.add_field(
-                    name="Reply",
-                    value="Reply in this channel with your answer.",
+                    name=field_name,
+                    value=field_value,
                     inline=False,
                 )
                 view = None
 
             # Mirror the question in plain content — embeds are invisible on
             # some clients (see send_exec_approval).
-            clarify_tail = (
-                "\n\nPick one below, or click ✏️ Other to type a custom answer."
-                if clean_choices
-                else "\n\nReply in this channel with your answer."
-            )
+            if is_spanish:
+                clarify_tail = (
+                    "\n\nElige una opción con los botones o pulsa ✏️ Otra respuesta para escribir."
+                    if clean_choices
+                    else "\n\nResponde en este canal con tu respuesta."
+                )
+            else:
+                clarify_tail = (
+                    "\n\nPick one below, or click ✏️ Other to type a custom answer."
+                    if clean_choices
+                    else "\n\nReply in this channel with your answer."
+                )
             content = self._self_contained_prompt_content(
-                "❓ **Hermes needs your input**", str(question or "").strip(),
+                f"**{prompt_title}**", str(question or "").strip(),
                 tail=clarify_tail,
             )
             msg = await channel.send(content=content, embed=embed, view=view) if view else await channel.send(content=content, embed=embed)
@@ -9908,12 +9959,14 @@ def _define_discord_view_classes() -> None:
             clarify_id: str,
             allowed_user_ids: set,
             allowed_role_ids: Optional[set] = None,
+            is_spanish: bool = False,
         ):
             super().__init__(timeout=_read_discord_prompt_timeout())
             self.choices = list(choices)[:24]
             self.clarify_id = clarify_id
             self.allowed_user_ids = allowed_user_ids
             self.allowed_role_ids = allowed_role_ids or set()
+            self.is_spanish = is_spanish
             self.resolved = False
 
             for index, choice in enumerate(self.choices):
@@ -9967,8 +10020,9 @@ def _define_discord_view_classes() -> None:
                 button.callback = self._make_choice_callback(index, choice)
                 self.add_item(button)
 
+            other_label = "✏️ Otra respuesta" if self.is_spanish else "✏️ Other (type answer)"
             other_btn = discord.ui.Button(
-                label="✏️ Other (type answer)",
+                label=other_label,
                 style=discord.ButtonStyle.secondary,
                 custom_id=f"clarify:{clarify_id}:other",
             )
@@ -9993,13 +10047,15 @@ def _define_discord_view_classes() -> None:
         ) -> None:
             """Resolve the clarify with a chosen option."""
             if self.resolved:
+                msg = "Esta solicitud ya ha sido respondida." if self.is_spanish else "This prompt has already been answered~"
                 await interaction.response.send_message(
-                    "This prompt has already been answered~", ephemeral=True,
+                    msg, ephemeral=True,
                 )
                 return
             if not self._check_auth(interaction):
+                msg = "No tienes autorización para responder a esta solicitud." if self.is_spanish else "You're not authorized to answer this prompt~"
                 await interaction.response.send_message(
-                    "You're not authorized to answer this prompt~", ephemeral=True,
+                    msg, ephemeral=True,
                 )
                 return
 
@@ -10014,7 +10070,8 @@ def _define_discord_view_classes() -> None:
                 user = getattr(interaction, "user", None)
                 display_name = getattr(user, "display_name", "user")
                 embed.color = discord.Color.green()
-                embed.set_footer(text=f"Answered by {display_name}: {choice}")
+                footer_text = f"Respondido por {display_name}: {choice}" if self.is_spanish else f"Answered by {display_name}: {choice}"
+                embed.set_footer(text=footer_text)
 
             try:
                 await interaction.response.edit_message(embed=embed, view=self)
@@ -10061,13 +10118,15 @@ def _define_discord_view_classes() -> None:
         async def _on_other(self, interaction: "discord.Interaction") -> None:
             """Flip the clarify entry into text-capture mode."""
             if self.resolved:
+                msg = "Esta solicitud ya ha sido respondida." if self.is_spanish else "This prompt has already been answered~"
                 await interaction.response.send_message(
-                    "This prompt has already been answered~", ephemeral=True,
+                    msg, ephemeral=True,
                 )
                 return
             if not self._check_auth(interaction):
+                msg = "No tienes autorización para responder a esta solicitud." if self.is_spanish else "You're not authorized to answer this prompt~"
                 await interaction.response.send_message(
-                    "You're not authorized to answer this prompt~", ephemeral=True,
+                    msg, ephemeral=True,
                 )
                 return
 
@@ -10094,8 +10153,9 @@ def _define_discord_view_classes() -> None:
                 user = getattr(interaction, "user", None)
                 display_name = getattr(user, "display_name", "user")
                 embed.color = discord.Color.blue()
+                footer_text = f"Esperando respuesta escrita de {display_name}…" if self.is_spanish else f"Awaiting typed response from {display_name}…"
                 embed.set_footer(
-                    text=f"Awaiting typed response from {display_name}…",
+                    text=footer_text,
                 )
 
             try:
@@ -10117,7 +10177,8 @@ def _define_discord_view_classes() -> None:
                     embed = msg.embeds[0] if msg.embeds else None
                     if embed:
                         embed.color = discord.Color.greyple()
-                        embed.set_footer(text="⏱ Prompt expired — no action taken")
+                        footer_text = "⏱ Solicitud expirada — sin acción tomada" if self.is_spanish else "⏱ Prompt expired — no action taken"
+                        embed.set_footer(text=footer_text)
                     await msg.edit(embed=embed, view=self)
                 except Exception:
                     pass

@@ -133,7 +133,7 @@ def main() -> int:
 
     decl = leer_declaracion()
     dev = decl.get("dev", {})
-    repo_local = dev.get("repo_local", "/root/hermes-backups/restic-local")
+    repo_local = dev.get("repo_local", "/opt/hermes-backups/restic-local")
     repo_off = dev.get("repo_offsite", "rclone:onedrive:Backups/.250")
     llave = Path(dev.get("llave", str(DATA / "backup-keys/master-backup.key")))
 

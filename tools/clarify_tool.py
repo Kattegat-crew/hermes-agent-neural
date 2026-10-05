@@ -67,6 +67,9 @@ def _flatten_choice(c) -> str:
             v = c.get(key)
             if isinstance(v, str) and v.strip():
                 return v.strip()
+        val = c.get("value")
+        if isinstance(val, str) and val.strip() and (" " in val or c.get("recommended") is not None):
+            return val.strip()
         return ""
     if isinstance(c, (list, tuple)):
         return " ".join(_flatten_choice(x) for x in c).strip()

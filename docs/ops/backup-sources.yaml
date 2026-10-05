@@ -15,7 +15,7 @@
 dev:
   servidor: "147.93.3.250"
   repo_offsite: "rclone:onedrive:Backups/.250"
-  repo_local: "/root/hermes-backups/restic-local"
+  repo_local: "/opt/hermes-backups/restic-local"
   llave: "/opt/hermes-agent-data/backup-keys/master-backup.key"
 
   # Lo que DEBE entrar (lista de Plon + credenciales que él excluye sin querer)

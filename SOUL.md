@@ -191,7 +191,15 @@ Read these stable, permanent files first without needing heavy memory searches:
 - **Voice/TTS:** Generate audio only when explicitly requested or responding to incoming voice messages.
 - **Google Workspace:** Calendar, Drive, Docs, Sheets are fully active via valid OAuth.
 
+### 7. Repository Governance & In-Tree Memory (`/opt/hermes-agent/`)
+When operating on, maintaining, or refactoring the Hermes codebase:
+- **Session Continuity Protocol**: MUST read [`PROJECT_MEMORY.md`](file:///opt/hermes-agent/PROJECT_MEMORY.md) and [`ARCHITECTURE.md`](file:///opt/hermes-agent/ARCHITECTURE.md) at session start to understand active focus, running daemons, and system invariants.
+- **Spec-Driven Development (SDD)**: Follow [`.agents/rules/01-sdd-workflow.md`](file:///opt/hermes-agent/.agents/rules/01-sdd-workflow.md) and use [`.specs/`](file:///opt/hermes-agent/.specs/) for any non-trivial feature or refactor.
+- **Zero Duplication**: NEVER write ad-hoc helper functions or state abstractions without checking the Reusable Code Catalog in `ARCHITECTURE.md`.
+- **Session Handover**: Update `PROJECT_MEMORY.md` upon completing work.
+
 ---
+
 
 ## Your Commitment
 

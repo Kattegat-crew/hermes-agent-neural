@@ -294,3 +294,78 @@ class TestDiscordSendClarify:
         for label in choice_labels:
             assert "only_name_here" not in label, f"name leaked: {label!r}"
             assert "only_value_here" not in label, f"value leaked: {label!r}"
+
+    @pytest.mark.asyncio
+    async def test_spanish_roshi_clarify_rendering(self, monkeypatch):
+        monkeypatch.setenv("HERMES_PROFILE", "roshi")
+        config = PlatformConfig(enabled=True, token="test-token", extra={"language": "es"})
+        adapter = DiscordAdapter(config)
+        adapter._client = MagicMock()
+        adapter._client.user = SimpleNamespace(display_name="Roshi", name="roshi")
+        channel = MagicMock()
+        sent_msg = MagicMock()
+        sent_msg.id = 999
+        channel.send = AsyncMock(return_value=sent_msg)
+        adapter._client.get_channel = MagicMock(return_value=channel)
+
+        long_option = "Opción 1 con descripción bastante extensa para verificar que se muestra completa en el embed"
+        result = await adapter.send_clarify(
+            chat_id="9001",
+            question="¿Cuál opción prefieres?",
+            choices=[
+                {"value": long_option, "recommended": True},
+                "Opción 2 estándar",
+            ],
+            clarify_id="cidES",
+            session_key="sk-ES",
+        )
+
+        assert result.success is True
+        kwargs = channel.send.call_args.kwargs
+        embed = kwargs["embed"]
+        view = kwargs["view"]
+
+        # Title uses Roshi turtle icon and Spanish prompt
+        assert embed.title == "🐢 Roshi necesita tu decisión"
+        # Options are rendered in full in embed description
+        assert "**Opciones:**" in embed.description
+        assert f"**1.** {long_option}" in embed.description
+        assert "**2.** Opción 2 estándar" in embed.description
+        # Fields are in Spanish
+        assert embed.fields[0]["name"] == "Opciones"
+        assert "✏️ Otra respuesta" in embed.fields[0]["value"]
+        # View has Spanish "Other" button
+        other_btn = view.children[-1]
+        assert other_btn.label == "✏️ Otra respuesta"
+
+    @pytest.mark.asyncio
+    async def test_spanish_clarify_choice_view_messages(self):
+        view = ClarifyChoiceView(
+            choices=["Opción A"],
+            clarify_id="cidMsg",
+            allowed_user_ids={"100"},
+            is_spanish=True,
+        )
+
+        # Unauthorized user
+        interaction = _make_interaction(user_id="200")
+        await view._resolve_choice(interaction, index=0, choice="Opción A")
+        interaction.response.send_message.assert_called_once_with(
+            "No tienes autorización para responder a esta solicitud.",
+            ephemeral=True,
+        )
+
+        # Authorized user
+        interaction_ok = _make_interaction(user_id="100", display_name="Jesús")
+        await view._resolve_choice(interaction_ok, index=0, choice="Opción A")
+        assert interaction_ok.message.embeds[0].set_footer.called
+        footer_text = interaction_ok.message.embeds[0].set_footer.call_args.kwargs["text"]
+        assert footer_text == "Respondido por Jesús: Opción A"
+
+        # Already resolved
+        interaction_dup = _make_interaction(user_id="100")
+        await view._resolve_choice(interaction_dup, index=0, choice="Opción A")
+        interaction_dup.response.send_message.assert_called_once_with(
+            "Esta solicitud ya ha sido respondida.",
+            ephemeral=True,
+        )
