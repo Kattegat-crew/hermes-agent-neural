@@ -16,6 +16,7 @@ This directory contains specifications, architectural designs, and implementatio
 | ID | Title | Status | Author | Target Path | Date |
 |---|---|---|---|---|---|
 | `_template` | Base SDD Specification Template | N/A | System | `.specs/_template/` | 2026-10-03 |
+| `memoria-dev` | DEV Memory Continuity and Delivery | Approved (spec + design); scoped tasks ready/gated | Codex | `.specs/memoria-dev/` | 2026-10-08 |
 
 ---
 
