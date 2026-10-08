@@ -1,0 +1,64 @@
+# Memoria DEV — Evidence Baseline
+
+**Observed:** 2026-10-08. This is a read-only snapshot, not proof of durable delivery or restore capability. Counters and service state can change after collection.
+
+## Scope and Evidence Rules
+
+This baseline separates observed state from unresolved claims. It covers DEV memory continuity and delivery only. It does not authorize code, service, cron, database, production, remote, or destructive changes. No secrets or memory contents are reproduced here.
+
+## Audit Boundary and Documentation Inventory
+
+The bounded audit confirmed five first-party product Git roots: `/opt/hermes-agent`, `/opt/golden-game-landing`, `/opt/paradise-casino/paradise-casino-landing`, `/opt/marketing-campaign-generator`, and `/opt/ai-platform`. These five are the confirmed roots in this audit, **not an exhaustive inventory of every first-party repository, tool repository, or worktree**. `/opt/hermes-agent-data` is a separate runtime data/workspace path, not the fifth Git root; access to its governing files was denied in the initial audit. Keep that workspace boundary explicit rather than substituting it for a repository.
+
+Across the five confirmed repositories, the audit found six active governance Markdown documents per root (30 total), all five `.specs/` indices containing only their template entry, and 142 checked local links. Two unresolved architecture references were observed: Hermes `ARCHITECTURE.md:63` points to `agent/skills_registry.py`, and Golden Game `ARCHITECTURE.md:72` points to `src/utils/scrollAnimations.js`. Replacement paths are unknown; this work makes no architecture/catalog correction. These counts are not a count of every Markdown file or proof that tool repositories and all worktrees are inventoried.
+
+The initial Hermes branch state included one unrelated modified TikTok ingestion skill; it remains preserved. Other discovered repositories/worktrees also had pre-existing dirty state in the parent audit and were not changed by this documentation unit. No credential values were collected or recorded.
+
+## Observed State
+
+| Area | Observed | What this proves—and does not prove |
+|---|---|---|
+| DEV services | `hermes-agent.service` (default), `hermes-agent-roshi`, `hermes-agent-vigia`, and dashboard were reported active in the bounded runtime inspection. | Establishes the observed service state at inspection time, not health of every memory path or future availability. |
+| Native memory footprint | Default `MEMORY.md`: 66,179 bytes; `USER.md`: 6,453 bytes. Roshi: 2,136 and 1,373 bytes. Vigia: 2,246 and 1,108 bytes. Bragi `MEMORY.md`: 1,822 bytes. Sindri `MEMORY.md`: 2,194 bytes; `USER.md`: 657 bytes. | File sizes do not establish content freshness, successful prompt inclusion, write permission, or usable character limits. Byte counts are not character counts. |
+| Native limits | Default configuration reports memory/user limits of 100,000/8,000 characters and enables both files. Other inspected profiles omit those defaults. | Does not prove effective limits for every profile or the amount actually consumed by a prompt. |
+| Environment context | The audit process resolved `HERMES_HOME` to `/opt/hermes-agent-data`; `TERMINAL_CWD` was unset in that process. | This is the audit process environment only. It is not proof of the service environment or Discord's selected project context. |
+| Shared Engram store | `/root/.engram/engram.db` was observed read-only at 19,701,760 bytes with point-in-time counts of 1,615 observations, 834 prompts, and 173 sessions. An Engram MCP entry exists. | Confirms the shared database file and MCP configuration entry were observed. Active MCP database binding is **unverified** because the inspected MCP entry did not specify a database path. Counts are mutable snapshots. |
+| Native Engram configuration | Default, Roshi, and Vigia configuration set `ENGRAM_DATA_DIR` to `/opt/hermes-agent-data/home/.engram/engram.db`, a different inode from `/root/.engram/engram.db`. | This is configured state, not proof of the live service's effective environment or which DB each operation used. The existing stores may contain divergent memories. Do not merge, move, delete, or create a third DB. If safe access to the intended shared DB cannot be established under the service identity, pause the storage architecture decision. |
+| Graph outputs | Graph v2 output from Oct. 3 14:04 UTC contained 4,677 nodes and 4,138 edges. Legacy output from Oct. 2 11:02 UTC contained 774 nodes and 805 edges. | Establishes output files and their recorded timestamps/counts, not freshness relative to source memory or successful consumption. |
+| Graph producer/consumer | Parent's read-only inspection reported runtime `scripts/brain_graph_update_inner.sh:18–23` writes `brain/graphify-out/graph.json`; runtime `tools/memory_graph.py:11` prefers `brain/graphify-out-v2/graph.json`. Both artifacts exist. The repository `agent/learning_graph.py` uses `get_hermes_home`; the runtime copy is absent. | This is a producer/consumer path mismatch, but old output timestamps do not prove a missed delivery or user-visible failure. The current writer's exact reads under `/opt/hermes-agent-data` were denied; no alternate path was used. Preserve both artifacts pending schema/provenance and consumer validation. |
+| Graph wrapper | Parent's read-only inspection reported `scripts/brain_graph_update_wrapper.sh:29–39` captures the inner return code, then `:41–48` unconditionally exits 0; `:23–27` contains recursive ownership/config-permission operations. | This supports a wrapper exit-status defect and identifies unsafe side effects. The wrapper was not executed; no recursive ownership or permission command is authorized. |
+| Scheduled jobs | One memory-named cron, `brain-graph-update-noche`, was observed enabled at 03:30 daily local time. Its latest run on Oct. 8 completed at 03:31 with `status=ok`. Known invocation/output delivery was not established. | Does not prove the run refreshed the expected output, that delivery occurred, or that `status=ok` is a false success. No current duplicate-job condition was established. |
+| Backup scope | 215 backup files were observed; the newest timestamp was Oct. 8 08:32 UTC. Parent reports `backup.py` provider backups include only `backup_paths` of the active provider. | Presence and recency do not prove complete coverage or successful restore. Restore caller, exact scope, and restore proof remain unresolved. No restore test was performed. |
+| Skills | 61 runtime skills were counted. Skill discovery is profile-scoped and on-demand; catalog/link/load availability per profile was not established. | A count does not prove a skill is discoverable or loadable for a given profile. Verify with the intended profile's existing list/search/view operations; do not add a duplicate skill based on the count. |
+| Instruction loading | Parent's source/config audit found distinct entrypoints: Hermes `agent/system_prompt.py:884–909` calls the context loader; `agent/prompt_builder.py:2404–2449` discovers `AGENTS.md` from Git root to cwd, with `.hermes.md`/`HERMES.md` taking precedence and `SOUL.md` loaded separately. Codex uses `model_instructions_file` (`engram-instructions.md`) plus managed AGENTS. OpenCode has global `.config/opencode` AGENTS and a `gentle-orchestrator` config without an instructions field. Gemini `GEMINI.md`/`system.md` were noted as candidate files, but loading and any context override were not verified. Copilot user instructions were missing and its config parse failed. Antigravity's general loader remains unknown. | `/root/AGENTS.md` is not an ancestor of `/opt`; project `PROJECT_MEMORY.md`/`ARCHITECTURE.md` are policy-driven reads, not automatically injected solely by linking them. This does not prove end-to-end compliance for any runtime. |
+| Project documentation | The five confirmed product Git roots are `/opt/hermes-agent`, `/opt/golden-game-landing`, `/opt/paradise-casino/paradise-casino-landing`, `/opt/marketing-campaign-generator`, and `/opt/ai-platform`. Each has six active governance Markdown files; each `.specs/` index lists only its template. | No completed SDD example was found in the indices. The separate `/opt/hermes-agent-data` workspace was not accessible as a repository and is not counted as one. |
+| Governance links | The audit counted 30 active governance Markdown documents and 142 checked local links across the five confirmed repositories; two architecture references are unresolved (Hermes `ARCHITECTURE.md:63`, Golden `ARCHITECTURE.md:72`). | The bounded link audit is not an exhaustive tool-repository/worktree inventory. Missing target replacements are unknown; no architecture fix is authorized here. |
+| Unrelated work | The Hermes repository already has a modified TikTok ingestion skill. | This work must preserve that change and exclude it from the Memoria DEV diff. |
+| Ownership metadata | A namespace-visible `stat` projected UID/GID `65534:65534` for the five documentation files (mode `644`) and `.git` (mode `755`). Separate approved host-level `stat` proof confirmed `hermes:hermes` UID/GID `10000:10000` for all five files, mode `644`, and `.git`, mode `755`. | The namespace projection is not evidence of an ownership fault; host-level ownership is verified. No ownership repair or retry is needed or authorized. |
+
+## Reported Concerns Versus Verified Facts
+
+- **Reported:** Memory data or context may not persist or be available consistently. **Verified:** Native files and the shared Engram database exist; some runtime services were active at inspection. **Unknown:** actual read/write continuity and active Engram MCP binding for each agent.
+- **Reported:** Paths or graph generation may be wrong/stale. **Verified:** runtime and repository graph implementations differ; graph files have recorded timestamps. **Unknown:** which implementation is invoked, whether its output is current, and whether a mismatch breaks consumers.
+- **Reported:** Scheduled graph work may falsely report success or fail delivery. **Verified:** one memory-named job completed with `status=ok`; output delivery was not observed. **Unknown:** invocation/output contract and error propagation. Do not label this a false-success defect yet.
+- **Reported:** Duplicate memory jobs may exist. **Verified:** one relevant job was observed in this bounded audit. **Unknown:** whether other profiles, schedulers, or historical jobs create overlap. Do not treat a historical duplicate count as current.
+- **Reported:** Backups or skills may be unreliable. **Verified:** backup files and a skill count exist. **Unknown:** restore success and catalog/link/load behavior.
+
+## Scope Inputs Needed Before Design
+
+1. Declare and reconcile the first-party repository/worktree inventory; record any inaccessible or unidentified root as blocked instead of claiming full coverage.
+2. Read-only trace the relevant memory read/write and context-loader entrypoints for each in-scope DEV agent, including the actual session/workspace context used by Discord where accessible.
+3. Resolve or explicitly leave blocked the active Engram binding and read-only graph/job invocation, expected output, consumer, and freshness questions. Do not create or switch databases.
+4. Identify the intended DEV agents/profiles and the project-boundary rules for shared versus local context.
+5. Identify the managed-instructions generator/source, provenance, and authorized regeneration/update owner before changing any managed rules; these remain unknown and are blockers to such edits.
+
+## Validations Reserved for Approved Design and Scoped Permission
+
+- Fresh-session write/read round trips, cron failure injection, profile visibility changes, backup restore exercises, or other tests that write memory/configuration must be scheduled only after an approved design names the target, side effects, and rollback outcome and the necessary scoped permission is granted.
+- A backup/restore test is distinct from rolling back a proposed change. Each approved implementation unit must state its own rollback outcome and preserve user memories, their history, and prior configuration.
+- Do not use chmod, namespace tricks, alternate paths, or permission workarounds to access protected read-only `.codex/`, `.agents/`, `.git/`, or `.aws/` content. If required evidence is inaccessible, record the blocker and stop that branch of investigation.
+- Do not require every future write, restore, or failure-injection acceptance check to be completed before design; determine the safe validation plan in the approved design, then perform it only with scoped authorization.
+
+## Handling and Safety
+
+This document records metadata and behavior summaries only; do not add raw memory contents, secrets, credentials, personal data, or database dumps. Preserve existing memories. Any deletion or migration requires a later explicit, scoped approval and approved design.
