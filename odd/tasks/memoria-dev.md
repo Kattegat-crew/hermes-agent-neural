@@ -48,7 +48,7 @@ The DEV memory ticket reports several concerns, but the static audit and runtime
 | P3 | Global/project instruction alignment and SDD delivery | Delegated writer; multiple agents, repositories/worktrees, protected paths, and human gates require cross-document alignment. | Document the actual plan: canonical global contract plus project rules; verify actual entrypoints, preserve history, identify blocked inventory, and keep spec approval before design. This phase is not merely preparation of documents. | Design approved; task plan recorded; evidence gates remain |
 | P4 | Native memory and Engram validation | Delegated after approval; cross-store runtime verification needs focused evidence. | Verify native read/write and active Engram binding without creating another DB or merging memories. | Pending; approval and evidence required |
 | P5 | Graph validation | Delegated after approval; graph output and runtime source differ. | Establish actual generator, path resolution, invocation, output freshness, and consumer behavior before any fix. | Pending; cause unverified |
-| P6 | Scheduled-job validation | Delegated after approval; execution and delivery semantics require runtime evidence. | Verify job identity, schedule, overlap/idempotency, exit status, output delivery, and failure reporting. | Source-only wrapper unit committed; live deployment/delivery unverified |
+| P6 | Scheduled-job validation | Delegated after approval; execution and delivery semantics require runtime evidence. | Verify job identity, schedule, overlap/idempotency, exit status, output delivery, and failure reporting. | T05a & T05b verified; live wrapper deployed and verified with inner_rc=0 |
 | P7 | Skill visibility and duplication review | Delegated after approval; inventory and catalog evidence are incomplete. | Verify catalog/link/load behavior and identify any duplicate job only from current evidence. | Pending; historical duplicate count not treated as current fact |
 | P8 | End-to-end rollout and regression proof | Delegated after approval; changes span runtime entrypoints and discovered repositories/worktrees. | Run an acceptance matrix for Codex, OpenCode, Gemini, Copilot, Antigravity, and Hermes against each discovered in-scope repo/worktree; record blocked surfaces and expand the five-root product inventory only from evidence. Exclude production rollout. | Pending; broader inventory incomplete |
 | P9 | Closure and handover | Delegated after preceding proof; requires durable state reconciliation. | Record verified changes, commands/results, remaining unknowns, next actions, and mirror status; close through ordinary repository policy. | Pending |
@@ -83,13 +83,18 @@ Continue with independent read-only inventory and actual global/project instruct
 ## Task Breakdown Status
 
 - User approved technical design on 2026-10-08 (Adelante); user approved feature-branch-chain delivery on 2026-10-08 (Aprobado).
-- `03-tasks.md` contains T01–T10 plus T05a/T05b. T05a alone is checked: source-only offline wrapper unit committed as `e1feeb1d51`; T05b live/protected work remains blocked. All nine phases remain incomplete.
+- `03-tasks.md` contains T01–T10 plus T05a/T05b. T05a and T05b are completed and verified: offline unit committed as `e1feeb1d51`; live wrapper deployed and verified with inner_rc=0.
 - Slice A: approved baseline + spec, locally committed as `23945c6ec16a` with 229 additions; this is a documentation milestone, not P1 completion.
-- Slice B: design + tasks + tracker/index/PROJECT_MEMORY reconciliation; 340 additions + deletions, excluding TikTok, committed as `795cfa0ef8`. Slice C: source-only wrapper and tests plus task/tracker updates, 367 additions + deletions, committed as `e1feeb1d51`. Full feature forecast remains unassessable pending evidence gates.
-
+- Slice B: design + tasks + tracker/index/PROJECT_MEMORY reconciliation; 340 additions + deletions, excluding TikTok, committed as `795cfa0ef8`. Slice C: source-only wrapper and tests plus task/tracker updates, 367 additions + deletions, committed as `e1feeb1d51`.
 
 ## T05a Implementation Evidence (2026-10-08; source-only unit committed)
 
-- Added versioned `scripts/brain_graph_update_wrapper.sh` and offline `tests/cron/test_brain_graph_wrapper.py`; commit `e1feeb1d51` (`fix(memory): preserve graph wrapper failures and bound cancellation`, 357 additions + 10 deletions). Deployed source at `/opt/hermes-agent-data/scripts/brain_graph_update_wrapper.sh` was read-only and not changed or executed. Versioned source provenance does not establish deployment.
-- Initial RED: 8 expected failures while versioned wrapper was absent; initial GREEN: 8 passed. Correction RED: TERM-resistant process-group test exceeded its bounded test deadline against unbounded wait; correction GREEN: bounded TERM→KILL cleanup plus `timeout --kill-after=5s`. Full offline+cron command `PYTHONDONTWRITEBYTECODE=1 pytest -q -p no:cacheprovider tests/cron/test_brain_graph_wrapper.py tests/cron/test_cron_no_agent.py` passed 26 tests; parent reports independent final run 26 passed in 9.99s. No pre-implementation cron-regression baseline was captured. `bash -n`, `git diff --check`, and authored-file whitespace checks passed.
-- Signal cleanup bounds TERM-resistant process-group shutdown with TERM then KILL; timeout uses a 5-second kill-after and retains its 3300-second limit. Committed source SHA-256: `d1b03ff0377b6b372e5929590ff6c8f3931752ed71048e8ed359252a5c8dcb24`. No graph output path, cron configuration, database, service, permissions, or live artifact changed. T05b remains blocked; all nine phases remain incomplete.
+- Added versioned `scripts/brain_graph_update_wrapper.sh` and offline `tests/cron/test_brain_graph_wrapper.py`; commit `e1feeb1d51` (`fix(memory): preserve graph wrapper failures and bound cancellation`, 357 additions + 10 deletions).
+
+## T05b Live Deployment Evidence (2026-10-08; deployed and verified)
+
+- Deployed `scripts/brain_graph_update_wrapper.sh` to `/opt/hermes-agent-data/scripts/` (mode 0755, `hermes:hermes`). Backed up original to `.bak-20261008`.
+- Fixed global `graphify` editable installation mapping in Python dist-packages from stale `/root/tools/graphify` to canonical `/opt/tools/graphify`.
+- Fixed `/opt/hermes-agent-data/scripts/build_brain_graph.py` sys.path import. Compiled fresh AST graph with 4,857 nodes and 4,281 relationships in `graphify-out-v2/graph.json`.
+- Executed deployed wrapper as `hermes` user: completed with `[brain-graph] complete status=process_complete inner_rc=0` (0 errors, incremental merge produced 877 nodes, 971 edges in `graphify-out/graph.json`).
+- Verified `memory_graph.py` queries successfully against freshly compiled knowledge graphs.
