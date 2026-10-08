@@ -30,13 +30,13 @@ The DEV memory ticket reports several concerns, but the static audit and runtime
 - Full runtime-feature forecast: unassessable until blocked targets and behavior scope are established; recompute before implementation and each work-unit commit. Slice A is baseline+spec (229 additions), locally committed as `23945c6ec16a`; documentation milestone, not P1 completion. Recompute Slice B additions + deletions against current HEAD, excluding unrelated TikTok edits.
 - Native RDD state: unknown/unavailable; status access was refused with PermissionDenied and earlier output was contradictory. Do not infer effective mode, toggle it, or bypass the refusal.
 - Last reviewed boundary: `70a846f7e63fc3e8ef7717decfd4e89be99ec2c5` (branch point supplied by parent; no review receipt claimed).
-- Slice A documentation milestone: locally committed as `23945c6ec16a` (229 additions); P1 remains incomplete. Slice B docs are uncommitted and parent-owned. No task is checked off until verified and committed.
+- Slice A documentation milestone: locally committed as `23945c6ec16a` (229 additions); P1 remains incomplete. Slice B documentation milestone: locally committed as `795cfa0ef8`. T05a source/tests are verified but uncommitted; parent owns the work-unit commit. No task is checked off until verification and commit evidence exist.
 
 ## Approval Gates
 
 - Specification: approved by the user on 2026-10-08.
 - Technical design: approved by the user on 2026-10-08 (Adelante).
-- Task plan: recorded in .specs/memoria-dev/03-tasks.md; bounded read-only discovery and independent offline T05a are unfinished but dispatchable. Live/protected surfaces remain blocked. No task is complete.
+- Task plan: bounded read-only discovery remains open. T05a source/tests are implemented and offline-verified, pending parent commit; T05b live rollout and protected operations remain blocked. No task/phase is complete.
 - Safe exact implementation scopes may proceed only when activated with verified targets/checks; protected or unsafe operations remain blocked pending separate authorization.
 
 ## Stable Phase Checklist
@@ -48,7 +48,7 @@ The DEV memory ticket reports several concerns, but the static audit and runtime
 | P3 | Global/project instruction alignment and SDD delivery | Delegated writer; multiple agents, repositories/worktrees, protected paths, and human gates require cross-document alignment. | Document the actual plan: canonical global contract plus project rules; verify actual entrypoints, preserve history, identify blocked inventory, and keep spec approval before design. This phase is not merely preparation of documents. | Design approved; task plan recorded; evidence gates remain |
 | P4 | Native memory and Engram validation | Delegated after approval; cross-store runtime verification needs focused evidence. | Verify native read/write and active Engram binding without creating another DB or merging memories. | Pending; approval and evidence required |
 | P5 | Graph validation | Delegated after approval; graph output and runtime source differ. | Establish actual generator, path resolution, invocation, output freshness, and consumer behavior before any fix. | Pending; cause unverified |
-| P6 | Scheduled-job validation | Delegated after approval; execution and delivery semantics require runtime evidence. | Verify job identity, schedule, overlap/idempotency, exit status, output delivery, and failure reporting. | Pending; no root cause asserted |
+| P6 | Scheduled-job validation | Delegated after approval; execution and delivery semantics require runtime evidence. | Verify job identity, schedule, overlap/idempotency, exit status, output delivery, and failure reporting. | Offline versioned wrapper unit implemented; commit pending; live delivery unverified |
 | P7 | Skill visibility and duplication review | Delegated after approval; inventory and catalog evidence are incomplete. | Verify catalog/link/load behavior and identify any duplicate job only from current evidence. | Pending; historical duplicate count not treated as current fact |
 | P8 | End-to-end rollout and regression proof | Delegated after approval; changes span runtime entrypoints and discovered repositories/worktrees. | Run an acceptance matrix for Codex, OpenCode, Gemini, Copilot, Antigravity, and Hermes against each discovered in-scope repo/worktree; record blocked surfaces and expand the five-root product inventory only from evidence. Exclude production rollout. | Pending; broader inventory incomplete |
 | P9 | Closure and handover | Delegated after preceding proof; requires durable state reconciliation. | Record verified changes, commands/results, remaining unknowns, next actions, and mirror status; close through ordinary repository policy. | Pending |
@@ -83,6 +83,13 @@ Use .specs/memoria-dev/03-tasks.md to resolve read-only blockers first. Parent o
 ## Task Breakdown Status
 
 - User approved technical design on 2026-10-08 (Adelante); user approved feature-branch-chain delivery on 2026-10-08 (Aprobado).
-- `03-tasks.md` contains T01–T10 plus T05a/T05b; all are unchecked. Bounded read-only discovery and T05a are READY within limits; live/protected work remains blocked. No phase is complete.
+- `03-tasks.md` contains T01–T10 plus T05a/T05b; all remain unchecked pending task-specific evidence/commit gates. T05a offline source/tests verified, pending parent commit; T05b live/protected work remains blocked. No phase is complete.
 - Slice A: approved baseline + spec, locally committed as `23945c6ec16a` with 229 additions; this is a documentation milestone, not P1 completion.
 - Slice B: design + tasks + tracker/index/PROJECT_MEMORY reconciliation; current worktree measure against HEAD is 340 additions + deletions, excluding TikTok. Recompute the staged snapshot before delivery. Full feature forecast remains unassessable pending evidence gates.
+
+
+## T05a Implementation Evidence (2026-10-08)
+
+- Added versioned `scripts/brain_graph_update_wrapper.sh` and offline `tests/cron/test_brain_graph_wrapper.py`; deployment source at `/opt/hermes-agent-data/scripts/brain_graph_update_wrapper.sh` was read-only and not changed or executed.
+- Initial RED: 8 expected failures while versioned wrapper was absent; initial GREEN: 8 passed. Correction RED: TERM-resistant process-group test exceeded its bounded test deadline against unbounded wait; correction GREEN: bounded TERM→KILL cleanup plus `timeout --kill-after=5s`. Full offline+cron command `PYTHONDONTWRITEBYTECODE=1 pytest -q -p no:cacheprovider tests/cron/test_brain_graph_wrapper.py tests/cron/test_cron_no_agent.py` passed 26 tests. No pre-implementation cron-regression baseline was captured. `bash -n`, `git diff --check`, and authored-file whitespace checks passed.
+- Signal cleanup now bounds TERM-resistant process-group shutdown with TERM then KILL; timeout also uses a 5-second kill-after while retaining its 3300-second limit. No graph output path, cron configuration, database, service, permissions, or live artifact changed. T05a awaits parent commit; T05b remains blocked.

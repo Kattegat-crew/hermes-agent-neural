@@ -36,11 +36,12 @@
 - **Acceptance:** parent-audited producer writes `graphify-out/graph.json`; consumer prefers `graphify-out-v2/graph.json`; runtime source is outside this Git root and no tracked copy exists. Verify schema/consumers/provenance before path choice. Mtimes do not prove freshness. Do not inspect via alternate path or execute generator.
 
 ### T05a — Add an offline versioned wrapper contract (P6; independent source-only unit)
-- [ ] **READY — dispatch independently; no deployed/runtime change.** Repo-owned source/test files do not exist yet; new source is not proof of deployed provenance.
+- [ ] **IMPLEMENTED; offline verification recorded, pending parent work-unit commit. No deployed/runtime change.** New versioned wrapper source is not proof of deployed provenance.
 - **Depends on:** none of T01–T04, T06, or T07.
 - **Targets:** add `scripts/brain_graph_update_wrapper.sh`; first add `tests/cron/test_brain_graph_wrapper.py`. Deployed `/opt/hermes-agent-data/scripts/brain_graph_update_wrapper.sh` is outside this Git project; do not execute/edit it.
 - **Run after writing test/source:** `pytest -q tests/cron/test_brain_graph_wrapper.py`; then `pytest -q tests/cron/test_cron_no_agent.py`.
-- **Acceptance:** offline tests simulate success, non-zero, unavailable inner result; wrapper returns meaningful status and uses private per-run evidence without recursive `chown`/`chmod`. Keep tests/code together. Leave graph output selection, runtime config, scheduler, live deployment and delivery untouched; rollback by reverting source/test unit, never by restoring user memory.
+- **Acceptance:** offline tests simulate success, non-zero, unavailable inner result, `EXTRACT_ERROR`, signal cleanup of a TERM-resistant process group, concurrency and private per-run evidence. The wrapper returns meaningful status, bounds termination with TERM then KILL and `timeout --kill-after`, and uses no recursive `chown`/`chmod`. Keep tests/code together. Leave graph output selection, runtime config, scheduler, live deployment and delivery untouched; rollback by reverting source/test unit, never by restoring user memory.
+- **Observed verification:** initial TDD RED: 8 expected failures because the versioned wrapper was absent; GREEN after first implementation: 8 passed. Correction RED: TERM-resistant process-group test timed out against the unbounded wait; GREEN after bounded TERM→KILL cleanup and `timeout --kill-after=5s`: `PYTHONDONTWRITEBYTECODE=1 pytest -q -p no:cacheprovider tests/cron/test_brain_graph_wrapper.py tests/cron/test_cron_no_agent.py` — 26 passed. `bash -n scripts/brain_graph_update_wrapper.sh`, `git diff --check`, and authored-file whitespace checks passed. No pre-implementation baseline for `test_cron_no_agent.py` was captured. The redacted summary treats `EXTRACT_ERROR` as failure, preserves the inner return code, and reports process completion/no-change only—not freshness or delivery. Concurrency checks cover private per-run directories only, not graph transaction locking.
 
 ### T05b — Validate live scheduler, artifact freshness, and delivery (P6)
 - [ ] **BLOCKED — no live invocation or deployment.**
@@ -85,4 +86,4 @@ T01, T02, T03, T04, T06, T07 are independent read-only discovery tasks within st
 
 ## Current next step
 
-Parent owns doc-slice verification/delivery. A future worker may start T05a as an offline versioned-only unit after its own TDD/evidence checks. Do not execute deployed wrapper, live job, DB operation, permission change, or production deployment.
+Parent owns the T05a work-unit commit. T05b deployment/live validation remains blocked pending separate evidence and authorization. Do not execute the deployed wrapper, live job, DB operation, permission change, or production deployment.
