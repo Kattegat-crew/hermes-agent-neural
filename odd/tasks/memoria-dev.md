@@ -30,13 +30,13 @@ The DEV memory ticket reports several concerns, but the static audit and runtime
 - Full runtime-feature forecast: unassessable until blocked targets and behavior scope are established; recompute before implementation and each work-unit commit. Slice A is baseline+spec (229 additions), locally committed as `23945c6ec16a`; documentation milestone, not P1 completion. Recompute Slice B additions + deletions against current HEAD, excluding unrelated TikTok edits.
 - Native RDD state: unknown/unavailable; status access was refused with PermissionDenied and earlier output was contradictory. Do not infer effective mode, toggle it, or bypass the refusal.
 - Last reviewed boundary: `70a846f7e63fc3e8ef7717decfd4e89be99ec2c5` (branch point supplied by parent; no review receipt claimed).
-- Slice A documentation milestone: locally committed as `23945c6ec16a` (229 additions); P1 remains incomplete. Slice B documentation milestone: locally committed as `795cfa0ef8`. T05a source/tests are verified but uncommitted; parent owns the work-unit commit. No task is checked off until verification and commit evidence exist.
+- Slice A documentation milestone: locally committed as `23945c6ec16a` (229 additions); P1 remains incomplete. Slice B documentation milestone: locally committed as `795cfa0ef8`. T05a source/tests are verified and committed as `e1feeb1d51`; only T05a is checked off. Progress reconciliation is recorded in local documentation commit `91b8ba8d3e`.
 
 ## Approval Gates
 
 - Specification: approved by the user on 2026-10-08.
 - Technical design: approved by the user on 2026-10-08 (Adelante).
-- Task plan: bounded read-only discovery remains open. T05a source/tests are implemented and offline-verified, pending parent commit; T05b live rollout and protected operations remain blocked. No task/phase is complete.
+- Task plan: bounded read-only discovery remains open. T05a source/tests are verified and committed; T05b live rollout and protected operations remain blocked. No phase is complete.
 - Safe exact implementation scopes may proceed only when activated with verified targets/checks; protected or unsafe operations remain blocked pending separate authorization.
 
 ## Stable Phase Checklist
