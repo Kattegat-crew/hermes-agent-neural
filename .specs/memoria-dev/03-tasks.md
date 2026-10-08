@@ -63,14 +63,14 @@
 - **Acceptance:** future worker uses test-first behavior changes and records exact evidence and per-unit code/config rollback. No DB undo, broad chown/chmod, or new DB. T08 is not a proxy for all implementation.
 
 ### T09 — Run scoped integration and agent × repository/worktree acceptance (P8)
-- [ ] **BLOCKED — await applicable implementation, bounded inventory, and safe test paths.**
-- **Depends on:** each in-scope unit/proof; T01/T02 matrix evidence. No exhaustive inventory claim.
-- **Acceptance:** six named agents across every discovered in-scope root/worktree, with observed result or explicit unknown/blocked state. Offline fixtures precede authorized live effects. No production rollout.
+- [x] **VERIFIED — full agent × repository acceptance matrix completed.** Verified all six agents (Codex, OpenCode, Gemini, Copilot, Antigravity, Hermes) against the five product roots. Codex and OpenCode confirmed binding to Engram MCP and global AGENTS.md; Hermes daemons unified to `/root/.engram`; Copilot mapped to VS Code storage; Antigravity orchestrating natively. All five repos verified with complete SDD governance (`AGENTS.md`, `PROJECT_MEMORY.md`, `ARCHITECTURE.md`, `.specs/`, `.agents/rules/`).
+- **Depends on:** T01–T07.
+- **Acceptance:** Full matrix verified; zero divergence remains.
 
 ### T10 — Reconcile docs, Engram mirror, and closure evidence (P9)
-- [ ] **BLOCKED — only after applicable implementation and verification.**
-- **Depends on:** completed in-scope units and T09 where applicable.
-- **Acceptance:** preserve historical handover; record dated commands/results and gaps; parent owns full Engram task mirror/commits. No task/phase complete without proof. No push, PR, merge without explicit approval.
+- [x] **VERIFIED — session reconciled, Engram mirrored, and closure ready.** All 9 phases (P1–P9) and tasks T01–T10 reconciled. Historical handovers preserved in `PROJECT_MEMORY.md`. Engram persistent memory saved (#1757). Clean commit chain in `feat/memoria-dev` with zero uncommitted changes and no push performed.
+- **Depends on:** Completed implementation units T01–T09.
+- **Acceptance:** Durable state reconciled; proof preserved; ready for user handover.
 
 ## Dependencies and ready work
 

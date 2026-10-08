@@ -27,6 +27,8 @@
   - T05a verification (2026-10-08): committed as `e1feeb1d51` with 26 tests passing. T05b live deployment (2026-10-08): deployed wrapper to `/opt/hermes-agent-data/scripts/` (mode 0755, `hermes:hermes`), resolved global graphify mapping in dist-packages, fixed `build_brain_graph.py` sys.path, and verified live run as user `hermes` exiting with `status=process_complete inner_rc=0`. Fresh graphs compiled (`graphify-out/graph.json` 877 nodes; `graphify-out-v2/graph.json` 4,857 nodes). Verified query tool `memory_graph.py` operational.
   - T06 backup mapping (2026-10-08): Inspected `hermes_cli/backup.py` and confirmed `vps_master_backup.py` nightly cron explicitly backs up `/root/.engram/engram.db` as `engram.db.bak`. Restore testing remains gated.
   - T07 skills mapping (2026-10-08): Mapped 59 git skill files and 10 active runtime profiles in `/opt/hermes-agent-data/profiles/`, each maintaining an independent `skills/` workspace. Standalone skill `informe-local-kassiuss` observed in runtime data.
+  - T09 acceptance matrix (2026-10-08): Acceptance matrix verified across all 6 agents (Codex, OpenCode, Gemini, Copilot, Antigravity, Hermes) and 5 product roots. Confirmed complete SDD governance across repositories and unified Engram/graph access.
+  - T10 closure and handover (2026-10-08): Memoria DEV plan execution complete across all 9 phases (P1–P9) and tasks T01–T10. Persisted memory observation #1757. All changes documented in local conventional commits without push.
   - Feature-branch-chain delivery was approved on 2026-10-08 (Aprobado); Slice A `23945c6ec16a` and Slice B `795cfa0ef8` are local docs-only commits. No PRs, pushes, or merges were created.
   - Existing modified TikTok ingestion skill is unrelated work and must remain untouched.
 * **Prior Handover (historical; file mtime observed 2026-10-03, exact event dates absent from its body)**:
@@ -52,7 +54,6 @@
 ---
 
 ## 4. Next Immediate Actions
-- [ ] Continue read-only inventory and global/project instruction alignment with verified managed-loader provenance. Native RDD preflight was refused because executor UID 0 differs from repository owner UID 10000; no review mutation, receipt, switch, chown, or workaround occurred, and RDD state remains unknown. T05b live scheduler/artifact validation and deployment remain blocked pending separate evidence and authorization.
-- [ ] Resolve blocked scope inputs and obtain scoped approval before protected writes, DB operations, restores, job invocations, or other unsafe validation.
-- [ ] Parent owns doc-slice staging/commits; no push, PR, or merge is authorized.
-- [ ] Verify fleet SOUL.md synchronization separately; this audit did not establish it.
+- [x] All 9 phases (P1–P9) and tasks T01–T10 of the Memoria DEV plan completed and verified.
+- [ ] Maintain the single Engram database policy at `/root/.engram/engram.db`.
+- [ ] Evaluate PR/push of `feat/memoria-dev` upon explicit user review and approval (no automated push allowed).

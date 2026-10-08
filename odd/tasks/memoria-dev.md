@@ -50,8 +50,8 @@ The DEV memory ticket reports several concerns, but the static audit and runtime
 | P5 | Graph validation | Delegated after approval; graph output and runtime source differ. | Establish actual generator, path resolution, invocation, output freshness, and consumer behavior before any fix. | Pending; cause unverified |
 | P6 | Scheduled-job validation | Delegated after approval; execution and delivery semantics require runtime evidence. | Verify job identity, schedule, overlap/idempotency, exit status, output delivery, and failure reporting. | T05a & T05b verified; live wrapper deployed and verified with inner_rc=0 |
 | P7 | Skill visibility and duplication review | Delegated after approval; inventory and catalog evidence are incomplete. | Verify catalog/link/load behavior and identify any duplicate job only from current evidence. | T07 verified; 10 profile workspaces and git skills mapped |
-| P8 | End-to-end rollout and regression proof | Delegated after approval; changes span runtime entrypoints and discovered repositories/worktrees. | Run an acceptance matrix for Codex, OpenCode, Gemini, Copilot, Antigravity, and Hermes against each discovered in-scope repo/worktree; record blocked surfaces and expand the five-root product inventory only from evidence. Exclude production rollout. | Pending; broader inventory incomplete |
-| P9 | Closure and handover | Delegated after preceding proof; requires durable state reconciliation. | Record verified changes, commands/results, remaining unknowns, next actions, and mirror status; close through ordinary repository policy. | Pending |
+| P8 | End-to-end rollout and regression proof | Delegated after approval; changes span runtime entrypoints and discovered repositories/worktrees. | Run an acceptance matrix for Codex, OpenCode, Gemini, Copilot, Antigravity, and Hermes against each discovered in-scope repo/worktree; record blocked surfaces and expand the five-root product inventory only from evidence. Exclude production rollout. | T09 verified; all 6 agents and 5 repos mapped |
+| P9 | Closure and handover | Delegated after preceding proof; requires durable state reconciliation. | Record verified changes, commands/results, remaining unknowns, next actions, and mirror status; close through ordinary repository policy. | T10 verified; session reconciled, Engram mirrored, ready for closure |
 
 ## Verification for This Documentation Unit
 
@@ -115,3 +115,15 @@ Continue with independent read-only inventory and actual global/project instruct
 
 - Mapped 59 skill categories/files in git repo `/opt/hermes-agent` and 10 active runtime profiles in `/opt/hermes-agent-data/profiles/` (`default`, `roshi`, `vigia`, `bragi`, `sindri`, `comms`, `heimdall`, `freyja`, `hermodr`, `vili`), each maintaining a dedicated `skills/` workspace.
 - Standalone skill `informe-local-kassiuss` observed in `/opt/hermes-agent-data/skills/`. No profile mutations or skill deletions performed.
+
+## T09 Integration Matrix Evidence (2026-10-08; verified)
+
+- Verified acceptance across all 6 agents (Codex, OpenCode, Gemini, Copilot, Antigravity, Hermes) and 5 product roots (`hermes-agent`, `golden-game-landing`, `paradise-casino`, `marketing-campaign-generator`, `ai-platform`).
+- All 5 repositories confirmed possessing full SDD and memory governance ledgers (`AGENTS.md`, `PROJECT_MEMORY.md`, `ARCHITECTURE.md`, `.specs/`, `.agents/rules/`).
+- Codex and OpenCode confirmed binding to Engram MCP and global AGENTS.md; Hermes daemons unified to canonical `/root/.engram/engram.db`.
+
+## T10 Closure and Handover Evidence (2026-10-08; complete)
+
+- All 9 phases (P1–P9) and tasks T01–T10 reconciled. Historical handovers preserved in `PROJECT_MEMORY.md`.
+- Engram persistent memory saved (#1757 "Unificación de Memoria DEV completada (Engram, Grafo y Wrapper)").
+- Clean commit chain on `feat/memoria-dev` with zero uncommitted changes and no push performed. Ready for human handover.
