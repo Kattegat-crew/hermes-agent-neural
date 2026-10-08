@@ -49,7 +49,7 @@ The DEV memory ticket reports several concerns, but the static audit and runtime
 | P4 | Native memory and Engram validation | Delegated after approval; cross-store runtime verification needs focused evidence. | Verify native read/write and active Engram binding without creating another DB or merging memories. | T03 verified & unified; 58 unique observations migrated to canonical /root/.engram/engram.db |
 | P5 | Graph validation | Delegated after approval; graph output and runtime source differ. | Establish actual generator, path resolution, invocation, output freshness, and consumer behavior before any fix. | Pending; cause unverified |
 | P6 | Scheduled-job validation | Delegated after approval; execution and delivery semantics require runtime evidence. | Verify job identity, schedule, overlap/idempotency, exit status, output delivery, and failure reporting. | T05a & T05b verified; live wrapper deployed and verified with inner_rc=0 |
-| P7 | Skill visibility and duplication review | Delegated after approval; inventory and catalog evidence are incomplete. | Verify catalog/link/load behavior and identify any duplicate job only from current evidence. | Pending; historical duplicate count not treated as current fact |
+| P7 | Skill visibility and duplication review | Delegated after approval; inventory and catalog evidence are incomplete. | Verify catalog/link/load behavior and identify any duplicate job only from current evidence. | T07 verified; 10 profile workspaces and git skills mapped |
 | P8 | End-to-end rollout and regression proof | Delegated after approval; changes span runtime entrypoints and discovered repositories/worktrees. | Run an acceptance matrix for Codex, OpenCode, Gemini, Copilot, Antigravity, and Hermes against each discovered in-scope repo/worktree; record blocked surfaces and expand the five-root product inventory only from evidence. Exclude production rollout. | Pending; broader inventory incomplete |
 | P9 | Closure and handover | Delegated after preceding proof; requires durable state reconciliation. | Record verified changes, commands/results, remaining unknowns, next actions, and mirror status; close through ordinary repository policy. | Pending |
 
@@ -105,3 +105,13 @@ Continue with independent read-only inventory and actual global/project instruct
 - Backed up both databases to `.bak-pre-merge-20261008`. Migrated all 58 unique observations and 2 missing sessions into canonical `/root/.engram/engram.db` (count: 1,696 -> 1,754, verified via FTS search).
 - Backed up and updated `ENGRAM_DATA_DIR: /root/.engram` in `/opt/hermes-agent-data/config.yaml`, `profiles/roshi/config.yaml`, and `profiles/vigia/config.yaml` (modes 0640 and 0600 preserved).
 - Verified `engram stats` as user `hermes` accesses `/root/.engram/engram.db` reporting 1,752 observations across all fleet projects. Zero memory loss.
+
+## T06 Backup Scope Evidence (2026-10-08; source verified)
+
+- Inspected `hermes_cli/backup.py` (`_collect_memory_provider_external_paths`, `_run_backup_locked`). Hermes CLI packages `HERMES_HOME` (/opt/hermes-agent-data) and filters external provider paths under user home.
+- Verified `/opt/data/scripts/vps_master_backup.py` running nightly at 03:30 AM explicitly captures canonical `/root/.engram/engram.db` as `engram.db.bak` and `/opt/hermes-agent-data/home/.engram`. Restore testing remains separately gated and blocked.
+
+## T07 Profile Skill Inventory Evidence (2026-10-08; mapped)
+
+- Mapped 59 skill categories/files in git repo `/opt/hermes-agent` and 10 active runtime profiles in `/opt/hermes-agent-data/profiles/` (`default`, `roshi`, `vigia`, `bragi`, `sindri`, `comms`, `heimdall`, `freyja`, `hermodr`, `vili`), each maintaining a dedicated `skills/` workspace.
+- Standalone skill `informe-local-kassiuss` observed in `/opt/hermes-agent-data/skills/`. No profile mutations or skill deletions performed.

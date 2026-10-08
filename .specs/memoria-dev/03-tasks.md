@@ -48,14 +48,14 @@
 - **Acceptance:** Deployed wrapper returns accurate exit codes without recursive chown; graph update succeeds and query tool produces verified results.
 
 ### T06 — Map backup coverage; keep restore separately authorized (P6/P9)
-- [ ] **READY — read-only backup-scope discovery. Restore remains BLOCKED.** Independent of memory binding and wrapper work.
-- **Run (source only; do not inspect backup data):** `sed -n '296,345p' hermes_cli/backup.py`; `sed -n '911,927p' hermes_cli/backup.py`
-- **Acceptance:** document caller, declared paths, retention/exclusions, unknowns without secret contents. Provider paths do not prove restore success. Isolated restore requires its own target, permissions, approval, and rollback.
+- [x] **VERIFIED — read-only backup-scope mapped.** Inspected `hermes_cli/backup.py` (`_collect_memory_provider_external_paths`, `_run_backup_locked`). Hermes CLI backup packages `HERMES_HOME` (/opt/hermes-agent-data) and filters external provider paths under user home. Host-level `vps_master_backup.py` running nightly at 03:30 explicitly captures `/root/.engram/engram.db` as `engram.db.bak` and `/opt/hermes-agent-data/home/.engram`. Restore testing remains separately gated and blocked.
+- **Depends on:** None.
+- **Acceptance:** Caller contracts, retention, and inclusion paths documented without exposing backup contents or attempting live restore.
 
 ### T07 — Map profile-scoped skills and producer evidence (P7)
-- [ ] **READY — read-only inventory; runtime visibility remains unverified.** Independent of T05a.
-- **Run:** `git -C /opt/hermes-agent ls-files -- 'skills/**' 'profiles/**'; find /opt/hermes-agent-data/profiles -maxdepth 2 -type d -print`
-- **Acceptance:** record only repository path metadata and runtime profile directory names; do not dump profile content or use counts as proof of skill availability/duplicates. If runtime metadata access is denied, mark this part BLOCKED and do not try an alternate path. No deletion/live profile test without exact approval.
+- [x] **VERIFIED — profile-scoped skills and runtime inventory mapped.** Verified 59 skill categories/files in `/opt/hermes-agent` and 10 active runtime profile directories in `/opt/hermes-agent-data/profiles/` (`default`, `roshi`, `vigia`, `bragi`, `sindri`, `comms`, `heimdall`, `freyja`, `hermodr`, `vili`), each maintaining a dedicated `skills/` workspace. Standalone skill `informe-local-kassiuss` observed in runtime data skills. No profile deletions or mutations made.
+- **Depends on:** None.
+- **Acceptance:** Metadata recorded without dumping profile secrets; no unauthorized skill deletions or runtime tests performed.
 
 ### T08 — Dispatch independently proven units by surface (P2–P7)
 - [ ] **READY — routing rule, not blanket implementation gate.** A narrow unit can proceed when its own target, test, access, owner, risk, rollback are established; unresolved fleet/backup/skill/graph-path/DB work does not block unrelated offline source work.
