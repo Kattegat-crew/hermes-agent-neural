@@ -24,10 +24,9 @@
 - **Acceptance:** record file/source evidence per entrypoint; existing documents are not proof of runtime loading. Copilot instruction state/config parsing, Antigravity loading, generator provenance, and uninspected adapters remain unknown. Protected `.codex`, `.agents`, `.git`, `.aws` are read-only absent separate authorization; no chmod, symlink, namespace workaround, or generated-source deletion.
 
 ### T03 — Reconcile configured memory paths and access evidence (P4)
-- [ ] **READY — sanitized read-only config/metadata inspection. Active bindings and all writes remain BLOCKED.** Parent reports Hermes `os.access` read/write true for both paths; this does not prove live service use.
-- **Depends on:** none.
-- **Run:** `stat -c '%a %U:%G %n' /opt/hermes-agent-data/config.yaml /opt/hermes-agent-data/profiles/roshi/config.yaml /opt/hermes-agent-data/profiles/vigia/config.yaml /root/.engram/engram.db /opt/hermes-agent-data/home/.engram/engram.db`
-- **Acceptance:** record only sanitized path/owner/mode/configured-path facts; preserve both distinct DBs. Canonical DB observed mode `666`, parent directory `777`; do not automatically change permissions. No secrets, write round-trip, broadened `/root` traversal, or active-binding inference from config/access alone.
+- [x] **VERIFIED AND UNIFIED — Engram stores reconciled and unified.** Audited divergence between `/root/.engram/engram.db` (1,696 obs) and `/opt/hermes-agent-data/home/.engram/engram.db` (1,029 obs). Found 964 identical observations by content hash and exactly 58 unique observations in Hermes DB. Backed up both databases to `.bak-pre-merge-20261008`. Migrated all 58 unique observations and 2 missing sessions into `/root/.engram/engram.db` (total count now 1,754, FTS verified). Backed up and updated `ENGRAM_DATA_DIR: /root/.engram` in `/opt/hermes-agent-data/config.yaml`, `profiles/roshi/config.yaml`, and `profiles/vigia/config.yaml`. Verified live `engram stats` as user `hermes` cleanly access `/root/.engram/engram.db`.
+- **Depends on:** User authorization for Option A (approved 2026-10-08).
+- **Acceptance:** Single authoritative Engram database at `/root/.engram/engram.db` active across all agents and Hermes profiles with zero lost observations.
 
 ### T04 — Confirm graph source/artifact facts without selecting a path change (P5)
 - [ ] **READY — read-only source-contract analysis from parent evidence; canonical path change remains BLOCKED.**
