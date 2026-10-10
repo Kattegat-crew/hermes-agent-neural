@@ -246,3 +246,6 @@ docker-compose.nobind.yml
 # 46 KB, auditado y con sha256; la regla generica *.tar.gz sigue valiendo para
 # el resto del arbol.
 !docs/skills/archive/*.tar.gz
+
+# Gentle AI / Agent Teams Lite skill registries
+.atl/
