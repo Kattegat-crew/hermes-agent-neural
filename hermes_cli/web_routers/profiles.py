@@ -28,6 +28,7 @@ from typing import Any, Callable, Dict, List, Optional, Tuple
 
 from fastapi import APIRouter, HTTPException, Query
 
+from hermes_cli.web_deps import LateState, late
 from hermes_cli.session_listing import subagent_listing_scope
 from hermes_cli.config import get_process_hermes_home
 from hermes_cli.profiles import ProfileIdentitySettlementPending
