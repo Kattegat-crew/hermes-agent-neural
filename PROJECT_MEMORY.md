@@ -71,3 +71,17 @@
 - [x] Agent × Repository Acceptance Matrix documented.
 - [ ] Maintain the single Engram database policy at `/root/.engram/engram.db`.
 - [ ] Evaluate PR/push of `feat/memoria-dev` upon explicit user review and approval (no automated push allowed).
+
+---
+
+## 5. Scoped Local Scanner Correction (2026-10-14)
+
+- **Goal:** Correct the HTML-comment scanner false positive caused by matching `secret` as a substring inside `Secretaría`, while retaining standalone malicious keyword detection.
+- **Approval:** User explicitly authorized “si haz la correccion” on 2026-10-14 for this scoped behavior only. No expanded scanner policy, production deployment, or remote operation is approved.
+- **Location:** Isolated local checkout `/root/hermes-agent-worktrees/html-comment-fix`, branch `fix/html-comment-word-boundaries`; original `/opt/hermes-agent` was not edited.
+- **Discoveries:** `tools/threat_patterns.py` previously applied substring matching for `ignore|override|system|secret|hidden` within a bounded HTML-comment pattern; context loading rejects files when any finding exists. The existing malicious-comment test is in `tests/tools/test_threat_patterns.py`. CodeGraph init created a local index, but status reported it truncated with unresolved references, so bounded source reads were used after the tool failure.
+- **Implementation:** Added Unicode-aware word boundaries around only the existing HTML-comment keywords. No prompt builder, scanner profile, configuration, API, dependency, or production state was changed.
+- **Verification:** Focused runner observed RED (34 passed, 6 expected failures), then GREEN (40 passed, 0 failed). Combined scanner + prompt-builder tests yielded 115 passed and one unrelated failure in `TestBuildContextFilesPrompt.test_agents_md_no_git_root_stays_cwd_only`; `/.git` exists and `_find_git_root` treats any existing `.git` path as a root, causing `/tmp`'s planted `AGENTS.md` to be loaded. `git diff --check` passed before final documentation evidence update.
+- **RDD:** Mode status reported `on` (global/clone-local unset). `gentle-ai review assess --cwd /root/hermes-agent-worktrees/html-comment-fix --json` returned `risk=high`, `review_due=true`, `review_due_reason=high_risk`, but exited 1 because untracked files require explicit inventory/scope. No native STATUS or review lifecycle was started; parent owns that step.
+- **Status:** Local implementation is verified for the focused scanner suite; commit and native-review handoff are being finalized. No production deployment, remote operation, or review approval is claimed.
+- **Next:** Final readback and whitespace check, authorized local work-unit commit, record its identity, then hand the RDD assessment envelope to the parent. Do not push/deploy or modify the unrelated Memoria DEV initiative.
