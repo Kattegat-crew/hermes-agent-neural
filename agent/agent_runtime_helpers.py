@@ -3432,7 +3432,8 @@ def tool_results_this_turn(messages: list[dict[str, Any]]) -> int:
 # message TAIL announcing a next action, so mid-sentence "I will" never trips it.
 _TRAILING_CONTINUE_INTENT_RE = re.compile(
     r"(?:\blet me now\b|\bi(?:['\u2019])?ll now\b|\bi will now\b"
-    r"|\bnow i(?:['\u2019]ll| will)\b|\bnext[,:] i\b)"
+    r"|\bnow i(?:['\u2019]ll| will)\b|\bnext[,:] i\b"
+    r"|\bvoy a\b|\bprocedo a\b|\bahora voy a\b|\ba continuaci[oó]n voy a\b|\bpaso a\b)"
     r"[^.!?\n]{0,100}[.:\u2026]?\s*$", re.IGNORECASE,
 )
 
@@ -3465,6 +3466,7 @@ _PROMOTED_REASONING_PLAN_TAIL_RE = re.compile(
     r"(?:^|[.!?:\u3002\uff01\uff1f\u2014\u2013\n]\s*|\u2026\s*)"
     r"(?:let(?:['\u2019]s| me)\b|i(?:['\u2019]ll| will| need to| should| am going to|['\u2019]m going to)\b"
     r"|next[,:]? i\b|now i(?:['\u2019]ll| will| need to)\b|first[,:]? i(?:['\u2019]ll| will| need to)\b"
+    r"|voy a\b|procedo a\b|tengo que\b|debo\b"
     r"|\u0e08\u0e30\u0e43\u0e2b\u0e49\u0e1c\u0e21|\u0e1c\u0e21\u0e08\u0e30"
     r"|\u0e15\u0e48\u0e2d\u0e44\u0e1b(?:\u0e08\u0e30|\u0e1c\u0e21\u0e08\u0e30)"
     r"|\u0e02\u0e2d(?:\u0e40\u0e23\u0e34\u0e48\u0e21|\u0e25\u0e2d\u0e07|\u0e15\u0e23\u0e27\u0e08|\u0e41\u0e01\u0e49|\u0e2a\u0e48\u0e07|\u0e17\u0e33|\u0e14\u0e39)"

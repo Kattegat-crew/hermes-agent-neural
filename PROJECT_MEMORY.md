@@ -7,16 +7,34 @@
 ---
 
 ## 1. Active Focus & Current Goal
-* **Current Initiative**: SDD Specification & Implementation for MCP Tool Approval Persistence (`session` & `always`) under `.specs/mcp-approval-persistence/` (Ticket Discord #1555313196590694501).
-* **Scope**: Hermes Agent core approval engine (`tools/approval.py`, `tools/mcp_tool_handlers.py`, `tools/approval_prompt.py`, `gateway/slash_commands.py`) across multi-profile fleet (Ragnar on WhatsApp, Roshi on Discord/Twenty CRM).
+* **Current Initiative**: Gateway Restart Hardening & Spanish Stall Guard Resolution (Ticket Discord #1555307813868408966: "Gateway: reinicios cortan agentes + declara-y-no-ejecuta").
+* **Scope**: Gateway shutdown timing forensics (`gateway/shutdown_forensics.py`), host watchdog stability (`/usr/local/bin/hermes-watchdog.sh`), safe restart CLI (`/usr/local/bin/hermes-safe-restart`), and Spanish action tail detection in turn loop (`agent/agent_runtime_helpers.py`).
 * **Lead Agent**: Antigravity (`agy`) / Ragnar.
 * **Target Path**: [`/opt/hermes-agent/`](file:///opt/hermes-agent/).
-* **Approval & Test State**: Phase 4 Implementation COMPLETE. Verified RED (4 failures) -> GREEN (22 passed in `tests/tools/test_mcp_trust_gating.py` and 14 passed in `tests/gateway/test_discord_slash_commands.py`). Ready for operational smoke test and Ragnar workaround withdrawal.
-
+* **Approval & Test State**: Phase 1, 2, and 3 Implementation COMPLETE. Verified GREEN (10 passed in `tests/gateway/test_shutdown_forensics.py` and 40 passed in `tests/agent/test_stall_guards.py`).
 
 ---
 
 ## 2. Handover from Last Session
+* **Current Handover (2026-10-14 — Gateway Restart Hardening & Spanish Stall Guard Resolution)**:
+  - **Completed**:
+    - **Host Stability & Watchdog Hygiene**:
+      - Identified and terminated 554-restart crash loop on `hermes-agent-roshi.service` caused by `/usr/local/bin/hermes-watchdog.sh`. Removed `hermes-agent-roshi.service` from `UNITS`; stopped and disabled unit.
+      - Discovered and fixed critical `TypeError` bug in `hermes-safe-restart.sh` (coercing `active_agents` int to `len(int)` was throwing exception and defaulting to 0 active agents). Created symlink `/usr/local/bin/hermes-safe-restart`.
+      - Updated satellite restart scripts (`restart_gateway_glm53.sh`, `restart_gw_roshi_canal.sh`) to delegate safely to `/usr/local/bin/hermes-safe-restart`.
+    - **Gateway Shutdown Timing Forensics**:
+      - Fixed `_systemd_timeout_stop_us` in `gateway/shutdown_forensics.py` to check `LoadState=loaded` before accepting `--user` bus results. This eliminates false-positive warnings (`TimeoutStopSec=90s`) when running as a system unit with `TimeoutStopSec=360s`.
+      - Added regression tests in `tests/gateway/test_shutdown_forensics.py` (verifying unloaded user unit fallback and loaded user unit).
+    - **Spanish Stall Guard Resolution ("Declara y no ejecuta")**:
+      - Extended `_TRAILING_CONTINUE_INTENT_RE` and `_PROMOTED_REASONING_PLAN_TAIL_RE` in `agent/agent_runtime_helpers.py` with Spanish action markers (`voy a`, `procedo a`, `ahora voy a`, `a continuación voy a`, `paso a`, `tengo que`, `debo`).
+      - Added Spanish intent test cases in `tests/agent/test_stall_guards.py`.
+    - **Ticket & Discord**:
+      - Updated tag to "En curso" (`1554957746980261943`) and posted technical audit & agreed plan in Discord thread `1555307813868408966`.
+  - **Verified by**:
+    - `pytest tests/gateway/test_shutdown_forensics.py tests/agent/test_stall_guards.py` (50 collected, 49 passed, 1 skipped).
+    - `systemctl status hermes-agent-roshi.service` inactive (dead) and disabled.
+    - `/usr/local/bin/hermes-safe-restart` tested against active/idle states with RC=3 on active agents.
+
 * **Audit Reconciliation & Completion (2026-10-08)**:
   - **Checklists Reconciled**: All tasks T01–T10 and stable phases P1–P9 are verified with dated observed proof:
     * **T01 / P1**: Bounded inventory of 5 product Git roots and active worktrees captured (`/opt/hermes-agent` feat/memoria-dev, `/opt/golden-game-landing` main + motion-stg-golden-wt, `/opt/paradise-casino/paradise-casino-landing` main + motion-stg-lucky-wt, `/opt/marketing-campaign-generator` main + 3 worktrees, `/opt/ai-platform` main); 6 governance documents per root confirmed.
