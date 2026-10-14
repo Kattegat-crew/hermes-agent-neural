@@ -165,3 +165,30 @@ class TestParseSystemdDuration:
 # ---------------------------------------------------------------------------
 # check_systemd_timing_alignment
 # ---------------------------------------------------------------------------
+
+class TestCheckSystemdTimingAlignment:
+    def test_skips_unloaded_user_unit_in_favor_of_loaded_system_unit(self, monkeypatch):
+        """When --user returns LoadState=not-found, fall through to system unit."""
+        def fake_run(cmd, *args, **kwargs):
+            if "--user" in cmd:
+                stdout = "TimeoutStopUSec=1min 30s\nId=hermes-agent.service\nLoadState=not-found\n"
+            else:
+                stdout = "TimeoutStopUSec=6min\nId=hermes-agent.service\nLoadState=loaded\n"
+            return subprocess.CompletedProcess(cmd, 0, stdout=stdout, stderr="")
+
+        monkeypatch.setattr(subprocess, "run", fake_run)
+        timeout_us = sf._systemd_timeout_stop_us("hermes-agent.service")
+        assert timeout_us == 360 * 1_000_000
+
+    def test_accepts_loaded_user_unit(self, monkeypatch):
+        """When --user returns LoadState=loaded, use its timeout."""
+        def fake_run(cmd, *args, **kwargs):
+            if "--user" in cmd:
+                stdout = "TimeoutStopUSec=3min\nId=hermes-agent.service\nLoadState=loaded\n"
+            else:
+                stdout = "TimeoutStopUSec=6min\nId=hermes-agent.service\nLoadState=loaded\n"
+            return subprocess.CompletedProcess(cmd, 0, stdout=stdout, stderr="")
+
+        monkeypatch.setattr(subprocess, "run", fake_run)
+        timeout_us = sf._systemd_timeout_stop_us("hermes-agent.service")
+        assert timeout_us == 180 * 1_000_000

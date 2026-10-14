@@ -349,6 +349,13 @@ def test_detects_trailing_next_i():
     assert trailing_continue_intent("Step one complete. Next: I run the tests")
 
 
+def test_detects_trailing_spanish_intent():
+    assert trailing_continue_intent("He leído los requisitos. Voy a revisar los archivos.")
+    assert trailing_continue_intent("Procedo a verificar el estado del gateway.")
+    assert trailing_continue_intent("Configuración lista. Ahora voy a ejecutar las pruebas.")
+    assert trailing_continue_intent("Paso 1 completado. A continuación voy a reiniciar el servicio.")
+
+
 def test_ignores_intent_followed_by_more_content():
     # Intent phrase mid-message with substantive content after it — the model
     # already continued; nothing dangling.
