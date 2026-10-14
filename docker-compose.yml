@@ -1,52 +1,42 @@
 services:
   hermes:
     build: .
-    image: hermes-agent-hermes
+    image: hermes-agent-hermes:v0.22.0-ncl
     container_name: hermes-agent
     ports:
-      - "3000:3000"
+      - "100.73.30.29:3000:3000"
+      - "100.73.30.29:9119:9119"
     environment:
       - TZ=America/Bogota
       - HOME=/opt/data/home
       - HERMES_UID=10000
       - HERMES_GID=10000
       - ENGRAM_DATA_DIR=/opt/data/home/.engram
-      - HERMES_WRITE_SAFE_ROOT=/opt/data:/host
     volumes:
-      - ./skills:/opt/hermes/skills
-      - ./skills:/opt/data/skills
-      - ./skills:/opt/data/profiles/bragi/skills
-      - ./skills:/opt/data/profiles/brokkr/skills
-      - ./skills:/opt/data/profiles/comms/skills
-      - ./skills:/opt/data/profiles/freyja/skills
-      - ./skills:/opt/data/profiles/heimdall/skills
-      - ./skills:/opt/data/profiles/hermodr/skills
-      - ./skills:/opt/data/profiles/roshi/skills
-      - ./skills:/opt/data/profiles/sindri/skills
-      - ./skills:/opt/data/profiles/ullr/skills
-      - ./skills:/opt/data/profiles/vigia/skills
-      - ./skills:/opt/data/profiles/vili/skills
       - ./data:/opt/data
       - /root/.engram:/opt/data/home/.engram
       - /home/linuxbrew/.linuxbrew/Cellar/engram/1.20.0/bin/engram:/usr/local/bin/engram:ro
       - /home/linuxbrew/.linuxbrew/Cellar/gentle-ai/2.3.0/bin/gentle-ai:/usr/local/bin/gentle-ai:ro
       - ./tools/mcp_tool.py:/opt/hermes/tools/mcp_tool.py:ro
       - ./plugins/observability/langfuse/__init__.py:/opt/hermes/plugins/observability/langfuse/__init__.py:ro
-      - ./tools/skills_tool.py:/opt/hermes/tools/skills_tool.py:ro
-      - ./gateway/run.py:/opt/hermes/gateway/run.py:ro
-      - ./gateway/display_config.py:/opt/hermes/gateway/display_config.py:ro
-      - ./gateway/activity_labels.py:/opt/hermes/gateway/activity_labels.py:ro
-      - ./locales:/opt/hermes/locales:ro
-      - ./tools/delegate_tool.py:/opt/hermes/tools/delegate_tool.py:ro
-      - ./plugins/platforms/discord/adapter.py:/opt/hermes/plugins/platforms/discord/adapter.py:ro
-      - /:/host:rw,rslave
+      - /root/golden-game-landing:/opt/repos/golden-game-landing:ro
+      - /opt/ai-platform:/opt/repos/ai-platform:ro
       - /var/run/docker.sock:/var/run/docker.sock
       - ./data/vault:/opt/vault:ro
-      - /opt/tools/graphs:/opt/graphs:ro
+      - /root/tools/graphs:/opt/graphs:ro
       - /opt/vps-brain:/opt/vps-brain
     env_file:
       - .env
+      - ./data/.env
     restart: unless-stopped
     command: ["gateway", "run"]
     stdin_open: true
     tty: true
+    networks:
+      - default
+      - twenty_default
+
+networks:
+  default:
+  twenty_default:
+    external: true
