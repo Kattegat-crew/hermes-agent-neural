@@ -37,10 +37,12 @@
 - [x] **Task 6: Roshi Profile Verification (Discord & Twenty CRM)**
   - Confirmed isolation via `test_profile_isolation_roshi_and_ragnar`: approvals in Roshi write strictly to Roshi's `config.yaml` (`home_key`) and never leak to default/Ragnar profile.
 
-- [ ] **Task 7: Retiro del Workaround en Ragnar & Validación Operativa**
-  - Pending user operational confirmation:
-    1. Confirm `git push` to remote branch `feat/upgrade-v0.22.0`.
-    2. Restart default gateway (`hermes-safe-restart.sh`) so PID 212021 loads the new code.
-    3. Revert Ragnar's temporary `trust: full` in `/opt/hermes-agent-data/config.yaml` back to strict untrusted.
+- [x] **Task 7: Retiro del Workaround en Ragnar & Validación Operativa**
+  - Confirmed and completed:
+    1. Executed `git push origin feat/upgrade-v0.22.0` (commit `7809f2f6d6`).
+    2. Reverted 13 write MCP servers in `/opt/hermes-agent-data/config.yaml` from `trust: full` back to strict `trust: untrusted`.
+    3. Gracefully restarted `hermes-agent.service` (teardown took 7.03s; revived under PID 298544 loading commit `7809f2f6d6`).
+    4. Verified zero startup errors in `errors.log` and active server connections.
+
 
 

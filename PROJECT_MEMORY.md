@@ -69,11 +69,17 @@
       - Fixed Finding 1: Enforced `policy.is_admin(user_id)` before handling `/approvals` subcommands, closing unauthorized inspection/revocation.
       - Fixed Finding 3: Removed test-only `Mock` shim in production `mcp_tool_handlers.py`; updated tests to mock `request_mcp_tool_consent` directly.
       - Documented Finding 2: Reconciled baseline mechanics in `02-design.md`, noting `/approvals revoke mcp` as the authoritative path.
+    - Completed operational closure (Task 7):
+      - Pushed branch `feat/upgrade-v0.22.0` to `origin`.
+      - Reverted 13 write MCP servers in `/opt/hermes-agent-data/config.yaml` to `trust: untrusted`.
+      - Restarted `hermes-agent.service` (teardown took 7.03s; PID 298544 loaded commit `7809f2f6d6`).
   - **Verified by**:
     - `pytest tests/tools/test_mcp_trust_gating.py` (22 passed).
     - `pytest tests/gateway/test_approvals_command.py` (4 passed, including non-admin rejection).
     - `pytest tests/gateway/test_discord_slash_commands.py` (14 passed).
-    - Memory recorded in Engram (#1861, #1863).
+    - `systemctl status hermes-agent.service` active and healthy under PID 298544.
+    - Memory recorded in Engram (#1861, #1863, #1865).
+
 
 * **Prior Handover (2026-10-14 — Post-v0.22.0 Upgrade Incident Resolution)**:
   - **Completed**:
