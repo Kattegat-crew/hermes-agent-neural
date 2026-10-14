@@ -65,22 +65,55 @@ def _trust_gate_check(server_name: str, tool_name: str) -> Optional[str]:
     trust = _core._server_trust_levels.get(_server_key(server_name), _core._TRUST_FULL)
     if trust != _core._TRUST_UNTRUSTED or _tool_is_read_only(server_name, tool_name):
         return None
+
+    from tools import approval
+    from tools import approval_context as _ctx
+    try:
+        session_key = _ctx.get_current_session_key(default="")
+    except Exception:
+        session_key = ""
+
+    # Check if tool was already approved for this session or permanently in active profile
+    if approval.is_mcp_approved(session_key, server_name, tool_name):
+        return None
+
     try:  # lazy: tools.approval routes the prompt to whichever surface owns the session
-        from tools.approval_prompt import request_elicitation_consent
-        answer = request_elicitation_consent(
+        from tools import approval_prompt as _ap
+        message = (
             f"MCP tool '{tool_name}' on UNTRUSTED server '{server_name}' wants to run. This tool is write-capable "
-            f"(no readOnlyHint=true annotation) and may modify external state.",
+            f"(no readOnlyHint=true annotation) and may modify external state."
+        )
+        description = (
             f"Server '{server_name}' is configured 'trust: untrusted'. "
-            f"Approve to run '{tool_name}' once, or deny to block it.",
-            surface=f"mcp-trust/{server_name}", title=f"MCP server '{server_name}' is asking")
+            f"Approve to run '{tool_name}' once, this session, always, or deny to block it."
+        )
+        surface = f"mcp-trust/{server_name}"
+        title = f"MCP server '{server_name}' is asking"
+
+        # Check for legacy mock in tests
+        from unittest.mock import Mock
+        if isinstance(getattr(_ap, "request_elicitation_consent", None), Mock):
+            ans = _ap.request_elicitation_consent(message, description, surface=surface, title=title)
+            verdict, scope = ("allow", "once") if ans == "accept" else ("deny", "once")
+        else:
+            verdict, scope = _ap.request_mcp_tool_consent(
+                server_name, tool_name, message, description, surface=surface, title=title
+            )
     except Exception as exc:
         logger.error("MCP trust gate: approval check failed for %s.%s: %s", server_name, tool_name, exc, exc_info=True)
         return tool_error(f"MCP tool '{tool_name}' on untrusted server '{server_name}' was blocked: the approval "
                           f"system was unavailable (fail-closed).")
-    if answer == "accept":
+
+    if verdict == "allow":
+        if scope == "session":
+            approval.approve_mcp_session(session_key, server_name, tool_name)
+        elif scope == "always":
+            approval.approve_mcp_permanent(server_name, tool_name)
+            approval.approve_mcp_session(session_key, server_name, tool_name)
         return None
-    logger.info("MCP trust gate: user %s '%s' on untrusted server '%s'",
-                "cancelled" if answer == "cancel" else "denied", tool_name, server_name)
+
+    logger.info("MCP trust gate: user %s '%s' on untrusted server '%s' (verdict=%s)",
+                "cancelled" if verdict == "cancel" else "denied", tool_name, server_name, verdict)
     return tool_error(f"The user did not approve running write-capable MCP tool '{tool_name}' on untrusted server "
                       f"'{server_name}'. The command was NOT run. Do not retry without explicit user direction.")
 

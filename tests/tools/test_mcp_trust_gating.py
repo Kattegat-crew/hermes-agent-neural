@@ -181,6 +181,93 @@ class TestTrustGateAtCallTime:
         assert "error" in json.loads(raw)
 
 
+class TestMCPApprovalPersistence:
+    """Tests for MCP approval persistence (session and always) under SDD."""
+
+    def test_session_approval_skips_second_prompt_in_same_session(self, fake_session):
+        """Choosing 'session' allows subsequent calls in the same session without re-prompting."""
+        from tools import approval
+        from tools.approval_context import set_current_session_key, reset_current_session_key
+
+        _set_trust("srv", "untrusted")
+        handler = _mcp_handlers._make_tool_handler("srv", "update_lead", 30.0)
+        token = set_current_session_key("session-roshi-1")
+        try:
+            approval.clear_session("session-roshi-1")
+            with patch("tools.approval_prompt.request_mcp_tool_consent", return_value=("allow", "session")) as consent:
+                raw1 = handler({"id": 1})
+                assert json.loads(raw1) == {"result": "ok"}
+                assert consent.call_count == 1
+
+                # Second call in same session must execute without prompting
+                raw2 = handler({"id": 2})
+                assert json.loads(raw2) == {"result": "ok"}
+                assert consent.call_count == 1  # Still 1! Not called again
+
+            # A different session must prompt again
+            reset_current_session_key(token)
+            token2 = set_current_session_key("session-roshi-2")
+            with patch("tools.approval_prompt.request_mcp_tool_consent", return_value=("allow", "session")) as consent2:
+                raw3 = handler({"id": 3})
+                assert json.loads(raw3) == {"result": "ok"}
+                assert consent2.call_count == 1
+            reset_current_session_key(token2)
+        finally:
+            approval.clear_session("session-roshi-1")
+            approval.clear_session("session-roshi-2")
+
+    def test_once_approval_prompts_on_every_call(self, fake_session):
+        """Choosing 'once' requires re-approval on subsequent calls."""
+        from tools import approval
+        from tools.approval_context import set_current_session_key, reset_current_session_key
+
+        _set_trust("srv", "untrusted")
+        handler = _mcp_handlers._make_tool_handler("srv", "delete_contact", 30.0)
+        token = set_current_session_key("session-ragnar-once")
+        try:
+            approval.clear_session("session-ragnar-once")
+            with patch("tools.approval_prompt.request_mcp_tool_consent", return_value=("allow", "once")) as consent:
+                handler({"id": 1})
+                assert consent.call_count == 1
+                handler({"id": 2})
+                assert consent.call_count == 2
+        finally:
+            approval.clear_session("session-ragnar-once")
+            reset_current_session_key(token)
+
+    def test_always_approval_persists_in_mcp_allowlist(self, fake_session):
+        """Choosing 'always' registers tool in mcp_allowlist and survives without prompt."""
+        from tools import approval
+
+        _set_trust("srv", "untrusted")
+        handler = _mcp_handlers._make_tool_handler("srv", "write_record", 30.0)
+        try:
+            approval.approve_mcp_permanent("srv", "write_record")
+            with patch("tools.approval_prompt.request_mcp_tool_consent") as consent:
+                raw = handler({"id": 99})
+                assert json.loads(raw) == {"result": "ok"}
+                consent.assert_not_called()
+        finally:
+            if hasattr(approval, "revoke_mcp_permanent"):
+                approval.revoke_mcp_permanent("srv", "write_record")
+
+    def test_profile_isolation_roshi_and_ragnar(self, tmp_path):
+        """MCP approvals in Roshi profile do not leak into default/Ragnar profile."""
+        from tools import approval
+
+        roshi_home = tmp_path / "roshi"
+        roshi_home.mkdir()
+        (roshi_home / "config.yaml").write_text("{}\n")
+
+        with patch("hermes_constants.get_hermes_home_override", return_value=str(roshi_home)):
+            approval.approve_mcp_permanent("twenty_write", "create_lead")
+            assert approval.is_mcp_approved("sess1", "twenty_write", "create_lead") is True
+
+        # Now in default profile (Ragnar)
+        with patch("hermes_constants.get_hermes_home_override", return_value=None):
+            assert approval.is_mcp_approved("sess1", "twenty_write", "create_lead") is False
+
+
 class TestTrustGateApprovalRouting:
     """MCP consent uses the API run's registered approval lifecycle only."""
 

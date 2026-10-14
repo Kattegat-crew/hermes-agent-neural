@@ -7,11 +7,12 @@
 ---
 
 ## 1. Active Focus & Current Goal
-* **Current Initiative**: Reconcile SDD documentation files in `/opt/hermes-agent` on branch `feat/memoria-dev` to resolve all audit discrepancies identified by Codex.
-* **Lead Agent**: Antigravity (`agy`) / Ragnar, with Codex preparing the documentation units.
+* **Current Initiative**: SDD Specification & Implementation for MCP Tool Approval Persistence (`session` & `always`) under `.specs/mcp-approval-persistence/` (Ticket Discord #1555313196590694501).
+* **Scope**: Hermes Agent core approval engine (`tools/approval.py`, `tools/mcp_tool_handlers.py`, `tools/approval_prompt.py`, `gateway/slash_commands.py`) across multi-profile fleet (Ragnar on WhatsApp, Roshi on Discord/Twenty CRM).
+* **Lead Agent**: Antigravity (`agy`) / Ragnar.
 * **Target Path**: [`/opt/hermes-agent/`](file:///opt/hermes-agent/).
-* **Delivery strategy:** feature-branch-chain approved by the user on 2026-10-08 (Aprobado); local slices only.
-* **Approval State**: Specification/design approved by the user on 2026-10-08 (Adelante); tasks T01–T10 and phases P1–P9 verified; no PR, push, merge, or unsafe runtime action is authorized.
+* **Approval & Test State**: Phase 4 Implementation COMPLETE. Verified RED (4 failures) -> GREEN (22 passed in `tests/tools/test_mcp_trust_gating.py` and 14 passed in `tests/gateway/test_discord_slash_commands.py`). Ready for operational smoke test and Ragnar workaround withdrawal.
+
 
 ---
 

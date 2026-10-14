@@ -56,6 +56,12 @@ _permanent_approved: set = set()
 # Routed multiplex profiles: one permanent allowlist per profile home (see ``_permanent_set``).
 _permanent_approved_by_home: dict[str, set] = {}
 
+# MCP tool allowlist stores (decoupled from shell command allowlists)
+_mcp_session_approved: dict[str, set[str]] = {}
+_mcp_permanent_approved: set[str] = set()
+_mcp_permanent_approved_by_home: dict[str, set[str]] = {}
+_mcp_permanent_baseline_by_home: dict[str, set[str]] = {}
+
 # --- Consecutive-denial circuit breaker for smart approvals ---------------------------------------------------------
 # Each retry of a smart-denied command burns another guardian LLM call. After ``approvals.denial_breaker_threshold``
 # consecutive guardian DENY verdicts in one session (default 3; 0 disables) the deny message escalates to a hard-stop
@@ -289,6 +295,7 @@ def clear_session(session_key: str) -> None:
         return
     with _lock:
         _session_approved.pop(session_key, None)
+        _mcp_session_approved.pop(session_key, None)
         _session_yolo.discard(session_key)
         _pending.pop(session_key, None)
         for entry in _gateway_queues.pop(session_key, []):
@@ -476,6 +483,135 @@ def save_permanent_allowlist(patterns: set):
             governing.update(merged)
     except Exception as e:
         logger.warning("Could not save allowlist: %s", e)
+
+
+# --- MCP Tool Allowlist Persistence (Decoupled from Shell Allowlists) ------------------------------------------------
+
+def _mcp_target_key(server_name: str, tool_name: str) -> str:
+    """Canonical identifier for an MCP tool permission."""
+    return f"{server_name}:{tool_name}"
+
+
+def _mcp_permanent_set() -> set[str]:
+    """The permanent MCP allowlist governing the ACTIVE profile."""
+    from hermes_constants import get_hermes_home_override, hermes_home_key
+    if get_hermes_home_override() is None:
+        return _mcp_permanent_approved
+    home_key = hermes_home_key()
+    approved = _mcp_permanent_approved_by_home.get(home_key)
+    if approved is None:
+        try:
+            approved = _read_permanent_mcp_allowlist()
+        except Exception as e:
+            logger.warning("Failed to load permanent MCP allowlist: %s", e)
+            approved = set()
+        _mcp_permanent_approved_by_home[home_key] = approved
+    return approved
+
+
+def is_mcp_approved(session_key: str, server_name: str, tool_name: str) -> bool:
+    """True if server:tool is approved for this session or permanently in active profile."""
+    key = _mcp_target_key(server_name, tool_name)
+    with _lock:
+        permanent = _mcp_permanent_set()
+        session_set = _mcp_session_approved.get(session_key, set())
+        return key in permanent or key in session_set
+
+
+def approve_mcp_session(session_key: str, server_name: str, tool_name: str) -> None:
+    """Approve server:tool for active session only."""
+    if not session_key:
+        return
+    key = _mcp_target_key(server_name, tool_name)
+    with _lock:
+        _mcp_session_approved.setdefault(session_key, set()).add(key)
+
+
+def revoke_mcp_session(session_key: str, server_name: str, tool_name: str) -> None:
+    """Revoke server:tool for active session."""
+    if not session_key:
+        return
+    key = _mcp_target_key(server_name, tool_name)
+    with _lock:
+        if session_key in _mcp_session_approved:
+            _mcp_session_approved[session_key].discard(key)
+
+
+def approve_mcp_permanent(server_name: str, tool_name: str) -> None:
+    """Add server:tool to permanent allowlist and persist to config.yaml."""
+    key = _mcp_target_key(server_name, tool_name)
+    with _lock:
+        _mcp_permanent_set().add(key)
+        snapshot = set(_mcp_permanent_set())
+    save_permanent_mcp_allowlist(snapshot)
+
+
+def revoke_mcp_permanent(server_name: str, tool_name: str) -> None:
+    """Remove server:tool from permanent allowlist and persist to config.yaml."""
+    key = _mcp_target_key(server_name, tool_name)
+    try:
+        from hermes_cli.config import load_config, save_config
+        config = load_config()
+        existing = set(config.get("mcp_allowlist", []) or [])
+        existing.discard(key)
+        config["mcp_allowlist"] = sorted(existing)
+        save_config(config)
+        with _lock:
+            home = _baseline_key()
+            _mcp_permanent_baseline_by_home[home] = set(existing)
+            governing = _mcp_permanent_set()
+            governing.discard(key)
+    except Exception as e:
+        logger.warning("Could not revoke MCP allowlist entry: %s", e)
+
+
+def _read_permanent_mcp_allowlist() -> set[str]:
+    """mcp_allowlist of the active profile's config as a set."""
+    from hermes_cli.config import load_config_readonly
+    config = load_config_readonly()
+    raw = config.get("mcp_allowlist")
+    if raw is None:
+        return set()
+    if not isinstance(raw, list) or any(not isinstance(item, str) for item in raw):
+        logger.warning("Ignoring malformed mcp_allowlist; configure a list of strings.")
+        return set()
+    return set(raw)
+
+
+def load_permanent_mcp_allowlist() -> set[str]:
+    """Load mcp_allowlist from config into approval state."""
+    try:
+        items = _read_permanent_mcp_allowlist()
+        with _lock:
+            governing = _mcp_permanent_set()
+            governing.clear()
+            governing.update(items)
+            _mcp_permanent_baseline_by_home[_baseline_key()] = set(items)
+        return items
+    except Exception as e:
+        logger.warning("Failed to load permanent MCP allowlist: %s", e)
+        return set()
+
+
+def save_permanent_mcp_allowlist(items: set[str]) -> None:
+    """Save permanently allowed MCP tools to config, reconciling with disk."""
+    try:
+        from hermes_cli.config import load_config, save_config
+        config = load_config()
+        on_disk = set(config.get("mcp_allowlist", []) or [])
+        with _lock:
+            key = _baseline_key()
+            baseline = _mcp_permanent_baseline_by_home.get(key, set())
+            merged = on_disk | (set(items) - baseline)
+            config["mcp_allowlist"] = sorted(merged)
+            save_config(config)
+            _mcp_permanent_baseline_by_home[key] = set(merged)
+            governing = _mcp_permanent_set()
+            governing.clear()
+            governing.update(merged)
+    except Exception as e:
+        logger.warning("Could not save MCP allowlist: %s", e)
+
 
 
 # --- Bypass check (yolo / mode=off) ---------------------------------------------------------------------------------

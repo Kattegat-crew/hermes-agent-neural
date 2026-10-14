@@ -920,19 +920,45 @@ class GatewaySlashCommandsMixin(
         return out
 
     async def _handle_approvals_command(self, event: MessageEvent) -> str:
-        """Show or persist the profile-wide dangerous-command approval mode."""
+        """Show or persist the profile-wide dangerous-command approval mode, or inspect/revoke MCP approvals."""
         from gateway.slash_access import policy_for_runner_source
         from hermes_cli.approval_mode import run_approval_mode_command
-        requested = event.get_command_args().strip() or None
-        # This mutates profile-wide security policy. The central slash gate can allow selected
-        # commands to non-admin users, so enforce admin again at this side-effect boundary.
-        # Unconfigured policies remain unrestricted.
+        from tools import approval
+
+        requested = (event.get_command_args().strip() or None)
+        session_key = self._session_key_for_source(event.source)
+
+        # Handle MCP inspection and revocation subcommands
+        if requested:
+            parts = requested.split()
+            cmd = parts[0].lower()
+            if cmd == "mcp" or (len(parts) >= 2 and parts[1].lower() == "mcp"):
+                perm = sorted(approval._mcp_permanent_set())
+                sess = sorted(approval._mcp_session_approved.get(session_key, set()))
+                lines = ["**MCP Tool Approvals:**"]
+                lines.append(f"• Active Profile Permanent (`mcp_allowlist`): {', '.join(perm) if perm else 'None'}")
+                lines.append(f"• Current Session: {', '.join(sess) if sess else 'None'}")
+                lines.append("\nTo revoke: `/approvals revoke mcp <server:tool>`")
+                return "\n".join(lines)
+            if cmd == "revoke":
+                target = parts[-1]
+                if ":" in target:
+                    server, tool = target.split(":", 1)
+                    approval.revoke_mcp_permanent(server, tool)
+                    approval.revoke_mcp_session(session_key, server, tool)
+                    return f"✅ Revoked MCP approval for '{server}:{tool}'. Next call will prompt for confirmation."
+
         policy = policy_for_runner_source(self, event.source)
         if requested and not policy.is_admin(event.source.user_id):
             return t("gateway.approvals.admin_only")
-        # Approval checks load config dynamically; do not evict the cached agent or alter its
-        # system prompt/tool schema (prompt-cache prefix is sacred).
-        return run_approval_mode_command(requested).message
+
+        res = run_approval_mode_command(requested).message
+        if not requested:
+            perm = sorted(approval._mcp_permanent_set())
+            sess = sorted(approval._mcp_session_approved.get(session_key, set()))
+            if perm or sess:
+                res += f"\n\n**Approved MCP Tools:**\n• Permanent: {', '.join(perm) if perm else 'None'}\n• Session: {', '.join(sess) if sess else 'None'}"
+        return res
 
     async def _handle_yolo_command(self, event: MessageEvent) -> str | EphemeralReply:
         """Handle /yolo — toggle dangerous command approval bypass for this session only. The flag is

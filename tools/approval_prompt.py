@@ -355,3 +355,95 @@ def request_elicitation_consent(message: str, description: str, *,
     finally:
         _ctx._fire_approval_hook("post_approval_response", **hook_kwargs, choice=hook_choice)
     return _consent(choice, "cancel")  # timeout mirrors the gateway's unresolved outcome
+
+
+def request_mcp_tool_consent(
+    server_name: str,
+    tool_name: str,
+    message: str,
+    description: str,
+    *,
+    timeout_seconds: int | None = None,
+    surface: str | None = None,
+    title: str | None = None,
+) -> tuple[str, str]:
+    """Route an MCP tool execution consent request preserving duration scope (once/session/always).
+
+    Returns: ``(verdict, scope)`` where:
+      - verdict: "allow" | "deny" | "timeout" | "cancel"
+      - scope: "once" | "session" | "always"
+    Fail-closed: unhandled errors, missing callbacks and denials return ("deny", "once").
+    """
+    from tools import approval as _a
+    surf = surface or f"mcp-trust/{server_name}"
+    hdr = title or f"MCP server '{server_name}' wants to run '{tool_name}'"
+
+    try:
+        session_key = _ctx.get_current_session_key()
+    except Exception as exc:  # pragma: no cover -- defensive
+        logger.warning("MCP tool consent: session lookup failed: %s", exc)
+        return ("deny", "once")
+
+    api_run_context = (
+        _ctx._get_session_platform() == "api_server"
+        and not _ctx._is_cron_approval_context()
+        and not _ctx._is_single_query_approval_context()
+    )
+    if _ctx._is_gateway_approval_context() or api_run_context:
+        notify_cb = _a._gateway_notify_cb(session_key)
+        if notify_cb is None:
+            logger.warning("MCP tool consent requested in gateway session %s but no "
+                           "notify_cb is registered — failing closed", session_key)
+            return ("deny", "once")
+        pattern_key = f"mcp:{server_name}:{tool_name}"
+        try:
+            decision = _gw._await_gateway_decision(
+                session_key, notify_cb, {
+                    "command": message, "description": description,
+                    "pattern_key": pattern_key, "pattern_keys": [pattern_key],
+                    "allow_session": True, "allow_permanent": True,
+                }, surface=surf)
+        except Exception as exc:
+            logger.error("MCP tool consent gateway dispatch failed: %s", exc, exc_info=True)
+            return ("deny", "once")
+        if decision.get("notify_failed"):
+            return ("deny", "once")
+        if not decision.get("resolved") or decision.get("cancelled"):
+            return ("cancel", "once")
+        ch = decision.get("choice")
+        if ch in ("once", "session", "always"):
+            return ("allow", ch)
+        if ch == "timeout":
+            return ("timeout", "once")
+        return ("deny", "once")
+
+    if _ctx._no_user_can_answer():
+        logger.info("MCP tool consent (%s) declined: no user can answer in this session", surf)
+        return ("deny", "once")
+
+    hook_kwargs = dict(command=message, description=description, pattern_key=f"mcp:{server_name}:{tool_name}",
+                       pattern_keys=[f"mcp:{server_name}:{tool_name}"], session_key=session_key, surface=surf)
+    _ctx._fire_approval_hook("pre_approval_request", **hook_kwargs)
+    hook_choice = "cancelled"
+    try:
+        from tools.terminal_tool import _get_approval_callback
+        choice = prompt_dangerous_approval(
+            message, description, timeout_seconds=timeout_seconds,
+            allow_permanent=True, title=hdr,
+            approval_callback=_get_approval_callback(),
+        )
+        hook_choice = choice
+    except Exception as exc:
+        logger.error("MCP tool consent CLI prompt failed: %s", exc, exc_info=True)
+        return ("deny", "once")
+    finally:
+        _ctx._fire_approval_hook("post_approval_response", **hook_kwargs, choice=hook_choice)
+
+    if choice in ("once", "session", "always"):
+        return ("allow", choice)
+    if choice == "timeout":
+        return ("timeout", "once")
+    if choice == "cancelled":
+        return ("cancel", "once")
+    return ("deny", "once")
+
