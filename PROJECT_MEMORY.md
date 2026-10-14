@@ -7,16 +7,16 @@
 ---
 
 ## 1. Active Focus & Current Goal
-* **Current Initiative**: Context Compression 300k & Multimodal Standardization (Ticket Discord #1555436381042516008: "Compresión contexto — umbral 300k adaptativo + ventana 1M + aux qwen3.8 (DEV)").
-* **Scope**: Context compressor threshold enforcement (`agent/conversation_compression.py`), unhyphenated model catalog alias (`agent/model_metadata.py`), and auxiliary vision/compression model standardization on `glm5.3-flash` in `/opt/hermes-agent-data/config.yaml`.
+* **Current Initiative**: Completed — Context Compression 300k & Multimodal Standardization (Ticket Discord #1555436381042516008: "Compresión contexto — umbral 300k adaptativo + ventana 1M + aux qwen3.8 (DEV)").
+* **Scope**: Context compressor threshold enforcement (`agent/conversation_compression.py`), unhyphenated model catalog alias (`agent/model_metadata.py`), auxiliary vision/compression model standardization on `glm5.3-flash`, and Discord in-place tool progress display in `/opt/hermes-agent-data/config.yaml`.
 * **Lead Agent**: Antigravity (`agy`) / Ragnar.
 * **Target Path**: [`/opt/hermes-agent/`](file:///opt/hermes-agent/).
-* **Approval & Test State**: Implementation COMPLETE. Verified GREEN (117 passed in `tests/agent/test_model_metadata.py`, Python feasibility check verifies threshold_tokens=300000 without clamping, vision test validates image analysis).
+* **Approval & Test State**: COMPLETE & CLOSED. Verified GREEN (117 passed in `tests/agent/test_model_metadata.py`, 19 passed in `tests/gateway/test_display_config.py`, Ragnar live audit confirmed image & video probes against NaN-Builders, zero attempts_exhausted, gateway safely restarted with PID 500433, ticket marked Cerrado & archived).
 
 ---
 
 ## 2. Handover from Last Session
-* **Current Handover (2026-10-14 — Context Compression 300k & Multimodal Standardization)**:
+* **Current Handover (2026-10-14 — Context Compression 300k, Multimodal Standardization & Ticket Closure)**:
   - **Completed**:
     - **Multimodal & Context Window Incompatibility Resolution**:
       - Identified root cause of auto-lowered threshold: `qwen3.8-flash` in `NaN-Builders` has a 262,144 token window, causing Hermes to automatically clamp the 300k threshold to 262,144 on session init.
@@ -24,14 +24,22 @@
       - Updated `/opt/hermes-agent-data/config.yaml`:
         - Set `auxiliary.compression.model: glm5.3-flash` (1M window, enabling genuine 300k threshold).
         - Set `auxiliary.vision.model: glm5.3-flash` (native omni-modal support: text, image, video).
+        - Homologated `providers.NaN-Builders.models.glm5.3-flash.context_length` from `400000` to `1000000` to eliminate divergence with `custom_providers`.
     - **Model Metadata Static Catalog Patch**:
       - Added unhyphenated aliases `"glm5.3-flash": 1_048_576, "glm5.3": 1_048_576` to `_KNOWN_MODEL_CONTEXT_LENGTHS` in `agent/model_metadata.py`. This prevents decoupled lookups from falling back to generic `202752`.
+    - **Discord UX & In-Place Progress Streamlining**:
+      - Updated `display.platforms.discord` in `config.yaml`: `tool_progress: 'all'`, `tool_progress_grouping: accumulate`, `cleanup_progress: true`, `interim_assistant_messages: false`. Avoids separate chat commentary bubbles, updates status in-place, and cleans up on completion.
+    - **Live Audit & Gateway Safe Restart**:
+      - Ragnar completed comprehensive live audit in Discord thread `1555436381042516008`, validating image & video live probes against NaN-Builders API and confirming 300k threshold feasibility.
+      - Executed `/usr/local/bin/hermes-safe-restart`, cleanly draining and reloading gateway (PID 500433) with commit `c336482e35` in memory.
     - **Ticket & Discord**:
-      - Updated tag to "En curso" (`1554957746980261943`) and posted execution plan in Discord thread `1555436381042516008`.
+      - Posted final closing resolution in Discord thread `1555436381042516008`, updated tags to "Cerrado" (`1554957746980261945`), and archived thread.
   - **Verified by**:
     - `pytest tests/agent/test_model_metadata.py` (117 passed in 21.35s).
+    - `pytest tests/gateway/test_display_config.py` (19 passed).
     - In vivo feasibility check: `check_compression_model_feasibility` maintains `threshold_tokens=300000` with zero auto-lowered warnings.
-    - `get_model_context_length("glm5.3-flash")` resolves to `1048576` without custom_providers.
+    - Live probes by Ragnar: Image PNG and MP4 video analysis successful against NaN-Builders.
+    - `systemctl status hermes-agent.service` active and operational.
 
 * **Prior Handover (2026-10-14 — Gateway Restart Hardening & Spanish Stall Guard Resolution)**:
   - **Completed**:
