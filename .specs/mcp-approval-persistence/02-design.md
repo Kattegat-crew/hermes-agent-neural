@@ -66,6 +66,12 @@ def save_permanent_mcp_allowlist(items: set[str]) -> None:
         governing.update(merged)
 ```
 
+> [!NOTE]
+> **Authoritative Revocation Path:** Reconciling with `baseline` separates items approved prior to boot from items approved in the current process lifetime. To ensure permanent removal without resurrecting entries during subsequent tool approvals, revocations MUST be performed via `/approvals revoke mcp <server:tool>` (or programmatically via `approval.revoke_mcp_permanent()`), which atomically clears both disk, baseline, and governing sets.
+>
+> **Admin-Only Enforcement:** In shared channels and DMs, all mutation and inspection subcommands (`/approvals mcp`, `/approvals revoke mcp`) are strictly gated by `policy.is_admin(user_id)`. Non-admin users cannot inspect allowed lists or mutate profile allowlists.
+
+
 ## 3. Profile Isolation Mechanics (Ragnar vs Roshi)
 
 | Metric | Ragnar | Roshi |

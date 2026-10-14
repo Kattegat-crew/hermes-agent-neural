@@ -90,15 +90,9 @@ def _trust_gate_check(server_name: str, tool_name: str) -> Optional[str]:
         surface = f"mcp-trust/{server_name}"
         title = f"MCP server '{server_name}' is asking"
 
-        # Check for legacy mock in tests
-        from unittest.mock import Mock
-        if isinstance(getattr(_ap, "request_elicitation_consent", None), Mock):
-            ans = _ap.request_elicitation_consent(message, description, surface=surface, title=title)
-            verdict, scope = ("allow", "once") if ans == "accept" else ("deny", "once")
-        else:
-            verdict, scope = _ap.request_mcp_tool_consent(
-                server_name, tool_name, message, description, surface=surface, title=title
-            )
+        verdict, scope = _ap.request_mcp_tool_consent(
+            server_name, tool_name, message, description, surface=surface, title=title
+        )
     except Exception as exc:
         logger.error("MCP trust gate: approval check failed for %s.%s: %s", server_name, tool_name, exc, exc_info=True)
         return tool_error(f"MCP tool '{tool_name}' on untrusted server '{server_name}' was blocked: the approval "

@@ -57,3 +57,58 @@ async def test_gateway_rejects_non_admin_persistent_approval_change():
     run.assert_not_called()
 
 
+@pytest.mark.asyncio
+async def test_gateway_rejects_non_admin_mcp_inspection():
+    runner = _runner()
+    runner.config = SimpleNamespace(
+        platforms={
+            Platform.TELEGRAM: SimpleNamespace(
+                extra={
+                    "allow_admin_from": ["admin-1"],
+                    "user_allowed_commands": ["approvals"],
+                }
+            )
+        }
+    )
+
+    output = await runner._handle_approvals_command(_event("/approvals mcp"))
+    assert "admin" in output.lower()
+
+
+@pytest.mark.asyncio
+async def test_gateway_rejects_non_admin_mcp_revocation():
+    runner = _runner()
+    runner.config = SimpleNamespace(
+        platforms={
+            Platform.TELEGRAM: SimpleNamespace(
+                extra={
+                    "allow_admin_from": ["admin-1"],
+                    "user_allowed_commands": ["approvals"],
+                }
+            )
+        }
+    )
+
+    output = await runner._handle_approvals_command(_event("/approvals revoke mcp test:tool"))
+    assert "admin" in output.lower()
+
+
+@pytest.mark.asyncio
+async def test_gateway_allows_admin_mcp_inspection():
+    runner = _runner()
+    runner.config = SimpleNamespace(
+        platforms={
+            Platform.TELEGRAM: SimpleNamespace(
+                extra={
+                    "allow_admin_from": ["user-1"],
+                    "user_allowed_commands": ["approvals"],
+                }
+            )
+        }
+    )
+
+    output = await runner._handle_approvals_command(_event("/approvals mcp"))
+    assert "MCP Tool Approvals:" in output
+
+
+

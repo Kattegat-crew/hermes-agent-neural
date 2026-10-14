@@ -928,6 +928,10 @@ class GatewaySlashCommandsMixin(
         requested = (event.get_command_args().strip() or None)
         session_key = self._session_key_for_source(event.source)
 
+        policy = policy_for_runner_source(self, event.source)
+        if requested and not policy.is_admin(event.source.user_id):
+            return t("gateway.approvals.admin_only")
+
         # Handle MCP inspection and revocation subcommands
         if requested:
             parts = requested.split()
@@ -947,10 +951,6 @@ class GatewaySlashCommandsMixin(
                     approval.revoke_mcp_permanent(server, tool)
                     approval.revoke_mcp_session(session_key, server, tool)
                     return f"✅ Revoked MCP approval for '{server}:{tool}'. Next call will prompt for confirmation."
-
-        policy = policy_for_runner_source(self, event.source)
-        if requested and not policy.is_admin(event.source.user_id):
-            return t("gateway.approvals.admin_only")
 
         res = run_approval_mode_command(requested).message
         if not requested:

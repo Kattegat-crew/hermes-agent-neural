@@ -93,13 +93,13 @@ class TestTrustGateAtCallTime:
     def test_write_capable_on_untrusted_server_requires_approval(
         self, fake_session
     ):
-        """Approval consulted; 'accept' lets the RPC through."""
+        """Approval consulted; 'allow' lets the RPC through."""
         _set_trust("srv", "untrusted")
         # No readOnlyHint recorded for delete_repo → write-capable.
         handler = _mcp_handlers._make_tool_handler("srv", "delete_repo", 30.0)
         with patch(
-            "tools.approval_prompt.request_elicitation_consent",
-            return_value="accept",
+            "tools.approval_prompt.request_mcp_tool_consent",
+            return_value=("allow", "once"),
         ) as consent:
             raw = handler({"repo": "x"})
         consent.assert_called_once()
@@ -107,12 +107,12 @@ class TestTrustGateAtCallTime:
         fake_session.call_tool.assert_awaited_once()
 
     def test_denied_approval_blocks_rpc(self, fake_session):
-        """'decline' blocks the call — the RPC must never fire."""
+        """'deny' blocks the call — the RPC must never fire."""
         _set_trust("srv", "untrusted")
         handler = _mcp_handlers._make_tool_handler("srv", "delete_repo", 30.0)
         with patch(
-            "tools.approval_prompt.request_elicitation_consent",
-            return_value="decline",
+            "tools.approval_prompt.request_mcp_tool_consent",
+            return_value=("deny", "once"),
         ):
             raw = handler({"repo": "x"})
         fake_session.call_tool.assert_not_awaited()
@@ -126,7 +126,7 @@ class TestTrustGateAtCallTime:
         _set_read_only("srv", "list_repos", True)
         handler = _mcp_handlers._make_tool_handler("srv", "list_repos", 30.0)
         with patch(
-            "tools.approval_prompt.request_elicitation_consent"
+            "tools.approval_prompt.request_mcp_tool_consent"
         ) as consent:
             raw = handler({})
         consent.assert_not_called()
@@ -139,7 +139,7 @@ class TestTrustGateAtCallTime:
         _set_trust("srv", "full")
         handler = _mcp_handlers._make_tool_handler("srv", "delete_repo", 30.0)
         with patch(
-            "tools.approval_prompt.request_elicitation_consent"
+            "tools.approval_prompt.request_mcp_tool_consent"
         ) as consent:
             raw = handler({"repo": "x"})
         consent.assert_not_called()
@@ -149,7 +149,7 @@ class TestTrustGateAtCallTime:
         """Backward compat: servers with no trust key behave as before."""
         handler = _mcp_handlers._make_tool_handler("srv", "delete_repo", 30.0)
         with patch(
-            "tools.approval_prompt.request_elicitation_consent"
+            "tools.approval_prompt.request_mcp_tool_consent"
         ) as consent:
             raw = handler({"repo": "x"})
         consent.assert_not_called()
@@ -161,8 +161,8 @@ class TestTrustGateAtCallTime:
         _set_read_only("srv", "write_file", False)
         handler = _mcp_handlers._make_tool_handler("srv", "write_file", 30.0)
         with patch(
-            "tools.approval_prompt.request_elicitation_consent",
-            return_value="decline",
+            "tools.approval_prompt.request_mcp_tool_consent",
+            return_value=("deny", "once"),
         ) as consent:
             handler({"path": "/etc/passwd"})
         consent.assert_called_once()
@@ -173,7 +173,7 @@ class TestTrustGateAtCallTime:
         _set_trust("srv", "untrusted")
         handler = _mcp_handlers._make_tool_handler("srv", "delete_repo", 30.0)
         with patch(
-            "tools.approval_prompt.request_elicitation_consent",
+            "tools.approval_prompt.request_mcp_tool_consent",
             side_effect=RuntimeError("approval backend down"),
         ):
             raw = handler({"repo": "x"})

@@ -59,7 +59,23 @@
     - End-to-end `POST /api/profiles/sessions/{id}/project` assignment verification.
     - `engram doctor --json` verified.
 
-* **Current Handover (2026-10-14 — Post-v0.22.0 Upgrade Incident Resolution)**:
+* **Current Handover (2026-10-14 — MCP Approval Persistence & Ragnar Audit Resolution)**:
+  - **Completed**:
+    - Implemented decoupled MCP approval persistence in `tools/approval.py` (`_mcp_session_approved`, `_mcp_permanent_approved_by_home`, `is_mcp_approved`, `approve_mcp_session`, `approve_mcp_permanent`, `revoke_mcp_permanent`, `save_permanent_mcp_allowlist`).
+    - Added structured consent handler in `tools/approval_prompt.py` (`request_mcp_tool_consent`) preserving duration scopes (`once`, `session`, `always`).
+    - Integrated gate check in `tools/mcp_tool_handlers.py` to consult allowlist and record grants.
+    - Extended `/approvals` with `/approvals mcp` and `/approvals revoke mcp <server:tool>` in `gateway/slash_commands.py`.
+    - Addressed Ragnar adversarial audit findings:
+      - Fixed Finding 1: Enforced `policy.is_admin(user_id)` before handling `/approvals` subcommands, closing unauthorized inspection/revocation.
+      - Fixed Finding 3: Removed test-only `Mock` shim in production `mcp_tool_handlers.py`; updated tests to mock `request_mcp_tool_consent` directly.
+      - Documented Finding 2: Reconciled baseline mechanics in `02-design.md`, noting `/approvals revoke mcp` as the authoritative path.
+  - **Verified by**:
+    - `pytest tests/tools/test_mcp_trust_gating.py` (22 passed).
+    - `pytest tests/gateway/test_approvals_command.py` (4 passed, including non-admin rejection).
+    - `pytest tests/gateway/test_discord_slash_commands.py` (14 passed).
+    - Memory recorded in Engram (#1861, #1863).
+
+* **Prior Handover (2026-10-14 — Post-v0.22.0 Upgrade Incident Resolution)**:
   - **Completed**:
     - **DEV WhatsApp & Python C-ABI Mismatch**:
       - Identified and resolved root cause for dropped WhatsApp messages to Roshi: in v0.22.0, profiles with `gateway.standalone: true` are excluded from multiplexed routes (`profiles_to_serve()`). Removed `gateway.standalone: true` in `/opt/hermes-agent-data/profiles/roshi/config.yaml`.

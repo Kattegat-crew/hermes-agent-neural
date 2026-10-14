@@ -28,9 +28,19 @@
     - `/approvals revoke mcp <server:tool>`: revokes authorization from memory and disk.
   - *Observed GREEN proof:* `pytest tests/gateway/test_discord_slash_commands.py` -> 14 passed in 19.00s.
 
+- [x] **Task 5b: Hardening & Adversarial Audit Fixes (Ragnar Review)**
+  - Gated all `/approvals` subcommands (`mcp`, `revoke`) behind `policy.is_admin(user_id)` to eliminate security bypass (Finding 1).
+  - Cleaned test-only `Mock` shim from production `tools/mcp_tool_handlers.py` and updated upstream tests in `tests/tools/test_mcp_trust_gating.py` to patch `request_mcp_tool_consent` directly (Finding 3).
+  - Documented baseline reconciliation mechanics and `/approvals revoke mcp` authoritative path in `02-design.md` (Finding 2).
+  - Added unit tests for admin policy enforcement in `tests/gateway/test_approvals_command.py` (4 passed).
+
 - [x] **Task 6: Roshi Profile Verification (Discord & Twenty CRM)**
   - Confirmed isolation via `test_profile_isolation_roshi_and_ragnar`: approvals in Roshi write strictly to Roshi's `config.yaml` (`home_key`) and never leak to default/Ragnar profile.
 
 - [ ] **Task 7: Retiro del Workaround en Ragnar & Validación Operativa**
-  - Pending user operational confirmation before reverting Ragnar's temporary `trust: full` to `trust: untrusted`.
+  - Pending user operational confirmation:
+    1. Confirm `git push` to remote branch `feat/upgrade-v0.22.0`.
+    2. Restart default gateway (`hermes-safe-restart.sh`) so PID 212021 loads the new code.
+    3. Revert Ragnar's temporary `trust: full` in `/opt/hermes-agent-data/config.yaml` back to strict untrusted.
+
 
