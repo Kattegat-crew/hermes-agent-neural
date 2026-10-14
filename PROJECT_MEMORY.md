@@ -59,6 +59,20 @@
     - End-to-end `POST /api/profiles/sessions/{id}/project` assignment verification.
     - `engram doctor --json` verified.
 
+* **Current Handover (2026-10-14 — Post-v0.22.0 Upgrade Incident Resolution)**:
+  - **Completed**:
+    - **DEV WhatsApp & Python C-ABI Mismatch**:
+      - Identified and resolved root cause for dropped WhatsApp messages to Roshi: in v0.22.0, profiles with `gateway.standalone: true` are excluded from multiplexed routes (`profiles_to_serve()`). Removed `gateway.standalone: true` in `/opt/hermes-agent-data/profiles/roshi/config.yaml`.
+      - Stopped and disabled redundant standalone unit `hermes-agent-roshi.service`. Roshi is now cleanly multiplexed by the host gateway (serving default, roshi, and secondary profiles).
+      - Fixed Python C-ABI mismatch: `hermes-agent.service` was executing Python 3.13 (`.venv`), while PM had provisioned Python 3.14.7 in `/opt/hermes-agent-data/installs/`, causing `ModuleNotFoundError: No module named 'pydantic_core._pydantic_core'` on turn execution. Updated unit to run the managed launcher `/opt/hermes-agent-data/home/.local/bin/hermes`.
+    - **PROD Discord Cross-Talk / Agent Contamination**:
+      - Identified and resolved root cause for Goldie (`golden-game`) and Lucky (`lucky-club`) replying on Bob's Discord channel (`1555019373385752617`). The Docker container `c52496bbd7e7` exported Bob's `DISCORD_BOT_TOKEN`, which sub-gateways inherited via s6 `with-contenv`.
+      - Explicitly configured `platforms.discord.enabled: false` and `platforms.telegram.enabled: false` in `/opt/hermes/data/profiles/golden-game/config.yaml` and `/opt/hermes/data/profiles/lucky-club/config.yaml`.
+      - Restarted `gateway-golden-game` and `gateway-lucky-club` via s6. Confirmed both sub-gateways only bind WhatsApp (ports 3001, 3002) and API server, eliminating all cross-talk on Discord.
+  - **Verified by**:
+    - DEV: `systemctl status hermes-agent.service` running PID 212021; `whatsapp` bridge connected on port 3000; `served_profiles` includes `default` and `roshi`; `roshi:discord` and `roshi:telegram` connected.
+    - PROD: `s6-svstat` confirmed sub-gateways up; logs confirmed `Platform 'discord' is explicitly disabled... credentials found in the environment will NOT start its adapter`; Bob (`PID 327`) is the sole Discord bot connected.
+    - Memory recorded in Engram (#1862).
 
 * **Prior Handover (historical; file mtime observed 2026-10-03, exact event dates absent from its body)**:
 * **Completed (historically recorded; not current verification)**:
