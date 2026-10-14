@@ -657,3 +657,31 @@ def test_equivalent_windows_spellings_derive_one_lane_key():
     b = pt._place_by_heuristic("C:\\work\\notes\\")
     assert a is not None and b is not None
     assert pt._lane_key(a["lane_key"]) == pt._lane_key(b["lane_key"])
+
+
+def test_explicit_project_id_with_non_cwd_conversations():
+    """Sessions with explicit project_id without cwd map to project and create Conversaciones lane."""
+    project = {
+        "id": "p_neuralops",
+        "name": "NeuralOps",
+        "slug": "neuralops",
+        "folders": [],
+        "primary_path": None,
+        "archived": False,
+    }
+    chat_session = _session(None)
+    chat_session["project_id"] = "p_neuralops"
+    chat_session["title"] = "Refactor fleet"
+
+    tree = pt.build_tree([project], [chat_session], [], None, hydrate=True)
+
+    # Project node exists with 1 session
+    p_node = next(p for p in tree["projects"] if p["id"] == "p_neuralops")
+    assert p_node["sessionCount"] == 1
+    assert p_node["previewSessions"][0]["id"] == chat_session["id"]
+
+    # Non-cwd conversations lane exists
+    conv_repo = next(r for r in p_node["repos"] if r["id"] == "__conversations__")
+    assert conv_repo["label"] == "Conversaciones"
+    assert conv_repo["sessionCount"] == 1
+    assert conv_repo["groups"][0]["sessions"][0]["id"] == chat_session["id"]

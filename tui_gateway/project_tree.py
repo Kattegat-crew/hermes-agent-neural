@@ -352,10 +352,12 @@ def _session_time(session: dict) -> float:
 def _build_repos(sessions: list[dict], resolve: Optional[Resolve], hydrate: bool) -> list[dict]:
     """Build the ``repo -> lane -> sessions`` subtree for a set of sessions."""
     lanes: dict[str, dict] = {}  # lane_key -> {group, repo_key, repo_label, repo_path}
+    chats: list[dict] = []
 
     for session in sessions:
         cwd = (session.get("cwd") or "").strip()
         if not cwd:
+            chats.append(session)
             continue
 
         placement = _place(
@@ -405,6 +407,24 @@ def _build_repos(sessions: list[dict], resolve: Optional[Resolve], hydrate: bool
             repos[repo_identity] = repo
         repo["groups"].append(group)
         repo["sessionCount"] += count
+
+    if chats:
+        chats.sort(key=_session_time, reverse=True)
+        chat_repo_key = "__conversations__"
+        repos[chat_repo_key] = {
+            "id": chat_repo_key,
+            "label": "Conversaciones",
+            "path": None,
+            "groups": [{
+                "id": f"{chat_repo_key}::chats",
+                "label": "Chats y Gateways",
+                "path": None,
+                "isMain": True,
+                "isKanban": False,
+                "sessions": chats,
+            }],
+            "sessionCount": len(chats),
+        }
 
     repo_list = list(repos.values())
     for repo in repo_list:
@@ -608,10 +628,15 @@ def build_tree(
     _junk_cwd = is_junk_cwd or (lambda _cwd: False)
     _exists = exists or (lambda _path: True)
     folder_index = _FolderIndex(active_projects)
+    project_ids = {p["id"] for p in active_projects}
 
     by_project: dict[str, list[dict]] = {}
     unowned: list[dict] = []
     for session in sessions:
+        explicit_pid = session.get("project_id")
+        if explicit_pid and explicit_pid in project_ids:
+            by_project.setdefault(explicit_pid, []).append(session)
+            continue
         owner = _project_for_session(session, folder_index, resolve)
         if owner:
             by_project.setdefault(owner["id"], []).append(session)

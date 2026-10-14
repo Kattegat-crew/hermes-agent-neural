@@ -93,6 +93,17 @@ CREATE TABLE IF NOT EXISTS discovered_repos (
     label         TEXT,
     last_seen     INTEGER NOT NULL
 );
+
+CREATE TABLE IF NOT EXISTS session_projects (
+    session_id    TEXT PRIMARY KEY,
+    project_id    TEXT NOT NULL REFERENCES projects(id) ON DELETE CASCADE,
+    profile_name  TEXT NOT NULL DEFAULT 'default',
+    assigned_by   TEXT NOT NULL,
+    assigned_at   INTEGER NOT NULL
+);
+
+CREATE INDEX IF NOT EXISTS idx_session_projects_lookup
+    ON session_projects(profile_name, project_id);
 """
 
 
@@ -821,3 +832,42 @@ def branch_name_for(project: Project, task_id: str, *, title: str = "") -> str:
         if tslug:
             base = f"{base}-{tslug}"
     return base
+
+
+def get_session_project_map(
+    conn: sqlite3.Connection, *, profile_name: Optional[str] = None
+) -> dict[str, str]:
+    """Mapping of session_id -> project_id from session_projects sidecar table."""
+    try:
+        if profile_name:
+            rows = conn.execute(
+                "SELECT session_id, project_id FROM session_projects WHERE profile_name = ?",
+                (profile_name,),
+            ).fetchall()
+        else:
+            rows = conn.execute("SELECT session_id, project_id FROM session_projects").fetchall()
+        return {r["session_id"]: r["project_id"] for r in rows}
+    except Exception:
+        return {}
+
+
+def assign_session_project(
+    conn: sqlite3.Connection,
+    session_id: str,
+    project_id: str,
+    *,
+    profile_name: str = "default",
+    assigned_by: str = "manual",
+) -> None:
+    """Explicitly bind a session to a project semantically (without altering cwd)."""
+    now = int(time.time())
+    with write_txn(conn):
+        conn.execute(
+            """
+            INSERT OR REPLACE INTO session_projects
+            (session_id, project_id, profile_name, assigned_by, assigned_at)
+            VALUES (?, ?, ?, ?, ?)
+            """,
+            (session_id, project_id, profile_name, assigned_by, now),
+        )
+

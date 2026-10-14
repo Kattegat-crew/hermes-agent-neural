@@ -15905,6 +15905,10 @@ def _project_tree_inputs(
             )
         projects = [p.to_dict() for p in pdb.list_projects(conn)]
         active_id = pdb.get_active_id(conn)
+        session_map = pdb.get_session_project_map(conn)
+        for s in sessions:
+            if s.get("id") in session_map:
+                s["project_id"] = session_map[s["id"]]
         # backfill stays off the hot tree path — grouping uses the live resolver.
         discovered = (
             _discover_repos_payload(

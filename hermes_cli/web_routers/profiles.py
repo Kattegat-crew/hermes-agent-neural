@@ -40,6 +40,7 @@ from hermes_cli.web_models import (
     ProfileModelUpdate,
     ProfileDescribeAuto,
     SessionPrScanBody,
+    SessionProjectAssignBody,
 )
 
 # Same logger the handlers used before extraction (identical logger object).
@@ -782,6 +783,22 @@ def post_profiles_sessions_pull_requests(body: SessionPrScanBody):
     # Every id we looked at, so the caller can remember "asked, nothing there"
     # and never scan this session again.
     return {"pull_requests": found, "scanned": wanted}
+
+
+@sessions_router.post("/api/profiles/sessions/{session_id}/project")
+def post_profiles_session_project(session_id: str, body: SessionProjectAssignBody):
+    """Semantically bind a session to a project in projects.db without altering cwd."""
+    from hermes_cli import projects_db as pdb
+
+    with pdb.connect_closing() as conn:
+        pdb.assign_session_project(
+            conn,
+            session_id=session_id,
+            project_id=body.project_id,
+            profile_name=body.profile_name or "default",
+            assigned_by="manual",
+        )
+    return {"ok": True, "session_id": session_id, "project_id": body.project_id}
 
 
 @router.get("/api/profiles")

@@ -245,6 +245,11 @@ class SessionPrScanBody(BaseModel):
     ids: List[str] = []
 
 
+class SessionProjectAssignBody(BaseModel):
+    project_id: str
+    profile_name: Optional[str] = "default"
+
+
 class GitCommitBody(BaseModel):
     path: str
     message: str

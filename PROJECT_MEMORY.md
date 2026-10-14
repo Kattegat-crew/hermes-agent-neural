@@ -42,6 +42,23 @@
   - Feature-branch-chain delivery approved on 2026-10-08 (Aprobado). No PRs, pushes, or merges created.
   - Existing modified TikTok ingestion skill preserved untouched.
 
+* **Current Handover (2026-10-14 — Semantic Project Grouping & Engram Alignment)**:
+  - **Completed**:
+    - Created `session_projects` in `/opt/hermes-agent-data/projects.db` with profile isolation and index.
+    - Populated 12 official taxonomy projects in `projects.db`.
+    - Deterministically mapped 504 sessions (480 crons + 24 CLI sessions) to their respective projects.
+    - Classified remaining gateway sessions via Jev batch + subagent inheritance (841 total mapped, 168 transient in Home).
+    - Unified Engram memory taxonomy across 1,776 observations, 166 sessions, and 787 prompts.
+    - Extended `hermes_cli/projects_db.py`, `tui_gateway/project_tree.py`, and `tui_gateway/server.py` to natively support `session_projects` and non-cwd `Conversaciones` lanes in Desktop sidebar.
+    - Added semantic reassignment API `POST /api/profiles/sessions/{session_id}/project`.
+    - Authored `.specs/session-projects-sidebar/` (`01-spec.md`, `02-design.md`, `03-tasks.md`).
+  - **Verified by**:
+    - `python3 -m pytest tests/tui_gateway/test_project_tree.py tests/hermes_cli/test_projects_db.py` (42 passed).
+    - End-to-end `GET /api/profiles/projects/tree` test via FastAPI TestClient (HTTP 200, all projects rendered).
+    - End-to-end `POST /api/profiles/sessions/{id}/project` assignment verification.
+    - `engram doctor --json` verified.
+
+
 * **Prior Handover (historical; file mtime observed 2026-10-03, exact event dates absent from its body)**:
 * **Completed (historically recorded; not current verification)**:
   - Established `.agents/rules/` with `01-sdd-workflow.md`, `02-vps-guardrails.md`, and `03-code-standards.md`.

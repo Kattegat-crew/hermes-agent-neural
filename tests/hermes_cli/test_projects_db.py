@@ -144,3 +144,22 @@ def test_per_profile_isolation(tmp_path):
         b.close()
 
 
+def test_session_projects_assignment(tmp_path):
+    conn = pdb.connect(db_path=tmp_path / "projects.db")
+    try:
+        pid = pdb.create_project(conn, name="NeuralOps", slug="neuralops")
+        pdb.assign_session_project(conn, "s1", pid, profile_name="default", assigned_by="manual")
+        pdb.assign_session_project(conn, "s2", pid, profile_name="roshi", assigned_by="rule")
+
+        all_map = pdb.get_session_project_map(conn)
+        assert all_map == {"s1": pid, "s2": pid}
+
+        default_map = pdb.get_session_project_map(conn, profile_name="default")
+        assert default_map == {"s1": pid}
+
+        roshi_map = pdb.get_session_project_map(conn, profile_name="roshi")
+        assert roshi_map == {"s2": pid}
+    finally:
+        conn.close()
+
+
