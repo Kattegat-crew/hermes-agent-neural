@@ -7,16 +7,33 @@
 ---
 
 ## 1. Active Focus & Current Goal
-* **Current Initiative**: Gateway Restart Hardening & Spanish Stall Guard Resolution (Ticket Discord #1555307813868408966: "Gateway: reinicios cortan agentes + declara-y-no-ejecuta").
-* **Scope**: Gateway shutdown timing forensics (`gateway/shutdown_forensics.py`), host watchdog stability (`/usr/local/bin/hermes-watchdog.sh`), safe restart CLI (`/usr/local/bin/hermes-safe-restart`), and Spanish action tail detection in turn loop (`agent/agent_runtime_helpers.py`).
+* **Current Initiative**: Context Compression 300k & Multimodal Standardization (Ticket Discord #1555436381042516008: "Compresión contexto — umbral 300k adaptativo + ventana 1M + aux qwen3.8 (DEV)").
+* **Scope**: Context compressor threshold enforcement (`agent/conversation_compression.py`), unhyphenated model catalog alias (`agent/model_metadata.py`), and auxiliary vision/compression model standardization on `glm5.3-flash` in `/opt/hermes-agent-data/config.yaml`.
 * **Lead Agent**: Antigravity (`agy`) / Ragnar.
 * **Target Path**: [`/opt/hermes-agent/`](file:///opt/hermes-agent/).
-* **Approval & Test State**: Phase 1, 2, and 3 Implementation COMPLETE. Verified GREEN (10 passed in `tests/gateway/test_shutdown_forensics.py` and 40 passed in `tests/agent/test_stall_guards.py`).
+* **Approval & Test State**: Implementation COMPLETE. Verified GREEN (117 passed in `tests/agent/test_model_metadata.py`, Python feasibility check verifies threshold_tokens=300000 without clamping, vision test validates image analysis).
 
 ---
 
 ## 2. Handover from Last Session
-* **Current Handover (2026-10-14 — Gateway Restart Hardening & Spanish Stall Guard Resolution)**:
+* **Current Handover (2026-10-14 — Context Compression 300k & Multimodal Standardization)**:
+  - **Completed**:
+    - **Multimodal & Context Window Incompatibility Resolution**:
+      - Identified root cause of auto-lowered threshold: `qwen3.8-flash` in `NaN-Builders` has a 262,144 token window, causing Hermes to automatically clamp the 300k threshold to 262,144 on session init.
+      - Discovered `auxiliary.vision` was pointing to `deepseek-v4-flash`, which lacks video understanding for `tools/vision_tools.py` (`video_analyze`).
+      - Updated `/opt/hermes-agent-data/config.yaml`:
+        - Set `auxiliary.compression.model: glm5.3-flash` (1M window, enabling genuine 300k threshold).
+        - Set `auxiliary.vision.model: glm5.3-flash` (native omni-modal support: text, image, video).
+    - **Model Metadata Static Catalog Patch**:
+      - Added unhyphenated aliases `"glm5.3-flash": 1_048_576, "glm5.3": 1_048_576` to `_KNOWN_MODEL_CONTEXT_LENGTHS` in `agent/model_metadata.py`. This prevents decoupled lookups from falling back to generic `202752`.
+    - **Ticket & Discord**:
+      - Updated tag to "En curso" (`1554957746980261943`) and posted execution plan in Discord thread `1555436381042516008`.
+  - **Verified by**:
+    - `pytest tests/agent/test_model_metadata.py` (117 passed in 21.35s).
+    - In vivo feasibility check: `check_compression_model_feasibility` maintains `threshold_tokens=300000` with zero auto-lowered warnings.
+    - `get_model_context_length("glm5.3-flash")` resolves to `1048576` without custom_providers.
+
+* **Prior Handover (2026-10-14 — Gateway Restart Hardening & Spanish Stall Guard Resolution)**:
   - **Completed**:
     - **Host Stability & Watchdog Hygiene**:
       - Identified and terminated 554-restart crash loop on `hermes-agent-roshi.service` caused by `/usr/local/bin/hermes-watchdog.sh`. Removed `hermes-agent-roshi.service` from `UNITS`; stopped and disabled unit.
