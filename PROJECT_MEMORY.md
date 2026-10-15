@@ -16,7 +16,28 @@
 ---
 
 ## 2. Handover from Last Session
-* **Current Handover (2026-10-14 — Context Compression 300k, Multimodal Standardization & Ticket Closure)**:
+* **Current Handover (2026-10-15 — Google Multi-Account Support & Strict Tenant Secret Isolation)**:
+  - **Completed**:
+    - **Google MCP Multi-Account Refactor (`ncl_google_mcp.py`)**:
+      - Identified and resolved dictionary key overwrite collision in `load_owner_connections` where multiple active Google accounts for the same profile masked earlier accounts (e.g. Ragnar had 4 Gmails but only saw `digitalexpresiones1`, Helmer had 2 but only saw `helmerparra`).
+      - Refactored `load_owner_connections` to index all active connections per service with preferred defaults (`DEFAULT_ACCOUNTS: default -> jonathan-gmail (jonathaun124@gmail.com), helmer -> helmer-gmail (helmerparra@gmail.com)`).
+      - Added `account` optional parameter across all Google tools (`gmail_list`, `gmail_digest`, `gmail_read`, `gmail_send`, `drive_search`, `drive_read_text`, `calendar_list_events`).
+      - Added read-only inspection tool `google_list_accounts` to surface available accounts and defaults.
+      - Added `--secrets-dir` CLI flag to support per-profile physical secret directory isolation.
+    - **Roshi Privacy Leak Resolution**:
+      - Discovered `/opt/hermes-agent-data/profiles/roshi/config.yaml` was incorrectly passing `--profile default` to `ncl_google` and `ncl_google_write`.
+      - Corrected both configurations to `--profile roshi`.
+      - Extracted and materialized Chucho's credentials from ActivePieces DB via `verify_connection.py` into `/opt/hermes-agent-data/secrets/chucho-*.json` (Gmail, Drive, Calendar for `Jemadiar1@gmail.com` with `0600` permissions).
+      - Verified bidirectional isolation: Roshi only accesses Chucho's data; Ragnar only accesses Jonathan/NeuralCrew data.
+    - **Client Agent Onboarding Hardening & SOP**:
+      - Updated `/opt/hermes-agent-data/hermes-profiles/templates/config.yaml`: removed `terminal` from client toolsets (leaving only `web`), fixed legacy docker paths to `/opt/hermes-agent-data/`, and bound `ncl_google` to `--secrets-dir /opt/hermes-agent-data/profiles/__PERFIL__/secrets`.
+      - Updated `/opt/hermes-agent-data/hermes-profiles/scripts/onboard-agent.sh`: automated creation of client-specific `secrets/` directory with `0700` permissions and updated native paths.
+  - **Verified by**:
+    - In vivo unit suite testing: default account resolution, dynamic `account` selector, cross-tenant unauthorized account rejection, and `--secrets-dir` isolated sandbox execution.
+    - `systemctl status hermes-agent.service` active and operational.
+    - `systemctl status hermes-dashboard.service` active on port 9112.
+
+* **Prior Handover (2026-10-14 — Context Compression 300k, Multimodal Standardization & Ticket Closure)**:
   - **Completed**:
     - **Multimodal & Context Window Incompatibility Resolution**:
       - Identified root cause of auto-lowered threshold: `qwen3.8-flash` in `NaN-Builders` has a 262,144 token window, causing Hermes to automatically clamp the 300k threshold to 262,144 on session init.
