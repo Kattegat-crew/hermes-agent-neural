@@ -7,16 +7,40 @@
 ---
 
 ## 1. Active Focus & Current Goal
-* **Current Initiative**: Completed — Context Compression 300k & Multimodal Standardization (Ticket Discord #1555436381042516008: "Compresión contexto — umbral 300k adaptativo + ventana 1M + aux qwen3.8 (DEV)").
-* **Scope**: Context compressor threshold enforcement (`agent/conversation_compression.py`), unhyphenated model catalog alias (`agent/model_metadata.py`), auxiliary vision/compression model standardization on `glm5.3-flash`, and Discord in-place tool progress display in `/opt/hermes-agent-data/config.yaml`.
+* **Current Initiative**: Completed & In Review — Model Matrix Finalization & Independent Disaster Fallback (Ticket Discord #1555029599203758160: "Modelos auxiliares y fallbacks — DEV/PROD (plan 26-sep)").
+* **Scope**: NaN catalog sanitization, multi-tier fallback architecture (NaN primary -> NaN secondary -> OpenCode-Go Mimo disaster recovery), elimination of `qwen3.6` cost leak across DEV profiles, and PROD vision upgrade.
 * **Lead Agent**: Antigravity (`agy`) / Ragnar.
 * **Target Path**: [`/opt/hermes-agent/`](file:///opt/hermes-agent/).
-* **Approval & Test State**: COMPLETE & CLOSED. Verified GREEN (117 passed in `tests/agent/test_model_metadata.py`, 19 passed in `tests/gateway/test_display_config.py`, Ragnar live audit confirmed image & video probes against NaN-Builders, zero attempts_exhausted, gateway safely restarted with PID 500433, ticket marked Cerrado & archived).
+* **Approval & Test State**: COMPLETE & READY FOR AUDIT. Verified GREEN (117 passed in `tests/agent/test_model_metadata.py`, `load_config()` validated, live OpenCode-Go probe verified `mimo-v2.6-flash`, gateway safely reloaded under PID 1010599, Discord thread updated and set to En curso / En revisión).
 
 ---
 
 ## 2. Handover from Last Session
-* **Current Handover (2026-10-15 — Google Multi-Account Support & Strict Tenant Secret Isolation)**:
+* **Current Handover (2026-10-15 — Final Model Matrix, NaN Catalog Sanitization & Independent Disaster Fallback)**:
+  - **Completed**:
+    - **NaN-Builders Live Catalog Sanitization**:
+      - Verified live `/v1/models` against NaN-Builders API (13 active models).
+      - Purged obsolete models `mimo-v2.5` and `deepseek-v4-flash-0731` from `providers.NaN-Builders.models` and `custom_providers`.
+      - Declared `mimo-v2.6-flash` (1,048,576 context length, `supports_vision: true`) in both `NaN-Builders` and `OpenCode-Go` catalogs.
+      - Removed circular/dead provider `B.AI` from `fallback_providers`.
+    - **Multi-Tier Model Routing & Universal Disaster Fallback**:
+      - Enforced business hierarchy:
+        - Primary: 100% NaN-Builders (`deepseek-v4-flash` in PROD; `glm5.3-flash` in DEV).
+        - Secondary (NaN internal fallback): `deepseek-v4-flash` in DEV; `qwen3.8-flash` in PROD.
+        - Tertiary External Disaster Fallback: `mimo-v2.6-flash` @ `OpenCode-Go` (triggered only when NaN is completely offline, protecting PROD).
+    - **Profile Fleet Drift Elimination**:
+      - Propagated `smart_model_routing.cheap_model: glm5.3-flash` across all 9 satellite profiles (`bragi`, `brokkr`, `comms`, `freyja`, `heimdall`, `hermodr`, `sindri`, `ullr`, `vili`), fully eliminating legacy `qwen3.6` cost leaks.
+      - Updated `auxiliary.vision` in PROD to `mimo-v2.6-flash` (native omni video/image understanding).
+      - Backed up all 12 DEV and 11 PROD configs with `.bak-pre-fallback-final-20261015`.
+    - **Safe Gateway Reload**:
+      - Safely restarted `hermes-agent.service` under PID 1010599 with zero turn interruptions.
+  - **Verified by**:
+    - `load_config()` verification in `hermes_cli.config`.
+    - `pytest tests/agent/test_model_metadata.py` (117 passed in 33.91s).
+    - Live probe against `opencode.ai/zen/go/v1` (`mimo-v2.6-flash` returned `OPERATIVO`).
+    - `systemctl status hermes-agent.service` active and operational.
+
+* **Prior Handover (2026-10-15 — Google Multi-Account Support & Strict Tenant Secret Isolation)**:
   - **Completed**:
     - **Google MCP Multi-Account Refactor (`ncl_google_mcp.py`)**:
       - Identified and resolved dictionary key overwrite collision in `load_owner_connections` where multiple active Google accounts for the same profile masked earlier accounts (e.g. Ragnar had 4 Gmails but only saw `digitalexpresiones1`, Helmer had 2 but only saw `helmerparra`).
