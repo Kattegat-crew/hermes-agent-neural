@@ -7,16 +7,29 @@
 ---
 
 ## 1. Active Focus & Current Goal
-* **Current Initiative**: Completed & In Review — Model Matrix Finalization & Independent Disaster Fallback (Ticket Discord #1555029599203758160: "Modelos auxiliares y fallbacks — DEV/PROD (plan 26-sep)").
-* **Scope**: NaN catalog sanitization, multi-tier fallback architecture (NaN primary -> NaN secondary -> OpenCode-Go Mimo disaster recovery), elimination of `qwen3.6` cost leak across DEV profiles, and PROD vision upgrade.
+* **Current Initiative**: Closed & Fully Verified — Model Matrix Finalization & Independent Disaster Fallback (Ticket Discord #1555029599203758160: "Modelos auxiliares y fallbacks — DEV/PROD (plan 26-sep)").
+* **Scope**: NaN catalog sanitization, multi-tier fallback architecture (NaN primary -> NaN secondary -> OpenCode-Go Mimo disaster recovery), DEV satellite catalog purge, PROD in-memory runtime reload, and vision/API key homologation.
 * **Lead Agent**: Antigravity (`agy`) / Ragnar.
 * **Target Path**: [`/opt/hermes-agent/`](file:///opt/hermes-agent/).
-* **Approval & Test State**: COMPLETE & READY FOR AUDIT. Verified GREEN (117 passed in `tests/agent/test_model_metadata.py`, `load_config()` validated, live OpenCode-Go probe verified `mimo-v2.6-flash`, gateway safely reloaded under PID 1010599, Discord thread updated and set to En curso / En revisión).
+* **Approval & Test State**: CLOSED & VERIFIED IN RUNTIME. Ragnar independent audit findings fully resolved: PROD gateways reloaded in-memory under s6 (default PID 676278, golden-game PID 676449, lucky-club PID 676467, casino watchdog exit 0), DEV satellite configs 100% purged of B.AI/mimo-v2.5/0731 (running under PID 1044193), PROD fallback keys corrected to `${NAN_BUILDERS_API_KEY}` and vision homologated to `mimo-v2.6-flash`.
 
 ---
 
 ## 2. Handover from Last Session
-* **Current Handover (2026-10-15 — Final Model Matrix, NaN Catalog Sanitization & Independent Disaster Fallback)**:
+* **Current Handover (2026-10-15 — Post-Audit Remediation, Fleet Homologation & In-Memory Gateway Sync)**:
+  - **Completed**:
+    - **Ragnar Independent Audit Remediation**:
+      - **PROD Gateway In-Memory Synchronization (Bloqueador 1)**: Executed safe reload of supervised services via s6 inside `hermes-agent` container (`s6-svc -t /run/service/gateway-*`). Gateways active with new PIDs: `gateway-default` (PID 676278), `gateway-golden-game` (PID 676449), `gateway-lucky-club` (PID 676467). Verified WhatsApp bridges connected on ports 3001 and 3002; `casino_gateways_watchdog.py` returned exit code 0 (`ALL HEALTHY`).
+      - **DEV Satellite Catalog Purge (Bloqueador 2 & 3)**: Purgados `B.AI`, `mimo-v2.5`, y `deepseek-v4-flash-0731` en todos los 11 perfiles de `/opt/hermes-agent-data/profiles/*/config.yaml`. Declarado `mimo-v2.6-flash` (1,048,576 context length, `supports_vision: true`). Cero referencias residuales en DEV.
+      - **PROD API Keys & Vision Homologation (Menores)**: Corregidos saltos 0 y 1 de `fallback_providers` en los 11 configs de PROD para usar `${NAN_BUILDERS_API_KEY}` hacia el proxy rate-limited. Homologado `auxiliary.vision: mimo-v2.6-flash` con `supports_vision: true` en todos los satélites de PROD.
+      - **DEV Multiplex Gateway Reload**: Gateway DEV recargado y operando estable bajo PID 1044193.
+  - **Verified by**:
+    - PROD s6 service status (`s6-svstat` uptime and fresh PIDs).
+    - PROD `casino_gateways_watchdog.py` exit code 0.
+    - DEV config audit script (12/12 configs: `bai=False`, `m25=False`, `d731=False`, `m26=True`).
+    - DEV process verification (PID 1044193 active, WhatsApp bridge connected).
+
+* **Prior Handover (2026-10-15 — Initial Model Matrix, NaN Catalog Sanitization & Independent Disaster Fallback)**:
   - **Completed**:
     - **NaN-Builders Live Catalog Sanitization**:
       - Verified live `/v1/models` against NaN-Builders API (13 active models).
