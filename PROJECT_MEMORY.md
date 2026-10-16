@@ -144,7 +144,20 @@
   - Feature-branch-chain delivery approved on 2026-10-08 (Aprobado). No PRs, pushes, or merges created.
   - Existing modified TikTok ingestion skill preserved untouched.
 
-* **Current Handover (2026-10-14 — Semantic Project Grouping & Engram Alignment)**:
+* **Current Handover (2026-10-16 — Skills SSOT, Fleet Catalog Resolution & Jev Router Reconnection)**:
+  - **Completed**:
+    - **Skills Canonical Path (SSOT)**: Replaced dead path `/opt/hermes/skills/` with native `/opt/hermes-agent/skills/` in `/opt/hermes-agent-data/AGENTS.md` and `/opt/hermes-agent-data/profiles/roshi/AGENTS.md`.
+    - **Fleet-wide Native Catalog Binding**: Configured `skills.external_dirs: ["/opt/hermes-agent/skills"]` with `on_demand: true` across all profiles in `/opt/hermes-agent-data/profiles/` (`roshi`, `bragi`, `brokkr`, `comms`, `freyja`, `heimdall`, `hermodr`, `sindri`, `ullr`, `vigia`, `vili`) and `default`.
+    - **Catalog Resolution Verified**: Default profile restored from 74 to 782 skills; Roshi profile restored from 1 to 709 skills, with 0 token bloat in system prompt via progressive disclosure (`skills.on_demand: true`).
+    - **TypeSafe (Jev) Skill Router Reconnection**: Injected `TYPESAFE_API_KEY` into `/opt/hermes-agent-data/.env` from `/opt/hermes-agent-data/secrets/typesafe.json`. Configured `roster_dir: /opt/hermes-agent/skills` and enabled state under `plugins.entries.typesafe-skill-router.settings` in `/opt/hermes-agent-data/config.yaml`.
+    - **Live Jev Verification**: Verified two-stage typed routing in vivo across 707 skills (Nginx query routed to `nginx-certbot-reverse-proxy` with fits 0.85; Reel query routed to `akari-video-editing` with fits 0.74, cost ~$0.0018 USD).
+    - **Service Restart**: Cycled `hermes-agent.service` (PID 1964959) cleanly.
+  - **Verified by**:
+    - Python runtime `_skill_catalog`: Default profile = 782 skills, Roshi = 709 skills.
+    - Python `suggest(client, ...)` test: live HTTP 200 to TypeSafe System One (`jev-latest`), sub-3s response.
+    - `systemctl status hermes-agent.service` active and healthy.
+
+* **Prior Handover (2026-10-14 — Semantic Project Grouping & Engram Alignment)**:
   - **Completed**:
     - Created `session_projects` in `/opt/hermes-agent-data/projects.db` with profile isolation and index.
     - Populated 12 official taxonomy projects in `projects.db`.
