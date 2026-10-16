@@ -7,16 +7,42 @@
 ---
 
 ## 1. Active Focus & Current Goal
-* **Current Initiative**: Closed & Fully Verified — Model Matrix Finalization & Independent Disaster Fallback (Ticket Discord #1555029599203758160: "Modelos auxiliares y fallbacks — DEV/PROD (plan 26-sep)").
-* **Scope**: NaN catalog sanitization, multi-tier fallback architecture (NaN primary -> NaN secondary -> OpenCode-Go Mimo disaster recovery), DEV satellite catalog purge, PROD in-memory runtime reload, and vision/API key homologation.
-* **Lead Agent**: Antigravity (`agy`) / Ragnar.
-* **Target Path**: [`/opt/hermes-agent/`](file:///opt/hermes-agent/).
-* **Approval & Test State**: CLOSED & VERIFIED IN RUNTIME. Ragnar independent audit findings fully resolved: PROD gateways reloaded in-memory under s6 (default PID 676278, golden-game PID 676449, lucky-club PID 676467, casino watchdog exit 0), DEV satellite configs 100% purged of B.AI/mimo-v2.5/0731 (running under PID 1044193), PROD fallback keys corrected to `${NAN_BUILDERS_API_KEY}` and vision homologated to `mimo-v2.6-flash`.
+* **Current Initiative**: Completed & Verified — Tiered Cascading Skill Selection (Tier 1 Predetermined -> Tier 2 Global Fallback) via TypeSafe Jev Router (`typesafe-skill-router` v1.1.0).
+* **Scope**: Per-agent specialist skill routing based on Roshi & Yisus fleet architecture (2026-09-25 consensus & R2-bis), sub-second single-chunk routing for in-domain queries (<$0.0004 USD), seamless fallback to 708-skill global catalog for cross-domain requests, full catalog access preserved (`skills.on_demand: true`), plugin activation across all 11 profiles.
+* **Lead Agent**: Antigravity (`agy`) / Senior Architect.
+* **Target Path**: [`/opt/hermes-agent-data/plugins/typesafe-skill-router/`](file:///opt/hermes-agent-data/plugins/typesafe-skill-router/), [`/opt/hermes-agent-data/config/agent_tier1_skills.json`](file:///opt/hermes-agent-data/config/agent_tier1_skills.json).
+* **Approval & Test State**: CLOSED & VERIFIED IN RUNTIME. In vivo live routing verified on DEV host with TypeSafe System One (`jev-latest`): in-domain Nginx query routed in 1 chunk to `nginx-certbot-reverse-proxy` (fits 0.90, $0.0002 USD); out-of-domain video query seamlessly cascaded to Tier 2 and routed to `akari-video-editing` / `video-reel-pipeline` (fits 0.85); all 70 unit tests passed; `hermes-agent.service` active under PID 2004458.
 
 ---
 
 ## 2. Handover from Last Session
-* **Current Handover (2026-10-15 — Post-Audit Remediation, Fleet Homologation & In-Memory Gateway Sync)**:
+* **Current Handover (2026-10-16 — Tiered Cascading Skill Routing & Fleet-Wide Jev Activation)**:
+  - **Completed**:
+    - **Fleet-Wide Predetermined Skill Manifest**:
+      - Compiled [`/opt/hermes-agent-data/config/agent_tier1_skills.json`](file:///opt/hermes-agent-data/config/agent_tier1_skills.json) based on Roshi's authoritative report (`diseno-catalogos-por-agente-20260925.md`) and `gen_agentes_skills.py`.
+      - Mapped 11 profiles: `brokkr` (58), `sindri` (54), `hermodr` (46), `roshi` (39), `bragi` (39), `freyja` (34), `ullr` (34), `vili` (33), `heimdall` (33), `vigia` (31), `comms` (24), all including the 13 shared fleet hygiene skills.
+      - 100% of skills in manifest verified to exist in live canonical tree (`/opt/hermes-agent/skills/`).
+    - **TypeSafe Skill Router (`typesafe-skill-router` v1.1.0)**:
+      - Extended `__init__.py` with tiered cascading: evaluates Tier 1 first (fast single-chunk, <1s, ~$0.0002–$0.0004 USD).
+      - If Tier 1 produces a winner with `gate >= 0.30` and `fits >= 0.40`, returns immediately.
+      - If Gate < 0.30 (conversational chit-chat/prose), skips Tier 2 and stays silent.
+      - If Gate >= 0.30 but Tier 1 has no fit (out-of-domain task), cascades automatically to Tier 2 (the rest of the 707 canonical skills).
+      - Resolved profile session context via `gateway.session_context.get_session_env("HERMES_SESSION_PROFILE")`, `ctx.profile_name`, and environment fallback.
+      - Added fallback in `typesafe_router/client.py` to root `/opt/hermes-agent-data/.env`.
+      - Added comprehensive test suite (`tests/test_tier1_cascading.py`); 70/70 tests passing.
+    - **Profile Fleet Configuration & Gateway Activation**:
+      - Symlinked `typesafe-skill-router` into all 11 profiles (`/opt/hermes-agent-data/profiles/*/plugins/`).
+      - Updated `config.yaml` across all 11 profiles and root to enable `typesafe-skill-router` with `tier1_enabled: true` and `fallback_to_global: true`.
+      - Fixed permissions (`hermes:hermes`) and safely restarted `hermes-agent.service` (PID 2004458).
+  - **Verified by**:
+    - `pytest` in `typesafe-skill-router` (70 passed in 1.50s).
+    - CLI status checks across profiles (`hermes typesafe-skill-router status`).
+    - Live in vivo routing probes against TypeSafe System One (`jev-latest`):
+      - In-domain Brokkr Nginx query -> Tier 1 hit (`nginx-certbot-reverse-proxy`, 1 chunk, $0.000234 USD).
+      - Out-of-domain Brokkr Reel query -> Tier 1 miss -> Tier 2 cascade hit (`akari-video-editing` / `video-reel-pipeline`, fits 0.85).
+    - Runtime service status (`systemctl status hermes-agent.service`, PID 2004458 active).
+
+* **Prior Handover (2026-10-15 — Post-Audit Remediation, Fleet Homologation & In-Memory Gateway Sync)**:
   - **Completed**:
     - **Ragnar Independent Audit Remediation**:
       - **PROD Gateway In-Memory Synchronization (Bloqueador 1)**: Executed safe reload of supervised services via s6 inside `hermes-agent` container (`s6-svc -t /run/service/gateway-*`). Gateways active with new PIDs: `gateway-default` (PID 676278), `gateway-golden-game` (PID 676449), `gateway-lucky-club` (PID 676467). Verified WhatsApp bridges connected on ports 3001 and 3002; `casino_gateways_watchdog.py` returned exit code 0 (`ALL HEALTHY`).
