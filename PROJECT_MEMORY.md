@@ -1,5 +1,12 @@
 # Hermes Project Memory & Session Continuity
 
+## Current Initiative — Gateway Shutdown/Restart Discord Reporting via Vigía (2026-10-17)
+- **Vigía Discord Gateway Monitoring**: Configured Vigía to report gateway restarts, shutdowns, and crashes for `hermes-agent.service` (Ragnar / Roshi multiplex) to Discord via Vigía's Discord webhook (`/opt/hermes-agent-data/profiles/vigia/scripts/vigia_post_discord.py`).
+- **Systemd Drop-in & Notifier**: Installed `/opt/hermes-agent-data/scripts/hermes-service-notify.sh` (symlinked to `/usr/local/bin/hermes-service-notify.sh`) and systemd drop-in `/etc/systemd/system/hermes-agent.service.d/40-vigia-notify.conf` using `ExecStopPost=` to capture all service stop results (`$SERVICE_RESULT`, `$EXIT_CODE`, `$EXIT_STATUS`), cleanly distinguishing planned restarts (code 75), normal shutdowns (code 0), and crashes/failures.
+- **Watchdog Integration**: Updated `/usr/local/bin/hermes-watchdog.sh` to dispatch Vigía Discord alerts when `hermes-agent.service` is detected down, successfully recovered, or persistently down after restart.
+- **Dead Script Cleanup**: Removed obsolete legacy container s6-era scripts in `/opt/hermes-agent-data/scripts/` (`cron_gateway_restart.sh`, `gateway_restart_once.sh`, `gateway_restart_glm53.sh`, `restart_gateway_contexto_400k.sh`, `phase_d_restart_cleanup.sh`, `phase_f2_restart_suppress.sh`, `rename_roshi_restart.sh`).
+- **Notice Suppression Status**: In-chat and home channel shutdown/restart notice suppression in `run_shutdown.py` and test updates were reviewed; operational alerting is fully transitioned to Vigía on Discord.
+
 ## Current Initiative — Lightweight Hermes Observability on Existing Langfuse (2026-10-17)
 - SDD: `.specs/langfuse-fleet-observability/{01-spec,02-design,03-tasks}.md`; `.specs/langfuse-fleet-observability/04-migration.md` is historical/declined evidence only. User rejected the heavy v3/v4 migration and approved assessing the minimum compatibility fix for Hermes against existing Langfuse `2.95.11`.
 - Selected catalog plugin is version `2.0.0` / source SHA `c2a95963c442f3f23e4bc6fe0da898e1dd1fb63d`, pinned to SDK `4.15.2`. DEV PM Python `3.14.7` import passed independent review; PROD import is diagnostic-worker evidence only. Server `2.95.11` is below the SDK v3/v4 floor `3.63.0`. The legacy SDK2 CPython 3.13 overlay failure is separate and not the selected runtime's root cause; do not globally downgrade SDK4.
