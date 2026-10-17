@@ -1,68 +1,64 @@
-# Feature Specification: Langfuse Fleet Observability
+# Specification: Lightweight Hermes Observability on Existing Langfuse
 
-* **Status**: In Progress — corrected Phase 1 inventory accepted conditionally on these documentation corrections
+* **Status**: Local SDK4 legacy REST adapter implemented, tested, and reviewed; DEV activation remains pending
 * **Author**: Codex
-* **Target Module**: Hermes DEV/PROD operations, Codex, OpenCode, and AGY integrations
-* **Created**: 2026-10-16
-* **Updated**: 2026-10-16
+* **Scope**: Existing Hermes DEV/PROD integrations with current Langfuse server `2.95.11`
+* **Updated**: 2026-10-17
 
----
+## 1. Problem and outcome
 
-## 1. Problem Statement & Motivation
+The selected Hermes catalog plugin is version `2.0.0` and uses Langfuse SDK `4.15.2` in PM-managed Python 3.14. The selected DEV runtime imports successfully; PROD import evidence is from a diagnostic worker. The existing Langfuse server is `2.95.11`, below the documented `3.63.0` SDK v3/v4 compatibility floor. Imports and enabled profiles do not prove ingestion.
 
-The selected Hermes catalog plugin is Langfuse plugin `2.0.0`, source commit `c2a95963c442f3f23e4bc6fe0da898e1dd1fb63d`, using Langfuse SDK `4.15.2` in PM-managed Python 3.14 environments. The deployed server is `2.95.11`, below the documented `3.63.0` minimum for SDK v3/v4. Imports can succeed while server compatibility and ingestion remain unproven. A separate legacy SDK `2.60.10` path has a CPython 3.13 lazy-package import failure, but that is not the selected runtime's global root cause.
+The user rejected the proposed heavy v3/v4 server migration and approved the minimum compatibility path using the existing Hermes fleet and existing Langfuse. An opt-in SDK4 legacy REST adapter has been implemented and locally reviewed without a global SDK downgrade, new service, or new dependency. Live DEV compatibility and queryable ingestion remain unverified.
 
-The work is phased so that compatibility, privacy, credentials, and rollback are validated in DEV before any separately authorized production rollout.
+## 2. Goals
 
-## 2. Goals & Non-Goals
+- Map the current Hermes SDK4 integration and its actual transport/API calls against existing Langfuse v2 `2.95.11` support, using local source, tests, and authoritative documentation.
+- Preserve the existing SDK pin and validate the implemented REST adapter through deterministic contract tests and independent review before any activation.
+- Keep existing SDK `4.15.2` selected; do not change global pins or infer that a separate legacy SDK2 CPython 3.13 extension failure is the active root cause.
+- Require independent review at the end of each implementation/activation phase.
+- Verify ingestion only through an explicitly authorized, named DEV canary with approved credentials and no sensitive content. Production requires a separate authorization naming destination, operation, and credential/session.
 
-### Goals
-- [ ] Reconcile the selected SDK4 catalog path, legacy SDK2 path, profile aliases, and Langfuse server compatibility before choosing implementation.
-- [ ] Obtain the user's decision on server migration for SDK4/OTLP or adaptation of the modern integration to the legacy server route before functional implementation.
-- [ ] For an activation phase, prove a positive ingestion canary in a specifically named, explicitly authorized environment before declaring an integration operational; include no sensitive content.
-- [ ] Inventory and instrument approved Hermes profiles, Codex, OpenCode, and AGY only after compatibility and data-minimization decisions are resolved.
-- [ ] Require an independent review at the end of every phase before advancing.
-- [ ] Stage production only after DEV acceptance and explicit approval of the server, credential, and rollout operations.
+## 3. Non-goals and constraints
 
-### Non-Goals (Out of Scope)
-- No blanket authorization to upgrade Langfuse, modify services, restart processes, read or disclose secrets, or access remote systems.
-- Inventory and documentation work do not emit traces. An activation canary requires a named, explicitly authorized environment and must contain no sensitive content.
-- No production rollout is authorized by this specification.
-- No SDK reinstall/downgrade, server migration, dependency change, or integration adaptation is approved before the explicit compatibility decision.
-- No prompt, tool-argument, model-response, or other sensitive-content capture unless an explicit privacy decision approves the exact fields and retention.
-- No assertion that missing credentials or incomplete service/profile bindings imply absence of telemetry.
+- No Langfuse server migration/upgrade, new collectors, services, cloud resources, or alternate observability backend.
+- No global SDK downgrade, package installation, or new dependency/binary without explicit approval and an exact pin.
+- No Codex/OpenCode/AGY parity promise; those integrations are deferred and are not prerequisites for Hermes trace recovery.
+- No traces during read-only mapping or documentation. No prompts, model outputs, tool arguments/results, or other sensitive content in any canary.
+- No reading or copying secret values. Credential references remain unknown, not absent.
+- No runtime/config/service/production operation is authorized by this assessment alone.
 
-## 3. User Stories & Functional Requirements
+## 4. Requirements and acceptance
 
-* **US-1**: As an operator, I want each approved integration to be verifiably compatible and ingesting, so that dashboards reflect real fleet activity rather than package-presence assumptions.
-  * **Requirement 1.1**: Distinguish the selected PM-managed SDK4 catalog plugin from the separate legacy SDK2 implementation; record exact versions and import evidence separately.
-  * **Requirement 1.2**: A phase is not accepted until its independent reviewer returns a terminal result and its applicable phase acceptance evidence is recorded.
-  * **Requirement 1.3**: For an activation phase, require a positive ingestion canary only in a specifically named, explicitly authorized environment, with no sensitive content. No trace is emitted as part of inventory or documentation work.
-  * **Requirement 1.4**: Keep credentials in Vault or approved mode-0600 secret files; never put secret values in Git or Markdown.
-  * **Requirement 1.5**: Default to metadata-only, minimized telemetry; block integrations that cannot meet the approved data policy.
-  * **Requirement 1.6**: Audit the effective `HERMES_LANGFUSE_CAPTURE` setting before activation. Supported modes are `metadata`, `sanitized`, and `full`; default `sanitized` is not content-free.
+### L1 — read-only compatibility mapping (complete)
 
-## 4. Acceptance Criteria & Invariants
+Record the selected SDK4 integration's entry point, exact transport/API operations, configuration and credential injection boundary, and relevant existing tests. Compare those operations with the current server's documented supported ingestion interfaces. Distinguish verified support, unsupported calls, and unresolved behavior; do not infer compatibility from import success, HTTP acceptance, or an SDK's presence. Do not emit a trace or access secret values.
 
-* **Scenario 1 — SDK/server compatibility decision**
-  * **Given**: The selected profile plugin uses SDK `4.15.2` and the deployed server is `2.95.11`.
-  * **When**: The user selects and separately authorizes a compatible migration or integration adaptation path.
-  * **Then**: Verify the exact selected path, audit effective capture mode before activation, and document rollback. Any canary is limited to a named, authorized environment and contains no sensitive content. Inventory/documentation phases emit no trace and do not require runtime rollback.
+### L2 — bounded local adapter (implemented and tested)
 
-* **Scenario 2 — Unsupported integration or privacy mismatch**
-  * **Given**: A plugin requires a newer Langfuse server or captures prompt/tool payloads without an approved minimization control.
-  * **When**: The compatibility/privacy gate is evaluated.
-  * **Then**: The integration remains disabled; no server upgrade, payload capture, or production change is inferred as authorized.
+The explicit `HERMES_LANGFUSE_TRANSPORT=legacy` option uses the existing SDK4 low-level REST `LangfuseAPI`; the existing OTLP default remains unchanged. The local source-chain implementation and tests are complete. It is not runtime activation or live-ingestion proof. Preserve the SDK pin and do not add dependencies. See the task/design docs for commits and verification evidence.
 
-* **Scenario 3 — Production rollout**
-  * **Given**: DEV acceptance and its phase review are complete.
-  * **When**: A distinct production authorization names the target, operation, and credential/session.
-  * **Then**: Stage only the approved profiles, verify a positive canary with no sensitive content and health in the named authorized production environment, and retain a reversible rollback boundary; otherwise do not touch production.
+### L3 — independent review
 
-## 5. Security, VPS & Operational Considerations
+An independent reviewer checks the chosen adapter and tests before any runtime activation. A review result does not authorize credentials access, deployment, or a production operation.
 
-- Project API keys were not found in the scoped Vault metadata review; this is not evidence that keys do not exist. No key value may be copied into this spec or task file.
-- Existing PROD Vault access uses the specifically authorized DEV SSH identity; local Vault bootstrap is unavailable. Do not probe or substitute another remote identity.
-- The service-to-profile binding is incomplete; do not infer service ownership from unit names.
-- OpenCode's official Langfuse integration captures prompts and tool payloads; no metadata-only control has been proven. AGY metadata-only hook feasibility is not equivalent to verified OTLP ingestion.
-- Codex's official plugin requires Langfuse `>=3.95`; native Codex OTLP is not supported by the current v2.95.11 server. This and the SDK4 server minimum are decision gates, not authorization to upgrade.
+### DEV activation gate
+
+Before a canary, explicitly name and authorize the DEV environment/profile, confirm the credential reference and effective capture mode, and ensure the canary contains no sensitive content. Verify the trace becomes queryable in the intended project; HTTP acceptance alone is insufficient. Independent review follows the phase. Keep activation pending if any authorization, credential, privacy, or ingestion evidence is missing.
+
+### PROD gate
+
+Production is not authorized. A later request must name the target, operation, and credential/session; pass DEV acceptance and review; and retain a bounded rollback plan.
+
+## 5. Preserved inventory facts
+
+- Selected catalog plugin: `2.0.0`, source SHA `c2a95963c442f3f23e4bc6fe0da898e1dd1fb63d`, SDK `4.15.2`.
+- DEV PM generation `2852166f2cb3454db180810e2f3d29ef`: Python `3.14.7`, pydantic-core `2.46.4`; import passed independent review. PROD generation `36f4b27c…`: same import result reported by diagnostic worker, not independently reviewed.
+- Existing Langfuse server: `2.95.11`; documented SDK v3/v4 floor: `3.63.0`.
+- A separate bundled SDK `2.60.10` lazy path has a CPython 3.13 extension failure under Python 3.14; this is not the selected PM runtime's global root cause.
+- Short `langfuse` alias: 8 enabled in DEV and PROD; legacy `observability/langfuse`: 10 DEV, 11 PROD. DEV/PROD root profiles are disabled; two PROD test profiles are unconfigured. Coexisting aliases do not prove duplicate traces.
+- Effective `HERMES_LANGFUSE_CAPTURE` is unknown; default `sanitized` is not content-free. Project credential references remain scoped-unknown; do not claim keys are absent.
+
+## 6. Deferred integrations
+
+Codex's Langfuse plugin requires server `>=3.95`, beyond current v2; native Codex OTLP is not supported by server `2.95.11`. OpenCode's plugin captures prompt/tool payloads without a proven metadata-only control. AGY metadata-hook feasibility does not establish OTLP compatibility. These are future, separate decisions—not scope for the minimum Hermes path.
