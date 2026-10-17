@@ -1,10 +1,11 @@
 # Hermes Project Memory & Session Continuity
 
 ## Current Initiative — Langfuse Fleet Observability (2026-10-16)
-- Created `.specs/langfuse-fleet-observability/{01-spec,02-design,03-tasks}.md` as the SDD record for the phased Hermes/Codex/OpenCode/AGY plan.
-- Phase F1 inventory was accepted by `/root/phase1_review` with tracked downstream gaps; this is not native RDD approval. Explorer handoff reports 10 enabled named DEV profiles (root/vigia off) and 11 enabled named PROD profiles (root/two test profiles off or unconfigured); reviewer did not independently enumerate names.
-- F2.1 read-only discovery may proceed. F2.2 remains gated on staging ownership, credential injection, exact scope, and authorization. No functional implementation is complete and no trace was emitted.
-- No secrets are included here. No source, runtime, dependency, service, or production changes were made by the documentation phase.
+- SDD record: `.specs/langfuse-fleet-observability/{01-spec,02-design,03-tasks}.md`. Corrected F1 inventory accepted conditionally on these documentation corrections by `/root/phase1_review`; prior SDK2 ABI global-root-cause conclusion is invalidated. This is not native RDD approval.
+- Selected catalog plugin is version 2.0.0/source SHA `c2a95963c442f3f23e4bc6fe0da898e1dd1fb63d`, pins SDK 4.15.2. DEV PM Python 3.14 import passed independent review; PROD same import is diagnostic-worker evidence only. Server 2.95.11 is below SDK v3/v4 minimum 3.63.0. Legacy SDK2 CPython 3.13 overlay failure is separate, not active global root cause.
+- Alias counts: short `langfuse` enabled 8 DEV/PROD; legacy `observability/langfuse` enabled 10 DEV/11 PROD. Root profiles disabled; two PROD test profiles unconfigured. Coexisting aliases do not prove duplicate traces.
+- Effective `HERMES_LANGFUSE_CAPTURE` is unknown; default `sanitized` is not content-free. User must choose server migration for SDK4/OTLP or a validated legacy-server adaptation before implementation. No migration, dependency change, or payload capture is authorized.
+- Project credential references remain scoped-unknown. No secrets, code, runtime, dependency, service, or production changes were made; no trace was emitted.
 
 > **Session Lifecycle Contract**:
 > - **On Session Start**: Read this file and [`ARCHITECTURE.md`](file:///opt/hermes-agent/ARCHITECTURE.md) to recover active context and understand current flows before taking any action.

@@ -2,7 +2,7 @@
 
 * **Associated Spec**: [01-spec.md](./01-spec.md)
 * **Associated Design**: [02-design.md](./02-design.md)
-* **Status**: In Progress — Phase 1 inventory accepted; downstream gaps tracked
+* **Status**: In Progress — corrected Phase 1 inventory accepted conditionally; implementation path undecided
 * **Delivery strategy**: `ask-on-risk` (forecast is uncertain, approximately 300–600 authored lines across implementation; no PR/chain strategy selected)
 
 ---
@@ -20,27 +20,27 @@
 ### F1 — Inventory and scope review
 - [x] **Task F1.1**: Record DEV/PROD runtime, SDK/server, profile, and developer-tool inventory; distinguish SDK presence from importability and ingestion proof.
   - *Route*: Delegated direct, bounded read-only inventory; no code changes.
-  - *Evidence*: Explorer inventory handoff reports Python `3.14.7` on both hosts; SDK `2.60.10`; Langfuse server `2.95.11`; CPython 3.13 extensions in the lazy-package tree fail to import under active Python 3.14. DEV Codex `0.163.0`, OpenCode `1.18.35`, AGY `1.4.0`; PROD Codex absent, OpenCode `1.18.18`, AGY `1.1.14`. Explorer reports 10 enabled named DEV profiles (root and vigia off) and 11 enabled named PROD profiles (root and two test profiles off/unconfigured). Reviewer accepted the inventory scope but did not independently enumerate profile names; the explorer handoff is the source for these counts.
-  - *Verification*: Inventory evidence, limitations, and review are recorded; no trace was emitted and no remote mutation occurred. Runtime rollback is **N/A** for this read-only phase; functional tests are **N/A** for passive docs.
+  - *Evidence*: The selected official catalog plugin is version `2.0.0`, source SHA `c2a95963c442f3f23e4bc6fe0da898e1dd1fb63d`, with SDK `4.15.2`. DEV PM generation `2852166f2cb3454db180810e2f3d29ef` uses Python `3.14.7` and pydantic-core `2.46.4`; its SDK import passed the independent reviewer (exit 0). PROD generation `36f4b27c…` has the same import result per the diagnostic worker, not an independent reviewer. Server `2.95.11` is below the SDK v3/v4 minimum `3.63.0`. The legacy bundled SDK `2.60.10` CPython 3.13 lazy-package failure is a separate path, not the selected runtime's global root cause. Short `langfuse` alias: 8 enabled in each environment; legacy `observability/langfuse`: 10 DEV, 11 PROD. DEV root is disabled; PROD root is disabled and two test profiles are unconfigured. Alias overlap does not prove duplicate traces. Effective `HERMES_LANGFUSE_CAPTURE` values are unknown; supported `metadata|sanitized|full`, default `sanitized`, is not content-free.
+  - *Verification*: Corrected evidence, provenance, and limitations are recorded; no trace or remote mutation occurred. Runtime rollback is **N/A** for this read-only phase; functional tests are **N/A** for passive docs.
 - [x] **Task F1.2**: Obtain independent review of this phase and record remaining findings.
   - *Route*: Delegated independent review.
-  - *Status*: Accepted by `/root/phase1_review`; no technical contradictions. Downstream staging/credential/compatibility gaps remain tracked below. Reviewer did not independently enumerate profile names. Native RDD was unavailable; this acceptance is not native RDD approval.
-  - *Verification*: Reviewer accepted the inventory phase with tracked downstream gaps; no runtime rollback or ingestion canary applies.
+  - *Status*: Corrected inventory accepted conditionally on these documentation corrections by `/root/phase1_review`. The earlier SDK2/CPython ABI global-root-cause conclusion is invalidated. Native RDD was unavailable; this acceptance is not native RDD approval.
+  - *Verification*: Corrected inventory and remaining decision gates are documented; no runtime rollback or ingestion canary applies.
 
-### F2 — Hermes DEV ABI repair and proof
-- [ ] **Task F2.1**: Identify the staging owner, runtime boundary, project credential source, and exact allowed DEV change surface.
-  - *Route*: Delegated exploration before implementation; do not assume a staging owner or read/print secret values.
-  - *Gate*: No repair until boundaries, credential injection, existing pins, rollback, and user authorization are explicit.
-- [ ] **Task F2.2**: Repair the DEV Hermes import/runtime ABI using existing pins; add or update behavior tests only if the current test contract is applicable.
-  - *Route*: One delegated writer for multi-file changes; preserve test-first red/green evidence.
-  - *Verification*: Focused tests via `scripts/run_tests.sh`; real runtime import; if telemetry is activated, a positive canary only in a named, explicitly authorized environment and with no sensitive content.
-  - *Rollback*: Revert only the phase's environment/config changes and restore the prior known runtime; exact commands/boundary must be recorded before execution.
-- [ ] **Task F2.3**: Independent review; stop before F3 until terminal result.
+### F2 — Integration reconciliation and compatibility decision
+- [ ] **Task F2.1**: Map selected/legacy aliases, PM generations, and effective capture settings; document the SDK/server compatibility decision and obtain the user's choice before implementation.
+  - *Route*: Delegated read-only discovery and user decision; the selected DEV PM runtime import is verified, while PROD import evidence is attributed to the diagnostic worker. Project credential references remain scoped-unknown; never read or expose key values.
+  - *Gate*: Server migration for SDK4/OTLP versus adapting the modern integration to the legacy server route. The latter is not a simple SDK downgrade and does not enable native Codex OTLP on server v2. No installs, server migration, dependency change, or payload capture are authorized by this plan.
+- [ ] **Task F2.2**: Implement only the explicitly chosen and separately authorized compatibility path.
+  - *Route*: One bounded writer for any multi-file change; use test-first where deterministic behavior tests apply.
+  - *Verification*: Compatibility checks and focused tests; audit effective capture configuration before activation. A canary is required only if telemetry activates and only in a named, authorized environment with no sensitive content.
+  - *Rollback*: Record exact files/services and rollback boundary before any mutating operation; server migration requires its own approved rollout/rollback plan.
+- [ ] **Task F2.3**: Independent review of the chosen implementation; stop before F3 until terminal result.
 
 ### F3 — Hermes fleet profile coverage and credential mapping
 - [ ] **Task F3.1**: Resolve exact DEV/PROD profile-to-service bindings and identify approved project credential references without exposing values.
   - *Route*: Delegated read-only mapping.
-  - *Gate*: Do not infer bindings from service-unit names; unknown Vault state is not proof of missing keys.
+  - *Gate*: Do not infer bindings from service-unit names; unknown Vault state is not proof of missing keys. Do not stage integrations until the F2 compatibility path is chosen and authorized.
 - [ ] **Task F3.2**: Stage the approved fleet profile configuration with metadata minimization and applicable activation verification.
   - *Route*: One bounded writer; tests and configuration validation must match the active Hermes contracts. A positive canary applies only if this task activates telemetry, and only in a named, explicitly authorized environment with no sensitive content.
   - *Rollback*: Disable/revert only the staged Langfuse settings for the confirmed profile set; record before rollout.
@@ -49,7 +49,7 @@
 ### F4 — Codex, OpenCode, and AGY integration gates
 - [ ] **Task F4.1**: Decide whether server migration is approved and define privacy-safe telemetry fields for each client.
   - *Route*: User/owner decision; no server upgrade or payload capture is implied.
-  - *Evidence*: Codex Langfuse plugin requires server `>=3.95`, beyond current `2.95.11`; OpenCode plugin requires OpenCode `>=1.18.29` and captures prompts/tool payloads without a proven metadata-only switch; AGY metadata hook feasibility does not yet establish OTLP support.
+  - *Evidence*: Codex Langfuse plugin requires server `>=3.95`, beyond current `2.95.11`; native Codex OTLP is unavailable on this v2 server. OpenCode plugin requires OpenCode `>=1.18.29` and captures prompts/tool payloads without a proven metadata-only switch; AGY metadata hook feasibility does not yet establish OTLP support.
 - [ ] **Task F4.2**: Implement only approved compatible integrations, with explicit opt-in, minimized data, and a positive event in the intended project.
   - *Route*: One bounded writer per coherent implementation task; no new dependency or binary without exact-version approval. A positive canary applies only if the integration is activated, in a named, explicitly authorized environment, with no sensitive content.
   - *Rollback*: Disable or revert only the confirmed integration settings/files; record exact boundary before activation.
@@ -68,7 +68,8 @@
 - Phase 1 inventory was accepted by `/root/phase1_review` with tracked downstream gaps; this was not native RDD approval.
 - DEV staging owner and exact runtime/config change surface are not established.
 - Project API-key values are not present in the approved inventory; no absence claim is made. Credential reference and injection boundary must be resolved without disclosing values.
-- Codex requires a server version newer than the current deployment. Any Langfuse server migration needs a separate explicit decision and authorization.
+- The selected SDK4 plugin is not server-compatible with v2.95.11; choose between a separately authorized compatible server migration and a validated legacy-server adaptation before functional implementation. SDK downgrade alone is not the adaptation plan.
+- Effective `HERMES_LANGFUSE_CAPTURE` configuration is unknown; `sanitized` default is not content-free and must be audited before activation.
 - OpenCode's content-capturing behavior needs an explicit privacy decision or a verified metadata-only alternative.
 - Production rollout requires explicit destination, operation, and credential/session authorization.
 
@@ -81,4 +82,4 @@
 
 ## Progress & Next Step
 
-F1 inventory and review are accepted, with profile counts sourced from the explorer handoff rather than reviewer enumeration. Initial documentation work-unit: `d1f34cba59` (`docs(observability): define phased Langfuse fleet plan`). Review corrections were committed as `27b2e43a51` (`docs(observability): clarify phase-specific canary gates`); the initial commit was not amended. F2.1 read-only discovery may proceed. Keep F2.2 implementation gated until the DEV staging owner, exact change surface, credential injection, pins, rollback, and explicit authorization are resolved.
+Corrected F1 inventory was accepted conditionally on this documentation correction by `/root/phase1_review`. Initial documentation work-unit: `d1f34cba59`; prior scope corrections: `27b2e43a51` and `427407feb6`; no prior commit is amended. F2.1 is reconciliation and a user decision, not an SDK ABI repair. Do not begin functional implementation until the user chooses a compatibility path and exact operations/credentials are authorized.
