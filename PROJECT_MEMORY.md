@@ -1,11 +1,13 @@
 # Hermes Project Memory & Session Continuity
 
-## Current Initiative — Gateway Shutdown/Restart Discord Reporting via Vigía (2026-10-17)
+## Current Initiative — Gateway Shutdown/Restart Discord Reporting via Vigía & Non-Blocking Auto-Resume (2026-10-17)
 - **Vigía Discord Gateway Monitoring**: Configured Vigía to report gateway restarts, shutdowns, and crashes for `hermes-agent.service` (Ragnar / Roshi multiplex) to Discord via Vigía's Discord webhook (`/opt/hermes-agent-data/profiles/vigia/scripts/vigia_post_discord.py`).
 - **Systemd Drop-in & Notifier**: Installed `/opt/hermes-agent-data/scripts/hermes-service-notify.sh` (symlinked to `/usr/local/bin/hermes-service-notify.sh`) and systemd drop-in `/etc/systemd/system/hermes-agent.service.d/40-vigia-notify.conf` using `ExecStopPost=` to capture all service stop results (`$SERVICE_RESULT`, `$EXIT_CODE`, `$EXIT_STATUS`), cleanly distinguishing planned restarts (code 75), normal shutdowns (code 0), and crashes/failures.
 - **Watchdog Integration**: Updated `/usr/local/bin/hermes-watchdog.sh` to dispatch Vigía Discord alerts when `hermes-agent.service` is detected down, successfully recovered, or persistently down after restart.
 - **Dead Script Cleanup**: Removed obsolete legacy container s6-era scripts in `/opt/hermes-agent-data/scripts/` (`cron_gateway_restart.sh`, `gateway_restart_once.sh`, `gateway_restart_glm53.sh`, `restart_gateway_contexto_400k.sh`, `phase_d_restart_cleanup.sh`, `phase_f2_restart_suppress.sh`, `rename_roshi_restart.sh`).
-- **Notice Suppression Status**: In-chat and home channel shutdown/restart notice suppression in `run_shutdown.py` and test updates were reviewed; operational alerting is fully transitioned to Vigía on Discord.
+- **Notice Suppression Status**: Configured `gateway_restart_notification: false` in `/opt/hermes-agent-data/config.yaml` and Roshi's config; in-chat/home-channel restart notices are cleanly suppressed for Discord and Telegram while keeping cron/restart acks intact.
+- **Controlled Pause & Auto-Resume (`hermes-safe-restart`)**: Replaced the previous hard block (`exit 3`) with a non-blocking graceful pause and resume mechanism. When active agents are detected during an intentional restart, the script marks them as `resume_pending=True` (`resume_reason='restart_timeout'`) in `sessions.json` and `state.db` (table `gateway_routing`), removes `.clean_shutdown`, and restarts the service. Upon boot, `_schedule_resume_pending_sessions()` in `gateway/run_startup.py` immediately synthesizes continuation events to resume the interrupted tasks without human intervention.
+
 
 ## Current Initiative — Lightweight Hermes Observability on Existing Langfuse (2026-10-17)
 - SDD: `.specs/langfuse-fleet-observability/{01-spec,02-design,03-tasks}.md`; `.specs/langfuse-fleet-observability/04-migration.md` is historical/declined evidence only. User rejected the heavy v3/v4 migration and approved assessing the minimum compatibility fix for Hermes against existing Langfuse `2.95.11`.
