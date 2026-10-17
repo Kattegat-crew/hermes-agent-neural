@@ -19,7 +19,8 @@ from agent.tool_result_classification import file_mutation_result_landed, is_gua
 
 
 IDEMPOTENT_TOOL_NAMES = frozenset({
-    "read_file", "search_files", "web_search", "web_extract", "session_search", "skill_view", "skills_list",
+    "read_file", "search_files", "web_search", "web_extract", "session_search",
+    "skill_view", "skills_list", "skill_search", "skill_route",
     "browser_snapshot", "browser_console", "browser_get_images", "mcp_filesystem_read_file",
     "mcp_filesystem_read_text_file", "mcp_filesystem_read_multiple_files", "mcp_filesystem_list_directory",
     "mcp_filesystem_list_directory_with_sizes", "mcp_filesystem_directory_tree", "mcp_filesystem_get_file_info",
@@ -703,6 +704,9 @@ _ACTION_DIRECTIVES = re.compile(
     r"\b(?:crea|crear|haz|hacer|modifica|modificar|edita|editar|actualiza|actualizar|"
     r"borra|borrar|elimina|eliminar|ejecuta|ejecutar|instala|instalar|configura|configurar|"
     r"busca|buscar|encuentra|analiza|analizar|revisa|revisar|lee|leer|escribe|escribir|"
+    r"redacta|redactar|traduce|traducir|optimiza|optimizar|audita|auditar|diseña|diseñar|"
+    r"planifica|planificar|estructura|estructurar|genera|generar|explícame|explicame|explica|explicar|"
+    r"ayúdame|ayudame|ayuda|propuesta|campaña|guion|copy|contrato|sorteo|coljuegos|arquitectura|protocolo|skill|"
     r"recuerda|recuerdas|acuerda|acuerdas|recuerde|recuerden|"
     r"despliega|deploy|repara|arregla|corrige|reinicia|reiniciar|"
     r"procede|proceder|continua|continúa|continuar|sigue|seguir|adelante|"
@@ -754,7 +758,7 @@ _CASUAL_INQUIRY_PATTERN = re.compile(
 def classify_turn_intent(message_text: str) -> str:
     """Classify the user turn intent as 'conversational' or 'action'.
 
-    Tier 0 (Fast-path): File attachments, URLs, file paths, ping tests.
+    Tier 0 (Fast-path): File attachments, URLs, file paths, ping tests, explicit action directives.
     Tier 1 (Semantic ONNX Triage): Evaluates message embedding on CPU.
     Tier 2 (Heuristic Fallback): Safe heuristic rules if ONNX runtime is unavailable.
     """
@@ -780,6 +784,11 @@ def classify_turn_intent(message_text: str) -> str:
     if _FUTURE_INTENTION_PATTERN.search(text):
         return "conversational"
 
+    # 3b. Explicit action/editorial/domain directives must keep tools (including skill_route) available
+    has_action = bool(_ACTION_DIRECTIVES.search(text))
+    if has_action:
+        return "action"
+
     # 4. Semantic ONNX Intent Triage (Fast CPU probe)
     try:
         from agent.semantic_triage import classify_semantic_intent
@@ -793,12 +802,6 @@ def classify_turn_intent(message_text: str) -> str:
     clean = re.sub(r"[^\w\s]", " ", text).lower().strip()
     words = clean.split()
     if not words:
-        return "action"
-
-    has_action = bool(_ACTION_DIRECTIVES.search(text))
-
-    # 6. If explicit technical action directive is present -> action
-    if has_action:
         return "action"
 
     # 7. Acknowledgements or greetings without actions -> conversational

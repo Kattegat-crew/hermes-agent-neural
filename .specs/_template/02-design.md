@@ -57,3 +57,11 @@ class FeatureHandler:
 ## 5. Observability & Error Handling
 * Structured logging patterns (levels: INFO, WARNING, ERROR).
 * Error categorization and recovery strategies.
+
+---
+
+## 6. Skill Pattern Compliance
+* **Referenced Skills**: List the `.skills/<skill>/SKILL.md` files consulted during design.
+* **Enforced Patterns**: Document alignment with `api-and-interface-design` and `code-review-and-quality` (strict typing, zero prompt-cache invalidation, atomic state updates).
+* **Anti-Patterns Avoided**: Explicitly list anti-patterns avoided.
+

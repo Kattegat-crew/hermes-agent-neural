@@ -1412,15 +1412,15 @@ def build_skills_system_prompt(
         if _on_demand:
             return (
                 "## Skills (On-Demand Catalog)\n"
-                "You have access to an extensive library of specialized skills (stored in `/opt/data/skills/` and accessible via `skills_list` and `skill_search`). "
-                "Skills encode specialized domain workflows, API protocols, best practices, and expert procedures.\n\n"
+                "You have access to an extensive library of specialized skills (stored in `/opt/hermes-agent/skills/` and `/opt/data/skills/`, routed on-demand via `skill_route`). "
+                "Skills encode specialized domain workflows, API protocols, editorial/compliance standards, and expert procedures.\n\n"
                 "OPERATING PROTOCOL:\n"
                 "1. Pure conversation, casual greetings, brainstorming, and direct Q&A do NOT require skills. Respond immediately without loading skills or calling tools.\n"
-                "2. In State 3 (Planning), when a task requires specialized domain knowledge, workflows, or tool orchestration:\n"
-                "   - Discover relevant skills using `skill_search(query=\"<topic>\")` or `skills_list(query=\"<topic>\")`.\n"
-                "   - Load and read the required skill using `skill_view(name=\"<skill_name>\")`.\n"
-                "   - Incorporate the required skills and their proposed workflows into your execution plan.\n"
-                "3. In State 4 (Confirmation), present the plan (including required skills or subagents) to the user and wait for authorization before execution.\n"
+                "2. When a task requires specialized domain knowledge, procedures, copywriting/editorial standards, legal/compliance rules, or technical workflows:\n"
+                "   - Call `skill_route(query=\"<task description and context>\")` (Jev) first — it searches the catalog and automatically loads the matching `SKILL.md` in one step.\n"
+                "   - Use `skill_search(query=\"<topic>\")` / `skills_list(query=\"<topic>\")` and `skill_view(name=\"<skill_name>\")` as fallback or when loading additional skills or linked reference files (`skill_view(name=\"<skill_name>\", file_path=\"references/...\")`).\n"
+                "   - Incorporate the loaded skill's canonical procedure into your execution plan.\n"
+                "3. In State 4 (Confirmation), present the plan (including required skills or subagents) to the user and wait for authorization before mutating execution.\n"
                 "4. Universal file support: You can always read and inspect files of any format (text, code, PDF, DOCX, XLSX, images) directly using standard tools (`read_file`).\n"
                 "- hermes-agent: Core Hermes instructions, architecture, commands, and multi-agent coordination."
             )

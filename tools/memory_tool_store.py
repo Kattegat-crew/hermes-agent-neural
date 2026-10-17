@@ -184,11 +184,14 @@ class MemoryStore:
     _MAX_CONSOLIDATION_FAILURES_PER_TURN = 3
 
     def __init__(self, memory_char_limit: int = 2200, user_char_limit: int = 1375, *,
-                 memory_enabled: bool = True, user_profile_enabled: bool = True):
+                 memory_enabled: bool = True, user_profile_enabled: bool = True,
+                 on_demand: bool = False, index_char_limit: int = 6000):
         self.memory_entries: list[str] = []
         self.user_entries: list[str] = []
         self.memory_char_limit, self.user_char_limit = memory_char_limit, user_char_limit
         self.memory_enabled, self.user_profile_enabled = memory_enabled, user_profile_enabled
+        self.on_demand = bool(on_demand)
+        self.index_char_limit = max(500, int(index_char_limit or 6000))
         self._system_prompt_snapshot: dict[str, str] = {"memory": "", "user": ""}
         self._consolidation_failures = 0  # per turn; reset by reset_consolidation_failures()
 
@@ -250,7 +253,11 @@ class MemoryStore:
                 logger.warning("%s exceeds its char limit on load: %d/%d chars. Entries stay loaded; "
                                "further additions are blocked until it is back under the limit.",
                                path.name, count, limit)
-            self._system_prompt_snapshot[target] = self._render_block(target, [_sanitize(e, path.name) for e in entries])
+            sanitized = [_sanitize(e, path.name) for e in entries]
+            if target == "memory" and self.on_demand:
+                self._system_prompt_snapshot[target] = self._render_compact_index(sanitized)
+            else:
+                self._system_prompt_snapshot[target] = self._render_block(target, sanitized)
 
     @staticmethod
     @contextmanager
@@ -642,6 +649,126 @@ class MemoryStore:
         content, sep = ENTRY_DELIMITER.join(entries), "═" * 46
         title = MEMORY_BLOCK_HEADERS["user" if target == "user" else "memory"]
         return f"{sep}\n{title} [{self._usage_pct(target, len(content))}]\n{sep}\n{content}"
+
+    @staticmethod
+    def _summarize_entry_line(idx: int, entry: str, max_chars: int = 95) -> str:
+        """Extract a compact 1-line topic/heading summary for an entry."""
+        lines = [ln.strip() for ln in entry.splitlines() if ln.strip()]
+        if not lines:
+            return f"[#{idx}] (empty)"
+        headings = [ln for ln in lines if ln.startswith("#")]
+        first = headings[0] if headings else lines[0]
+        compact = " ".join(first.split())
+        if len(compact) > max_chars:
+            compact = compact[: max_chars - 3].rstrip() + "..."
+        return f"[#{idx}] {compact} ({len(entry)} chars)"
+
+    def _render_compact_index(self, entries: list[str]) -> str:
+        """Render a compact Turn-1 index of MEMORY.md capped at ``self.index_char_limit``."""
+        if not entries:
+            return ""
+        full_content = ENTRY_DELIMITER.join(entries)
+        sep = "═" * 46
+        title = MEMORY_BLOCK_HEADERS["memory"]
+        usage_str = self._usage_pct("memory", len(full_content))
+        header = (
+            f"{sep}\n"
+            f"{title} [COMPACT INDEX — {len(entries)} entries, full store {usage_str}]\n"
+            f"{sep}\n"
+            "On-Demand Memory Active: Only the topic index is loaded on Turn 1 to save context tokens.\n"
+            "To read full memory entries when relevant to the task:\n"
+            "- Search by keyword/topic: `memory(action=\"search\", target=\"memory\", content=\"<query>\")`\n"
+            "- Read specific entry or section: `memory(action=\"read\", target=\"memory\", content=\"#<index> or <topic>\")`\n\n"
+            "INDEX OF STORED MEMORIES:\n"
+        )
+        budget = max(400, self.index_char_limit - len(header) - 120)
+        summary_lines: list[str] = []
+        used = 0
+        omitted = 0
+        for idx, entry in enumerate(entries, 1):
+            line = self._summarize_entry_line(idx, entry)
+            if used + len(line) + 1 > budget:
+                omitted = len(entries) - idx + 1
+                break
+            summary_lines.append(line)
+            used += len(line) + 1
+        if omitted > 0:
+            summary_lines.append(
+                f"... (+{omitted} more entries omitted from Turn 1 index; use `memory(action=\"search\", target=\"memory\", content=\"<keyword>\")` to inspect)"
+            )
+        return header + "\n".join(summary_lines)
+
+    def search(self, target: str, query: str) -> dict[str, Any]:
+        """Read-only keyword/topic search across entries in *target*."""
+        from tools.memory_tool import _memory_target_error
+        if target_error := _memory_target_error(self, target):
+            return target_error
+        q = (query or "").strip()
+        if not q:
+            return _error("Query is required for 'search' action (pass via content or old_text).", "invalid_args")
+        entries = self._entries_for(target)
+        q_norm = _normalize_for_match(q).lower()
+        q_words = [w for w in re.findall(r"\w+", q_norm) if len(w) >= 2]
+        scored: list[tuple[float, int, str]] = []
+        for idx, entry in enumerate(entries, 1):
+            e_norm = _normalize_for_match(entry).lower()
+            score = 0.0
+            if q_norm and q_norm in e_norm:
+                score += 10.0
+            if q_words:
+                hits = sum(1 for w in q_words if w in e_norm)
+                if hits:
+                    score += hits / len(q_words) * 5.0
+            if score > 0:
+                scored.append((score, idx, entry))
+        scored.sort(key=lambda item: (-item[0], item[1]))
+        top = [
+            {"index": idx, "score": round(score, 2), "content": entry}
+            for score, idx, entry in scored[:10]
+        ]
+        return {
+            "success": True,
+            "target": target,
+            "query": q,
+            "match_count": len(scored),
+            "matches": top,
+            "total_entries": len(entries),
+        }
+
+    def read(self, target: str, selector: str = "") -> dict[str, Any]:
+        """Read-only retrieval of a specific entry (#index) or matching section in *target*."""
+        from tools.memory_tool import _memory_target_error
+        if target_error := _memory_target_error(self, target):
+            return target_error
+        entries = self._entries_for(target)
+        sel = (selector or "").strip()
+        if not sel:
+            # Return the first 5 entries as a bounded preview
+            return {
+                "success": True,
+                "target": target,
+                "total_entries": len(entries),
+                "entries": [{"index": i + 1, "content": e} for i, e in enumerate(entries[:5])],
+            }
+        m = re.match(r"^#?(\d+)(?:\s*-\s*#?(\d+))?$", sel)
+        if m:
+            start_idx = max(1, int(m.group(1)))
+            end_idx = int(m.group(2)) if m.group(2) else start_idx
+            end_idx = min(len(entries), max(start_idx, end_idx))
+            if start_idx > len(entries):
+                return _error(f"Entry index #{start_idx} out of range (1..{len(entries)}).", "no_match")
+            selected = [
+                {"index": i, "content": entries[i - 1]}
+                for i in range(start_idx, min(end_idx + 1, start_idx + 10))
+            ]
+            return {
+                "success": True,
+                "target": target,
+                "selector": sel,
+                "entries": selected,
+                "total_entries": len(entries),
+            }
+        return self.search(target, sel)
 
     @staticmethod
     def _read_raw_checked(path: Path) -> tuple[str, bool]:

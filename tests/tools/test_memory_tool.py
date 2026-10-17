@@ -1017,3 +1017,56 @@ class TestBackgroundReviewDeleteGate:
             reset_current_write_origin(token)
         assert result["success"] is True
         assert "rewritten by refine" in store._entries_for("memory")
+
+
+class TestOnDemandCompactMemoryIndex:
+    """Option B: Full USER.md + compact MEMORY.md index on Turn 1, with on-demand search/read."""
+
+    def test_on_demand_renders_compact_memory_index_and_full_user_profile(self, tmp_dir):
+        store = MemoryStore(
+            memory_char_limit=100000,
+            user_char_limit=8000,
+            on_demand=True,
+            index_char_limit=2000,
+        )
+        store.load_from_disk()
+        store.add("user", "User profile: Yisus, Senior Architect and Founder.")
+        for i in range(1, 25):
+            store.add(
+                "memory",
+                f"Project Domain #{i}: Detailed architectural notes and operational runbooks "
+                + ("x" * 300),
+            )
+        # Reload from disk to freeze the Turn 1 snapshot
+        reloaded = MemoryStore(
+            memory_char_limit=100000,
+            user_char_limit=8000,
+            on_demand=True,
+            index_char_limit=2000,
+        )
+        reloaded.load_from_disk()
+
+        user_prompt = reloaded.format_for_system_prompt("user")
+        mem_prompt = reloaded.format_for_system_prompt("memory")
+
+        # 1. USER.md is injected in full
+        assert "User profile: Yisus, Senior Architect and Founder." in user_prompt
+        # 2. MEMORY.md is rendered as a compact index under index_char_limit
+        assert "COMPACT INDEX" in mem_prompt
+        assert len(mem_prompt) <= 2200
+        assert len(reloaded._entries_for("memory")) == 24
+        # 3. Search and read retrieve the full entries on demand
+        search_res = json.loads(
+            memory_tool(action="search", target="memory", content="Project Domain #15", store=reloaded)
+        )
+        assert search_res["success"] is True
+        assert search_res["match_count"] >= 1
+        assert "Project Domain #15" in search_res["matches"][0]["content"]
+
+        read_res = json.loads(
+            memory_tool(action="read", target="memory", content="#3", store=reloaded)
+        )
+        assert read_res["success"] is True
+        assert read_res["entries"][0]["index"] == 3
+        assert "Project Domain #3" in read_res["entries"][0]["content"]
+

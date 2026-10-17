@@ -53,8 +53,18 @@ def load_on_disk_store() -> MemoryStore:
         config = load_config() or {}
         mem_cfg = get_builtin_memory_config(config)
         memory_enabled, user_profile_enabled = get_builtin_memory_store_flags(config)
-        store = MemoryStore(int(mem_cfg.get("memory_char_limit", 2200)), int(mem_cfg.get("user_char_limit", 1375)),
-                            memory_enabled=memory_enabled, user_profile_enabled=user_profile_enabled)
+        mem_on_demand = bool(
+            mem_cfg.get("on_demand") is True
+            or str(mem_cfg.get("mode", "")).lower() in ("on_demand", "compact")
+        )
+        store = MemoryStore(
+            int(mem_cfg.get("memory_char_limit", 2200)),
+            int(mem_cfg.get("user_char_limit", 1375)),
+            memory_enabled=memory_enabled,
+            user_profile_enabled=user_profile_enabled,
+            on_demand=mem_on_demand,
+            index_char_limit=int(mem_cfg.get("index_char_limit", 6000)),
+        )
     except Exception:
         store = MemoryStore()  # config optional — fall back to defaults rather than break /memory
     store.load_from_disk()
@@ -279,8 +289,13 @@ def _memory_tool(action, target, content, old_text, new_text, operations, store)
         )
     if action == "replace":
         return _invalid(_REPLACE_REMOVED)
+    if action in ("search", "read"):
+        query_val = content or old_text or ""
+        if action == "search":
+            return _applied(store.search(target, query_val))
+        return _applied(store.read(target, query_val))
     if action not in _STORE_ACTIONS:
-        return _invalid(f"Unknown action '{action}'. Use: add, patch, remove")
+        return _invalid(f"Unknown action '{action}'. Use: add, patch, remove, search, read")
     invalid = (_validate_single_op(store, action, target, content, old_text)
                or _background_delete_gate(store, action, None, target, content, old_text)
                or _apply_write_gate(store, action, target, content, old_text))
@@ -291,7 +306,9 @@ def _memory_tool(action, target, content, old_text, new_text, operations, store)
 
 def get_builtin_memory_config(config: Optional[dict[str, Any]] = None) -> dict[str, Any]:
     """Normalized ``memory`` config section ({} when missing/malformed → flags default to
-    enabled). ``agent_init`` reads the same section so availability and store cannot diverge."""
+    enabled). ``agent_init`` reads the same section so availability and store cannot diverge.
+    When running inside a named profile (``<root>/profiles/<name>``) whose config.yaml omits
+    ``memory``, inherit defaults from ``<root>/config.yaml``."""
     if config is None:
         try:
             from hermes_cli.config import load_config_readonly
@@ -300,7 +317,31 @@ def get_builtin_memory_config(config: Optional[dict[str, Any]] = None) -> dict[s
             logger.debug("Could not read memory config for availability", exc_info=True)
             return {}
     section = config.get("memory") if isinstance(config, dict) else None
-    return section if isinstance(section, dict) else {}
+    resolved = dict(section) if isinstance(section, dict) else {}
+    try:
+        home = get_hermes_home()
+        if home.parent.name == "profiles":
+            root_cfg_path = home.parent.parent / "config.yaml"
+            if root_cfg_path.exists():
+                import yaml
+                root_cfg = yaml.safe_load(root_cfg_path.read_text(encoding="utf-8")) or {}
+                root_mem = root_cfg.get("memory")
+                if isinstance(root_mem, dict):
+                    prof_cfg_path = home / "config.yaml"
+                    prof_raw = (
+                        yaml.safe_load(prof_cfg_path.read_text(encoding="utf-8")) or {}
+                        if prof_cfg_path.exists()
+                        else {}
+                    )
+                    prof_mem = prof_raw.get("memory")
+                    merged = dict(resolved)
+                    merged.update(root_mem)
+                    if isinstance(prof_mem, dict):
+                        merged.update(prof_mem)
+                    resolved = merged
+    except Exception:
+        pass
+    return resolved
 
 
 def get_builtin_memory_store_flags(config: Optional[dict[str, Any]] = None) -> tuple[bool, bool]:
@@ -468,6 +509,14 @@ def _build_memory_schema_overrides() -> dict[str, Any]:
         description = description.replace(
             "TARGETS: 'user' = who the user is (name, role, preferences, style). 'memory' = your "
             "notes (environment, conventions, tool quirks, lessons).", replacement)
+    mem_cfg = get_builtin_memory_config()
+    if mem_cfg.get("on_demand") is True or str(mem_cfg.get("mode", "")).lower() in ("on_demand", "compact"):
+        parameters["properties"]["action"]["enum"] = ["add", "patch", "remove", "search", "read"]
+        parameters["properties"]["action"]["description"] = (
+            "The action to perform: 'add', 'patch', 'remove' (write ops), or 'search' / 'read' "
+            "(read-only retrieval of full memory entries when on-demand compact index is active; "
+            "pass query or #index in 'content'). Omit when using 'operations'."
+        )
     return {"description": description, "parameters": parameters}
 
 

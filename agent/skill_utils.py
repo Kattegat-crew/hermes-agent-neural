@@ -208,9 +208,8 @@ def _config_cache_key(config_path: Path) -> Optional[tuple[str, int, int, int, i
         return None
 
 
-def _load_raw_config() -> dict[str, Any]:
-    """Read config.yaml with an mtime+size keyed cache (no hermes_cli.config import)."""
-    config_path = get_config_path()
+def _load_raw_config_at(config_path: Path) -> dict[str, Any]:
+    """Read a specific config.yaml with an mtime+size keyed cache."""
     if not config_path.exists():
         return {}
     cache_key = _config_cache_key(config_path)
@@ -225,15 +224,34 @@ def _load_raw_config() -> dict[str, Any]:
     if not isinstance(parsed, dict):
         return {}
     if cache_key is not None:
-        _RAW_CONFIG_CACHE.clear()
+        if len(_RAW_CONFIG_CACHE) > 8:
+            _RAW_CONFIG_CACHE.clear()
         _RAW_CONFIG_CACHE[cache_key] = parsed
     return parsed
 
 
+def _load_raw_config() -> dict[str, Any]:
+    """Read config.yaml with an mtime+size keyed cache (no hermes_cli.config import)."""
+    return _load_raw_config_at(get_config_path())
+
+
 def _skills_cfg() -> Optional[dict[str, Any]]:
-    """The ``skills:`` mapping from config.yaml, or None when absent/malformed."""
-    skills_cfg = _load_raw_config().get("skills")
-    return skills_cfg if isinstance(skills_cfg, dict) else None
+    """The ``skills:`` mapping from config.yaml (inheriting root config.yaml defaults for profiles), or None when absent/malformed."""
+    config_path = get_config_path()
+    raw = _load_raw_config_at(config_path)
+    skills_cfg = raw.get("skills")
+    skills_dict = dict(skills_cfg) if isinstance(skills_cfg, dict) else None
+
+    if config_path.parent.parent.name == "profiles":
+        root_cfg_path = config_path.parent.parent.parent / "config.yaml"
+        root_skills = _load_raw_config_at(root_cfg_path).get("skills")
+        if isinstance(root_skills, dict):
+            merged = dict(root_skills)
+            if skills_dict:
+                merged.update(skills_dict)
+            return merged
+
+    return skills_dict
 
 
 def _skills_cfg_get(key: str) -> Any:

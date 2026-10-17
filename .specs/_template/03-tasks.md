@@ -18,19 +18,23 @@
 ### Phase 1: Test Scaffolding & Interfaces
 - [ ] **Task 1.1**: Define interfaces/types and scaffold failing unit tests in `tests/`.
   - *Target Files*: `tests/test_feature.py`
+  - *Skill*: `.skills/api-and-interface-design/SKILL.md`
   - *Verification*: `pytest tests/test_feature.py -v` (Expect failure on unimplemented methods).
 
 ### Phase 2: Core Domain Logic
 - [ ] **Task 2.1**: Implement the core component logic according to `02-design.md`.
   - *Target Files*: `path/to/module.py`
+  - *Skill*: `.skills/code-review-and-quality/SKILL.md`
   - *Verification*: `pytest tests/test_feature.py -v` (Must pass with exit code 0).
 - [ ] **Task 2.2**: Implement edge cases and error handling.
   - *Target Files*: `path/to/module.py`, `tests/test_feature.py`
+  - *Skill*: `.skills/systematic-debugging/SKILL.md`
   - *Verification*: `pytest tests/test_feature.py -k "test_error" -v`
 
 ### Phase 3: Integration & System Wiring
 - [ ] **Task 3.1**: Wire the component into the gateway/agent lifecycle.
   - *Target Files*: `gateway/run.py` or `agent/...`
+  - *Skill*: `.skills/codebase-inspection/SKILL.md`, `.skills/code-review-and-quality/SKILL.md`
   - *Verification*: `pytest tests/integration/test_feature_integration.py -v`
 
 ### Phase 4: Final Quality Gates & Cleanup

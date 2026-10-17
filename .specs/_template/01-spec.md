@@ -50,3 +50,13 @@ Use concrete Given-When-Then criteria:
 * Any new environment variables required? (Must reside in `/opt/vault/` or `.env` `0600`).
 * Does this affect systemd services, open ports, or memory limits?
 * Any potential impact on prompt caching or token latency?
+
+---
+
+## 6. Applicable Project Skills
+List the project-local skills from `.skills/` (`.agents/skills/`) and `.atl/skill-registry.md` that govern this specification:
+- [ ] `.skills/codebase-inspection/SKILL.md` — Subsystem exploration and dependency tracing
+- [ ] `.skills/api-and-interface-design/SKILL.md` — Tool schemas, gateway contracts, and plugin interfaces
+- [ ] `.skills/systematic-debugging/SKILL.md` — Root-cause analysis and edge-case verification
+- [ ] `.skills/code-review-and-quality/SKILL.md` — Clean architecture, prompt-cache preservation, and test coverage
+
