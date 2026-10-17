@@ -1,5 +1,11 @@
 # Hermes Project Memory & Session Continuity
 
+## Current Initiative — Langfuse Fleet Observability (2026-10-16)
+- Created `.specs/langfuse-fleet-observability/{01-spec,02-design,03-tasks}.md` as the SDD record for the phased Hermes/Codex/OpenCode/AGY plan.
+- Phase F1 inventory evidence is documented; its independent review is pending (prior review #1984 is partial with findings). No functional implementation is complete.
+- Do not advance before each phase's independent reviewer returns a terminal result. DEV staging owner, credential injection boundary, server migration decision, OpenCode privacy decision, and separate PROD authorization remain unresolved.
+- No secrets are included here. No source, runtime, dependency, service, or production changes were made by the documentation phase.
+
 > **Session Lifecycle Contract**:
 > - **On Session Start**: Read this file and [`ARCHITECTURE.md`](file:///opt/hermes-agent/ARCHITECTURE.md) to recover active context and understand current flows before taking any action.
 > - **On Session Close**: Update this file with what was accomplished, verification results, and immediate next steps.
