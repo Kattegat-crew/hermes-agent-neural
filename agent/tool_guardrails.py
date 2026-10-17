@@ -19,7 +19,8 @@ from agent.tool_result_classification import (
 
 
 IDEMPOTENT_TOOL_NAMES = frozenset({
-    "read_file", "search_files", "web_search", "web_extract", "session_search", "skill_view", "skills_list",
+    "read_file", "search_files", "web_search", "web_extract", "session_search",
+    "skill_view", "skills_list", "skill_search", "skill_route",
     "browser_snapshot", "browser_console", "browser_get_images", "mcp_filesystem_read_file",
     "mcp_filesystem_read_text_file", "mcp_filesystem_read_multiple_files", "mcp_filesystem_list_directory",
     "mcp_filesystem_list_directory_with_sizes", "mcp_filesystem_directory_tree", "mcp_filesystem_get_file_info",
@@ -670,3 +671,322 @@ def _sha256(value: str) -> str:
     # surrogatepass: web-scraped results can carry unpaired UTF-16 surrogates; a
     # strict encode would raise and take down the conversation loop.
     return hashlib.sha256(value.encode("utf-8", "surrogatepass")).hexdigest()
+
+
+# ---------------------------------------------------------------------------
+# Progressive Evaluation & Multi-Level Authorization Guardrails (Req 1, 3, 6, 14)
+# ---------------------------------------------------------------------------
+
+_GREETING_WORDS = frozenset({
+    "hola", "buenos dias", "buenos días", "buenas tardes", "buenas noches",
+    "hey", "hi", "hello", "que tal", "qué tal", "como estas", "cómo estás",
+    "saludos", "buenas", "que mas", "qué más"
+})
+
+_GREETING_PATTERN = re.compile(
+    r"\b(?:" + "|".join(re.escape(g) for g in sorted(_GREETING_WORDS, key=len, reverse=True)) + r")\b",
+    re.IGNORECASE
+)
+
+_ACK_WORDS = frozenset({
+    "gracias", "muchas gracias", "ok", "okay", "vale", "entendido", "perfecto",
+    "buenísimo", "buenisimo", "de acuerdo", "excelente", "dale", "listo"
+})
+
+_SPEED_OR_PING_PATTERN = re.compile(
+    r"\b(?:prueba|test|testear|probar)\s+(?:de\s+|tu\s+|su\s+|la\s+|el\s+)?(?:velocidad|latencia|respuesta|tiempo)|"
+    r"(?:medir|mide)\s+(?:el\s+)?tiempo|\bping\b|\bpong\b",
+    re.IGNORECASE
+)
+
+_FUTURE_INTENTION_PATTERN = re.compile(
+    r"\b(?:mañana|luego|después|despues|más tarde|mas tarde|la próxima semana|proxima semana)\s+"
+    r"(?:quiero|vamos|hacemos|trabajamos|revisamos|veremos|vemos)\b",
+    re.IGNORECASE
+)
+
+_FILE_OR_URL_PATTERN = re.compile(
+    r"https?://|\b[\w\-\./]+\.(?:py|sh|json|yaml|yml|md|txt|csv|pdf|docx|xlsx|png|jpg|jpeg|mp3|mp4|log|ts|js|html|css)\b|"
+    r"(?:^|\s)(?:/[a-zA-Z0-9_\-\.]+)+",
+    re.IGNORECASE
+)
+
+_ACTION_DIRECTIVES = re.compile(
+    r"\b(?:crea|crear|haz|hacer|modifica|modificar|edita|editar|actualiza|actualizar|"
+    r"borra|borrar|elimina|eliminar|ejecuta|ejecutar|instala|instalar|configura|configurar|"
+    r"busca|buscar|encuentra|analiza|analizar|revisa|revisar|lee|leer|escribe|escribir|"
+    r"redacta|redactar|traduce|traducir|optimiza|optimizar|audita|auditar|diseña|diseñar|"
+    r"planifica|planificar|estructura|estructurar|genera|generar|explícame|explicame|explica|explicar|"
+    r"ayúdame|ayudame|ayuda|propuesta|campaña|guion|copy|contrato|sorteo|coljuegos|arquitectura|protocolo|skill|"
+    r"recuerda|recuerdas|acuerda|acuerdas|recuerde|recuerden|"
+    r"despliega|deploy|repara|arregla|corrige|reinicia|reiniciar|"
+    r"procede|proceder|continua|continúa|continuar|sigue|seguir|adelante|"
+    r"proceso|procesos|tarea|tareas|avance|avances|progreso|estado|status|reporte|reportes|medir|mide|cuéntame|cuenta|novedad|novedades)\b",
+    re.IGNORECASE
+)
+
+_SYSTEM_METADATA_WRAPPER_PATTERN = re.compile(
+    r"\[System:.*?\]",
+    re.DOTALL | re.IGNORECASE
+)
+
+_CONFIRMATION_PATTERNS = re.compile(
+    r"\b(?:si|sí|dale|adelante|procede|proceder|confirmo|confirmado|hazlo|ejecuta|ejecútalo|"
+    r"yes|ok|okay|proceed|go ahead|aplica|aplicalo|aplícalo|de acuerdo|perfecto procede)\b",
+    re.IGNORECASE
+)
+
+_MUTATING_OR_DESTRUCTIVE_COMMANDS = re.compile(
+    r"""(?:^|\s|&&|\|\||;|`)(?:
+        rm\s|rmdir\s|mv\s|cp\s|install\s|sed\s+-i|truncate\s|dd\s|shred\s|
+        git\s+(?:commit|push|reset|clean|checkout|rebase|merge)\s|
+        docker\s+(?:rm|kill|stop|restart|build|run|compose\s+(?:down|up))\s|
+        systemctl\s|service\s|kill\s|pkill\s|shutdown\s|reboot\s|
+        pip\s+install|npm\s+(?:install|run\s+build)|apt-get|apt\s
+    )""",
+    re.VERBOSE | re.IGNORECASE
+)
+
+_IMPERATIVE_COMMANDS = re.compile(
+    r"\b(?:crea|escribe|modifica|edita|actualiza|borra|elimina|ejecuta|instala|despliega|agrega|cambia|aplica|haz)\b",
+    re.IGNORECASE
+)
+
+_CASUAL_INQUIRY_PATTERN = re.compile(
+    r"^(?:(?:hola|hey|buenas|buenos dias|buenas tardes|buenas noches)\b(?:\s+\w+)?\s*)?"
+    r"(?:"
+    r"qui[eé]n\s+(?:eres|sos)|"
+    r"c[oó]mo\s+(?:est[aá]s|andas|te\s+va)|"
+    r"c[oó]mo\s+va(?:\s+(?:todo|la\s+cosa))?\s*$|"
+    r"qu[eé]\s+(?:haces|tal|cuentas|hac[eé]s)|"
+    r"me\s+(?:escuchas|o[yí]es)|"
+    r"pod[eé]s\s+hablar|puedes\s+hablar"
+    r")\b",
+    re.IGNORECASE
+)
+
+
+def classify_turn_intent(message_text: str) -> str:
+    """Classify the user turn intent as 'conversational' or 'action'.
+
+    Tier 0 (Fast-path): File attachments, URLs, file paths, ping tests, explicit action directives.
+    Tier 1 (Semantic ONNX Triage): Evaluates message embedding on CPU.
+    Tier 2 (Heuristic Fallback): Safe heuristic rules if ONNX runtime is unavailable.
+    """
+    if not message_text or not isinstance(message_text, str):
+        return "action"
+
+    # Strip synthetic system injection wrappers before intent classification
+    stripped = _SYSTEM_METADATA_WRAPPER_PATTERN.sub("", message_text).strip()
+    if not stripped:
+        return "action"
+
+    text = stripped
+
+    # 1. Any file attachment, local path, or URL is an action turn
+    if _FILE_OR_URL_PATTERN.search(text):
+        return "action"
+
+    # 2. Response speed / latency / ping tests are strictly conversational
+    if _SPEED_OR_PING_PATTERN.search(text):
+        return "conversational"
+
+    # 3. Statements of future intention without immediate command -> conversational (Plan Req 3)
+    if _FUTURE_INTENTION_PATTERN.search(text):
+        return "conversational"
+
+    # 3b. Explicit action/editorial/domain directives must keep tools (including skill_route) available
+    has_action = bool(_ACTION_DIRECTIVES.search(text))
+    if has_action:
+        return "action"
+
+    # 4. Semantic ONNX Intent Triage (Fast CPU probe)
+    try:
+        from agent.semantic_triage import classify_semantic_intent
+        semantic_res = classify_semantic_intent(text)
+        if semantic_res is not None:
+            return semantic_res
+    except Exception as e:
+        logger.debug("Semantic intent triage unavailable or failed: %s; falling back to heuristics", e)
+
+    # 5. Clean string for keyword analysis fallback
+    clean = re.sub(r"[^\w\s]", " ", text).lower().strip()
+    words = clean.split()
+    if not words:
+        return "action"
+
+    # 7. Acknowledgements or greetings without actions -> conversational
+    has_greeting = bool(_GREETING_PATTERN.search(clean))
+    has_ack = any(clean == ack or clean.startswith(ack + " ") or clean.endswith(" " + ack) for ack in _ACK_WORDS)
+
+    if (has_greeting or has_ack) and not has_action:
+        return "conversational"
+
+    # 8. Casual questions without action verbs (e.g. "¿cómo estás?", "¿quién eres?")
+    is_casual_inquiry = bool(_CASUAL_INQUIRY_PATTERN.match(clean))
+    if is_casual_inquiry and not has_action:
+        return "conversational"
+
+    # Default to action if intent is ambiguous or complex
+    return "action"
+
+
+def is_conversational_turn(message_text: str) -> bool:
+    """Check if the user message is a pure greeting or casual chit-chat without an actionable task."""
+    return classify_turn_intent(message_text) == "conversational"
+
+
+def should_decouple_tools_for_turn(
+    messages: list[Any],
+    tool_turns: int = 0,
+    agent: Any = None,
+) -> bool:
+    """Determine whether tool schemas should be decoupled (tools_for_api = []) for this turn.
+
+    Decoupling saves ~13,600 tokens and ~8-10 seconds of provider latency on conversational turns.
+    """
+    # 1. Mid-turn tool responses MUST keep tools available (call count > 1)
+    if tool_turns > 1:
+        return False
+
+    if not messages:
+        return False
+
+    # 2. Never decouple for cronjobs or autonomous subagents
+    if agent is not None:
+        if getattr(agent, "is_cron", False) or getattr(agent, "_delegate_depth", 0) > 0:
+            return False
+
+    # 3. Check the last message in history
+    last_msg = messages[-1]
+    last_role = getattr(last_msg, "role", None) if not isinstance(last_msg, dict) else last_msg.get("role")
+    if last_role in ("tool", "function"):
+        return False
+    if last_role == "assistant":
+        # If assistant just called a tool, we cannot decouple
+        if isinstance(last_msg, dict) and last_msg.get("tool_calls"):
+            return False
+        if hasattr(last_msg, "tool_calls") and last_msg.tool_calls:
+            return False
+
+    # 4. Extract last user text
+    last_user_text = ""
+    for msg in reversed(messages):
+        role = getattr(msg, "role", None) if not isinstance(msg, dict) else msg.get("role")
+        if role == "user":
+            content = getattr(msg, "content", None) if not isinstance(msg, dict) else msg.get("content")
+            if isinstance(content, str):
+                last_user_text = content
+            elif isinstance(content, list):
+                # Multipart content (e.g. image, document attachment) -> Keep tools!
+                for part in content:
+                    if isinstance(part, dict):
+                        if part.get("type") != "text":
+                            return False
+                        last_user_text += " " + part.get("text", "")
+            break
+
+    if not last_user_text:
+        return False
+
+    return classify_turn_intent(last_user_text) == "conversational"
+
+
+def has_user_confirmation(messages: list[Any]) -> bool:
+    """Check if recent user turns contain explicit confirmation or direct imperative command."""
+    if not messages:
+        return False
+    user_turns: list[str] = []
+    for msg in reversed(messages):
+        role = getattr(msg, "role", None) if not isinstance(msg, dict) else msg.get("role")
+        if role == "user":
+            content = getattr(msg, "content", None) if not isinstance(msg, dict) else msg.get("content")
+            if isinstance(content, str):
+                user_turns.append(content)
+            elif isinstance(content, list):
+                text_parts = [c.get("text", "") for c in content if isinstance(c, dict) and c.get("type") == "text"]
+                user_turns.append(" ".join(text_parts))
+            if len(user_turns) >= 3:
+                break
+
+    for turn in user_turns:
+        clean_turn = turn.strip().lower()
+        if _CONFIRMATION_PATTERNS.search(clean_turn):
+            return True
+        # If the turn is an open question or inquiry, it is NOT an authorization
+        is_question = "?" in turn or "¿" in turn or bool(
+            re.match(r"^(?:qué|que|cómo|como|cuál|cual|por qué|será|podríamos|podemos)\b", clean_turn)
+        )
+        if is_question:
+            continue
+        # Check for direct imperative action command
+        if _IMPERATIVE_COMMANDS.search(clean_turn) and len(clean_turn.split()) >= 3:
+            return True
+    return False
+
+
+def check_runtime_execution_guardrails(
+    agent: Any,
+    tool_name: str,
+    tool_args: Mapping[str, Any] | None,
+    messages: list[Any] | None = None,
+) -> tuple[bool, str | None]:
+    """Universal runtime interceptor enforcing 5-State Progressive Evaluation and Multi-Level Authorization.
+
+    Enforces:
+    - State 1: Suppresses tool executions on pure greetings/chit-chat for immediate conversational Fast Ack (<2s).
+    - State 4: Intercepts high-impact mutating actions (file/system edits) until explicit user confirmation is present.
+    """
+    # 1. Bypass guardrails for cronjobs and autonomous subagent execution
+    if getattr(agent, "is_cron", False) or getattr(agent, "_delegate_depth", 0) > 0:
+        return False, None
+
+    tool_args = tool_args or {}
+    messages = messages or getattr(agent, "messages", []) or []
+
+    # Extract the last user message text
+    last_user_text = ""
+    for msg in reversed(messages):
+        role = getattr(msg, "role", None) if not isinstance(msg, dict) else msg.get("role")
+        if role == "user":
+            content = getattr(msg, "content", None) if not isinstance(msg, dict) else msg.get("content")
+            if isinstance(content, str):
+                last_user_text = content
+            elif isinstance(content, list):
+                parts = [c.get("text", "") for c in content if isinstance(c, dict) and c.get("type") == "text"]
+                last_user_text = " ".join(parts)
+            break
+
+    # 2. State 1 Guardrail: Pure Conversation / Casual Greeting
+    if is_conversational_turn(last_user_text):
+        if tool_name in MUTATING_TOOL_NAMES or tool_name in ("memory", "search_files"):
+            reason = (
+                "INTERCEPTED (State 1: Pure Conversation): The user sent a casual greeting or conversational message. "
+                "Do NOT execute tools, modify files, or scan memory. Respond conversationally, warmly, and immediately."
+            )
+            return True, reason
+
+    # 3. State 4 Guardrail: Multi-Level Confirmation for High-Impact Actions
+    is_high_impact = False
+    if tool_name in ("write_file", "patch", "skill_manage", "cronjob_manage"):
+        is_high_impact = True
+    elif tool_name == "process_manage":
+        if str(tool_args.get("action", "")).lower() in ("kill", "terminate", "stop"):
+            is_high_impact = True
+    elif tool_name in ("terminal", "execute_code"):
+        cmd = str(tool_args.get("command") or tool_args.get("code") or "")
+        if _MUTATING_OR_DESTRUCTIVE_COMMANDS.search(cmd):
+            is_high_impact = True
+
+    if is_high_impact:
+        if not has_user_confirmation(messages):
+            reason = (
+                f"INTERCEPTED (State 4: High-Impact Action Requires Confirmation): "
+                f"Tool '{tool_name}' mutates files, code, or systems. "
+                f"You MUST first present your execution plan to the user with the proposed changes, "
+                f"explain the expected outcome, and ask for explicit authorization ('dale' / 'sí' / 'procede') before executing."
+            )
+            return True, reason
+
+    return False, None
+
