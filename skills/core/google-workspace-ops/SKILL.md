@@ -1,38 +1,76 @@
 ---
 name: google-workspace-ops
-description: "Use when reading or writing Google Drive, Gmail or Sheets"
+description: >-
+  Operaciones en Google Workspace (Drive, Docs, Sheets, Gmail). Descarga y sincronización de assets, lectura de carpetas de clientes, creación de Docs y autenticación vía ActivePieces.
+tags: [google, drive, docs, sheets, activepieces, oauth, workspace, entregables]
 version: 2.0.0
-author: NeuralCrew
-tags: [google, gmail, drive, sheets, docs, oauth, workspace, api]
+author: NeuralCrew / Hermes Fleet
+---
+
+# Operaciones en Google Workspace (Drive, Docs, Sheets)
+
+Habilidad canónica para interactuar programáticamente con el ecosistema de Google Workspace de la empresa y de los clientes: inventariar y descargar assets de Drive, leer documentos de verificación (RUT, contratos, artes de campaña), generar documentos de texto vía API y operar mediante las credenciales gestionadas de ActivePieces.
 
 ---
 
-# Google Workspace Ops
+## Cuándo usar esta Skill (Triggers y Síntomas)
 
-## Propósito y Alcance
-Habilidad consolidada de clase que centraliza los flujos de:
-- `activepieces-google-access`
-- `gdrive-via-activepieces`
-- `gmail-mailbox-organization`
-- `gmail-smtp-app-password`
-- `google-docs-api`
-- `google-drive-access`
-- `google-drive-sheets-ops`
-- `google-workspace`
+Usa esta skill inmediatamente cuando se presente cualquiera de estas situaciones:
+- Peticiones del usuario: *"busca el archivo en Google Drive"*, *"descarga los artes de la carpeta de la campaña"*, *"sincroniza las imágenes de Drive al servidor"*, *"crea un Google Doc con este reporte"*, o *"conecta con la cuenta de Google mediante ActivePieces"*.
+- Descarga programática de insumos para guiones o piezas gráficas desde carpetas compartidas de clientes.
+- Automatización de reportes o documentos entregables hacia carpetas oficiales en Drive.
 
-- `activepieces-flows-ops`
+---
 
-## Arquitectura y Protocolos
-Esta skill opera como despacho unificado. El detalle procedural y gotchas específicos de cada caso se encuentran preservados en:
-`references/`
+## 1. Acceso a Google Drive mediante ActivePieces
 
-## Casos de Uso Disponibles
-- **activepieces-google-access**: Ver [references/activepieces-google-access.md](file:///root/hermes-agent-legacy-docker/skills/core/google-workspace-ops/references/activepieces-google-access.md)
-- **gdrive-via-activepieces**: Ver [references/gdrive-via-activepieces.md](file:///root/hermes-agent-legacy-docker/skills/core/google-workspace-ops/references/gdrive-via-activepieces.md)
-- **gmail-mailbox-organization**: Ver [references/gmail-mailbox-organization.md](file:///root/hermes-agent-legacy-docker/skills/core/google-workspace-ops/references/gmail-mailbox-organization.md)
-- **gmail-smtp-app-password**: Ver [references/gmail-smtp-app-password.md](file:///root/hermes-agent-legacy-docker/skills/core/google-workspace-ops/references/gmail-smtp-app-password.md)
-- **google-docs-api**: Ver [references/google-docs-api.md](file:///root/hermes-agent-legacy-docker/skills/core/google-workspace-ops/references/google-docs-api.md)
-- **google-drive-access**: Ver [references/google-drive-access.md](file:///root/hermes-agent-legacy-docker/skills/core/google-workspace-ops/references/google-drive-access.md)
-- **google-drive-sheets-ops**: Ver [references/google-drive-sheets-ops.md](file:///root/hermes-agent-legacy-docker/skills/core/google-workspace-ops/references/google-drive-sheets-ops.md)
-- **google-workspace**: Ver [references/google-workspace.md](file:///root/hermes-agent-legacy-docker/skills/core/google-workspace-ops/references/google-workspace.md)
-- **activepieces-flows-ops**: operar y reparar flows de ActivePieces: MCP, quitar o pausar pasos, reinyectar filas al Sheet y auditar la integridad — ver [references/activepieces-flows-ops.md](file:///root/hermes-agent-legacy-docker/skills/core/google-workspace-ops/references/activepieces-flows-ops.md)
+Para evitar flujos interactivos de OAuth por navegador, se aprovechan las conexiones ya autenticadas en la instancia local de **ActivePieces**:
+
+```bash
+# Consultar piezas y conexiones de Google en ActivePieces
+curl -s -H "Authorization: Bearer $ACTIVEPIECES_API_KEY" \
+  "http://localhost:3000/api/v1/app-connections" | jq '.data[] | select(.pieceName=="@activepieces/piece-google-drive")'
+```
+
+### Protocolo para Descargar Assets de Cliente
+1. Obtener el `folder_id` de la URL de Google Drive compartida por el cliente (`drive.google.com/drive/folders/<FOLDER_ID>`).
+2. Listar y mapear nombres de archivos y tipos MIME.
+3. Descargar los assets a la ruta de trabajo local del agente (`/opt/data/campaigns/<cliente>/assets/`) antes de procesarlos con herramientas multimedia (FFmpeg, PIL, Vision).
+
+---
+
+## 2. Generación y Edición de Google Docs vía API
+
+### El Gotcha Crítico del Índice de Párrafo en `docs().create()`
+Al crear un Google Doc con la API oficial:
+- `docs().create()` genera un documento con un único salto de línea (`\n`) vacío.
+- Si intentas insertar texto con `insertText` en el índice `1` o posterior sin verificar los límites del documento, la API arrojará `Invalid structure index`.
+
+### Regla para Inserción de Contenido
+1. Crear el documento vacío y obtener su `documentId`.
+2. Para insertar texto en un documento nuevo, el índice de inserción siempre debe ser `1`:
+```json
+{
+  "insertText": {
+    "location": { "index": 1 },
+    "text": "Título Principal del Documento\n"
+  }
+}
+```
+3. Para reconstruir o reemplazar un documento existente, primero consultar `docs.get()` para conocer el `endIndex` real del cuerpo antes de enviar `deleteContentRange`.
+
+---
+
+## 3. Manejo de Documentos Legales de Clientes
+
+Al auditar o procesar documentos de clientes (RUT, Cámaras de Comercio, Cédulas):
+1. **Conservación de metadatos**: Nunca renombrar archivos oficiales arbitrariamente; conservar la referencia al nombre original de Drive.
+2. **Descarga a sandbox seguro**: Los archivos se descargan en `/opt/data/compliance/docs/` y nunca se exponen en directorios web públicos sin autenticación.
+3. **Extracción**: Utilizar herramientas OCR o de visión multimodal para extraer las razones sociales, NITs y fechas de expedición sin suposiciones.
+
+---
+
+## Gotchas y Errores Críticos
+
+1. **Tokens expirados en ActivePieces**: Si la conexión de Google Drive arroja `401 Unauthorized`, el refresh token puede haber sido revocado por Google (política de 7 días en apps en modo Testing). Re-vincular desde el panel de ActivePieces.
+2. **Límites de tamaño en subidas**: Archivos mayores a 50MB (videos, renders finales) deben subirse mediante *Resumable Uploads* de la API de Drive o compartirse vía portal local Nginx si el timeout del webhook es menor a 60 segundos.

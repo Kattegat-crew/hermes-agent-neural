@@ -1,47 +1,90 @@
 ---
 name: brain-knowledge-ops
-description: "Use when working with the brain graph, memory or wiki"
+description: >-
+  Operaciones sobre la base de conocimiento y grafo del Brain. Consulta eficiente por graph.json, sincronización de notas en Obsidian/Markdown y mantenimiento de memoria.
+tags: [brain, memoria, knowledge, engram, graph, wiki, obsidian, roshi]
 version: 2.0.0
-author: NeuralCrew
-tags: [brain, memoria, knowledge, engram, graph, wiki, obsidian, vault]
+author: NeuralCrew / Hermes Fleet
+---
+
+# Operaciones sobre el Brain y Grafo de Conocimiento
+
+Habilidad canónica para consultar, estructurar y mantener la base de conocimiento empresarial acumulativa de la flota Hermes (`/opt/data/brain/`), navegando de forma eficiente a través de su grafo semántico (`graph.json`) en lugar de realizar barridos ciegos de cientos de archivos markdown.
 
 ---
 
-# Brain Knowledge Ops
+## Cuándo usar esta Skill (Triggers y Síntomas)
 
-## Propósito y Alcance
-Habilidad consolidada de clase que centraliza los flujos de:
-- `brain-graph-operations`
-- `brain-graph-ops`
-- `brain-knowledge-base`
-- `code-wiki`
-- `engram-memory-system`
-- `guardado-doble-memoria`
-- `hermes-memory-maintenance`
-- `knowledge-absorption`
-- `knowledge-consolidation`
-- `llm-wiki`
-- `mapa-de-carpetas`
-- `memory-architecture`
-- `obsidian`
-- `vault-access`
+Usa esta skill inmediatamente cuando se presente cualquiera de estas situaciones:
+- Peticiones del usuario: *"consulta el brain"*, *"qué sabemos sobre este cliente/campaña en el grafo"*, *"actualiza el índice del brain"*, *"el grafo de memoria no está actualizado"*, o *"busca en las notas de la empresa"*.
+- Búsqueda de relaciones entre entidades, decisiones pasadas, reglas de negocio o arquitectura sin saturar la ventana de contexto del agente.
+- Re-indexación periódica del directorio `/opt/data/brain/` mediante herramientas de grafos (Graphify / GGA).
 
-## Arquitectura y Protocolos
-Esta skill opera como despacho unificado. El detalle procedural y gotchas específicos de cada caso se encuentran preservados en:
-`references/`
+---
 
-## Casos de Uso Disponibles
-- **brain-graph-operations**: Ver [references/brain-graph-operations.md](file:///root/hermes-agent-legacy-docker/skills/core/brain-knowledge-ops/references/brain-graph-operations.md)
-- **brain-graph-ops**: Ver [references/brain-graph-ops.md](file:///root/hermes-agent-legacy-docker/skills/core/brain-knowledge-ops/references/brain-graph-ops.md)
-- **brain-knowledge-base**: Ver [references/brain-knowledge-base.md](file:///root/hermes-agent-legacy-docker/skills/core/brain-knowledge-ops/references/brain-knowledge-base.md)
-- **code-wiki**: Ver [references/code-wiki.md](file:///root/hermes-agent-legacy-docker/skills/core/brain-knowledge-ops/references/code-wiki.md)
-- **engram-memory-system**: Ver [references/engram-memory-system.md](file:///root/hermes-agent-legacy-docker/skills/core/brain-knowledge-ops/references/engram-memory-system.md)
-- **guardado-doble-memoria**: Ver [references/guardado-doble-memoria.md](file:///root/hermes-agent-legacy-docker/skills/core/brain-knowledge-ops/references/guardado-doble-memoria.md)
-- **hermes-memory-maintenance**: Ver [references/hermes-memory-maintenance.md](file:///root/hermes-agent-legacy-docker/skills/core/brain-knowledge-ops/references/hermes-memory-maintenance.md)
-- **knowledge-absorption**: Ver [references/knowledge-absorption.md](file:///root/hermes-agent-legacy-docker/skills/core/brain-knowledge-ops/references/knowledge-absorption.md)
-- **knowledge-consolidation**: Ver [references/knowledge-consolidation.md](file:///root/hermes-agent-legacy-docker/skills/core/brain-knowledge-ops/references/knowledge-consolidation.md)
-- **llm-wiki**: Ver [references/llm-wiki.md](file:///root/hermes-agent-legacy-docker/skills/core/brain-knowledge-ops/references/llm-wiki.md)
-- **mapa-de-carpetas**: Ver [references/mapa-de-carpetas.md](file:///root/hermes-agent-legacy-docker/skills/core/brain-knowledge-ops/references/mapa-de-carpetas.md)
-- **memory-architecture**: Ver [references/memory-architecture.md](file:///root/hermes-agent-legacy-docker/skills/core/brain-knowledge-ops/references/memory-architecture.md)
-- **obsidian**: Ver [references/obsidian.md](file:///root/hermes-agent-legacy-docker/skills/core/brain-knowledge-ops/references/obsidian.md)
-- **vault-access**: Ver [references/vault-access.md](file:///root/hermes-agent-legacy-docker/skills/core/brain-knowledge-ops/references/vault-access.md)
+## 1. Consulta Quirúrgica mediante el Grafo Semántico
+
+El directorio del brain almacena cientos de notas en Markdown. **Regla de oro: Nunca leer decenas de archivos `.md` de forma secuencial.** Eso colapsa la ventana de contexto y desperdicia tokens. La consulta debe hacerse sobre el grafo:
+
+```bash
+# 1. Ubicación del grafo persistente
+BRAIN_GRAPH="/opt/data/brain/graph.json"
+
+# 2. Consultar entidades y relaciones por palabra clave
+jq '.nodes[] | select(.id | test("golden|paradise|hermes"; "i"))' "$BRAIN_GRAPH"
+
+# 3. Consultar las conexiones de un nodo específico
+jq '.edges[] | select(.source=="cliente-golden" or .target=="cliente-golden")' "$BRAIN_GRAPH"
+```
+
+Una vez identificado el nodo exacto en el grafo, el agente lee **únicamente** la nota puntual que contiene la evidencia requerida.
+
+---
+
+## 2. Estructura de Notas en el Brain (Markdown Compuesto)
+
+Toda nueva nota añadida al brain debe respetar el formato estándar de enlaces bidireccionales tipo Obsidian:
+
+1. **Frontmatter canónico**:
+   ```yaml
+   ---
+   id: nombre-entidad
+   type: cliente | decision | arquitectura | campaña
+   tags: [etiquetas, clave]
+   updated_at: "2026-10-17"
+   ---
+   ```
+2. **Enlaces explícitos**: Usar `[[id-otra-nota]]` para declarar dependencias y relaciones.
+3. **Sección de Hechos Inmutables**: Datos verificados con fecha y fuente.
+4. **Historial de Decisiones**: Por qué se tomó cada determinación arquitectónica o comercial.
+
+---
+
+## 3. Mantenimiento y Re-indexación del Grafo
+
+Cuando se hayan agregado o modificado múltiples notas en `/opt/data/brain/`:
+
+```bash
+# Reconstruir el grafo de conocimiento
+python3 -c "
+import json, glob, os
+
+nodes = []
+edges = []
+for f in glob.glob('/opt/data/brain/**/*.md', recursive=True):
+    name = os.path.basename(f).replace('.md', '')
+    nodes.append({'id': name, 'path': f})
+
+# Guardar estado actualizado
+with open('/opt/data/brain/graph.json', 'w') as out:
+    json.dump({'nodes': nodes, 'edges': edges}, out, indent=2)
+print('Grafo de notas sincronizado exitosamente.')
+"
+```
+
+---
+
+## Gotchas y Errores Críticos
+
+1. **Desincronización de enlaces rotos**: Si renombras una nota en el brain sin actualizar las referencias `[[nota]]` en los demás archivos, los analizadores de grafos generarán nodos huérfanos.
+2. **Duplicación de memorias**: La información táctica y de corto plazo vive en las sesiones de Hermes o en Engram; el Brain (`/opt/data/brain/`) se reserva exclusivamente para conocimiento compuesto a largo plazo (reglas de negocio, clientes, credenciales maestras y arquitectura).
