@@ -1,12 +1,9 @@
 ---
 name: hermes-desktop-ssh-backend
-description: "Use when Hermes Desktop SSH backend fails or shows no data."
-  Use when Hermes Desktop connects to a VPS backend via SSH (connection.json
-  mode "ssh") and fails with "remote install does not support
-  --ssh-session-token-file", or connects but shows no sessions/bots/profiles,
-  or reports "le falta inferencia". Covers the SSH-stable workflow end to end.
-category: devops
+description: >-
+  Use when Hermes Desktop SSH backend fails or shows no data. Use when Hermes Desktop connects to a VPS backend via SSH (connection.json mode "ssh") and fails with "remote install does not support --ssh-session-token-file", or connects but shows no sessions/bots/profiles, or reports "le falta inferencia". Covers the SSH-stable workflow end to end.
 tags: [desktop, ssh, vps, hermes-home, perfiles, inferencia, diagnostico]
+category: devops
 version: 1.0.0
 author: Hermes
 triggers:
@@ -17,8 +14,7 @@ triggers:
   - ssh-session-token-file
   - remote Hermes install does not support
   - no aparecen bots
-  - ssh no me deja
----
+  - ssh no me deja---
 
 # Hermes Desktop ↔ VPS por SSH (workflow estable)
 

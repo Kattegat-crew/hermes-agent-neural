@@ -1,17 +1,10 @@
 ---
 name: vps-ops
-description: "Use when running ops on the VPS via SSH (opencode, orca)."
+description: >-
+  Use when running ops on the VPS via SSH (opencode, orca). Unified VPS operations: run OpenCode, Agy, manage Orca worktrees, access host files, check services. All via SSH from Hermes container. Triggers: "vps", "opencode", "agy", "orca", "worktree", "ejecuta en el vps", "corre en el server", "host", "servidor". author: opencode version: "2.0.0" replaces: [vps-host-access, vps-opencode-runner, vps-agy-runner, vps-orca-manager]
 tags: [vps, ssh, opencode, orca, worktree, servidor, host, devops]
-  Unified VPS operations: run OpenCode, Agy, manage Orca worktrees, access host 
-  files, check services. All via SSH from Hermes container. Triggers: "vps", 
-  "opencode", "agy", "orca", "worktree", "ejecuta en el vps", "corre en el server",
-  "host", "servidor".
 category: devops
-metadata:
-  author: opencode
-  version: "2.0.0"
-  replaces: [vps-host-access, vps-opencode-runner, vps-agy-runner, vps-orca-manager]
----
+metadata:---
 
 # VPS Operations — Unified Skill
 

@@ -1,22 +1,13 @@
 ---
 name: document-reader
-description: "Use when parsing any document file to extract its text."
+description: >-
+  Use when parsing any document file to extract its text. Universal document reader that parses .docx, .xlsx, .pdf, .pptx, .odt, .ods, .odp, .rtf, .txt, .csv, .md, .html, .epub, .eml, and image files (via OCR). Use when the user shares a document file, asks to read/extract content from a file, wants to convert between document formats, or needs to summarize or extract tables from any document type. hermes: tags: [Documents, PDF, Word, Excel, OCR, Parsing, Reading] homepage: https://github.com/pymupdf commands: [python3] python_packages: system_packages:
 tags: [documentos, documents, pdf, word, excel, ocr, parsing]
-  Universal document reader that parses .docx, .xlsx, .pdf, .pptx, .odt, .ods,
-  .odp, .rtf, .txt, .csv, .md, .html, .epub, .eml, and image files (via OCR).
-  Use when the user shares a document file, asks to read/extract content from
-  a file, wants to convert between document formats, or needs to summarize
-  or extract tables from any document type.
 version: 2.0.0
 author: hermes
 license: MIT
 metadata:
-  hermes:
-    tags: [Documents, PDF, Word, Excel, OCR, Parsing, Reading]
-    homepage: https://github.com/pymupdf
 prerequisites:
-  commands: [python3]
-  python_packages:
     - python-docx
     - openpyxl
     - pandas
@@ -27,9 +18,7 @@ prerequisites:
     - Pillow
     - pytesseract
     - opencv-python
-  system_packages:
     - tesseract-ocr (with lang=spa for Spanish support)
-
 ---
 
 # Document Reader

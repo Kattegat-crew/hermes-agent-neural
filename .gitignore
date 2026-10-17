@@ -354,3 +354,6 @@ docker-compose.nobind.yml
 /pm/.lock.json.lock
 
 apps/desktop/.dist-build*
+
+# CodeGraph AST and symbols SQLite index
+.codegraph/

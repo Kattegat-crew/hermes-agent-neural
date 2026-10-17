@@ -1,19 +1,16 @@
 ---
 name: google-drive-access
-description: "Use when accessing or downloading Google Drive files."
+description: >-
+  Use when accessing or downloading Google Drive files. Usar cuando pida acceder a archivos o links de Google Drive. hermes: tags: [google, drive, api, oauth, download, search]
 tags: [google, drive, api, oauth, download, search]
-  Usar cuando pida acceder a archivos o links de Google Drive.
 version: 1.0.0
 author: hermes
 license: MIT
 metadata:
-  hermes:
-    tags: [google, drive, api, oauth, download, search]
 triggers:
   - archivos de Drive / link de Google Drive / carpeta de Drive
   - buscar documento de cliente en Drive (RUT, cámara de comercio, contratos)
-  - descargar PDF/DOCX/XLSX de Drive para leer su contenido
----
+  - descargar PDF/DOCX/XLSX de Drive para leer su contenido---
 
 # Google Drive — Búsqueda, listado y descarga vía API
 

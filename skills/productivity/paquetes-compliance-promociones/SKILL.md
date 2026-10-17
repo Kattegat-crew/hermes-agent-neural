@@ -1,19 +1,16 @@
 ---
 name: paquetes-compliance-promociones
-description: "Use when one campaign needs a legal pack per company."
+description: >-
+  Use when one campaign needs a legal pack per company. T&C multi-empresa: un documento legal por organizador. hermes: tags: [legal, compliance, docx, promociones, multi-empresa, casinos, colombia]
 tags: [legal, compliance, docx, promociones, multiempresa, casinos, colombia]
-  T&C multi-empresa: un documento legal por organizador.
 version: 1.0.0
 author: hermes
 metadata:
-  hermes:
-    tags: [legal, compliance, docx, promociones, multi-empresa, casinos, colombia]
 triggers:
   - T&C / términos y condiciones de una promoción que une a DOS o más empresas (cada una con su propio documento)
   - "generar documento legal por empresa / no pueden compartir documentos"
   - verificar que un .docx no tenga huecos ([CORCHETE], PENDIENTE) ni contenido contaminado de otro cliente
-  - el operador decide NO tramitar autorización de la promoción (posición: es marketing)
----
+  - el operador decide NO tramitar autorización de la promoción (posición: es marketing)---
 
 # Paquetes de compliance para promociones de casino multi-empresa
 

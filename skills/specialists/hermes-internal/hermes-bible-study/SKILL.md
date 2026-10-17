@@ -1,19 +1,13 @@
 ---
 name: hermes-bible-study
-description: "Use when asking for community Hermes knowledge."
+description: >-
+  Use when asking for community Hermes knowledge. Use when the user asks for community Hermes Agent knowledge: hidden features, real-world workflows, SOUL.md patterns, delegation/Kanban/cron patterns, or examples of how people use Hermes. Complements hermes-agent; official docs remain source of truth for commands and setup. hermes: tags: [hermes, community, workflows, soul-md, delegation, kanban, cron] related_skills: [hermes-agent]
 tags: [hermes, comunidad, workflows, soul-md, patrones, kanban, cron, bible]
-  Use when the user asks for community Hermes Agent knowledge: hidden features,
-  real-world workflows, SOUL.md patterns, delegation/Kanban/cron patterns, or
-  examples of how people use Hermes. Complements hermes-agent; official docs
-  remain source of truth for commands and setup.
 version: 1.1.0
 author: DeployFaith
 license: MIT
 platforms: [linux, macos, windows]
 metadata:
-  hermes:
-    tags: [hermes, community, workflows, soul-md, delegation, kanban, cron]
-    related_skills: [hermes-agent]
 triggers:
   - hermes bible
   - hermes community
@@ -30,8 +24,7 @@ triggers:
   - hermes kanban
   - hermes delegation patterns
   - hermes overnight
-  - hermes autonomous
----
+  - hermes autonomous---
 
 # The Hermes Bible — Community Knowledge Base
 

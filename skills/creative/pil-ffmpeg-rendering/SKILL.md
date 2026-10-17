@@ -1,15 +1,12 @@
 ---
 name: pil-ffmpeg-rendering
-description: "Use when creating video clips with PIL + ffmpeg."
+description: >-
+  Use when creating video clips with PIL + ffmpeg. Use when creating video clips with PIL + ffmpeg. hermes: tags: [video, animation, ffmpeg, PIL, numpy, rendering, motion, keying]
 tags: [video, ffmpeg, pil, animacion, rendering, mp4, motion]
-  Use when creating video clips with PIL + ffmpeg.
 version: 1.0.0
 author: hermes
 license: MIT
-metadata:
-  hermes:
-    tags: [video, animation, ffmpeg, PIL, numpy, rendering, motion, keying]
----
+metadata:---
 
 # PIL + ffmpeg Animation Rendering
 

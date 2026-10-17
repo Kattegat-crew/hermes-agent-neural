@@ -1,8 +1,8 @@
 ---
 name: colombia-promociones-legales
-description: "Use when drafting Colombia promo legal packs."
+description: >-
+  Use when drafting Colombia promo legal packs. Colombian promo legal docs: T&C, datos, juego responsable. author: Ragnar — NeuralCrew Labs / Digital Expressions created: 2026-08-18 jurisdiction: Colombia
 tags: [colombia, legal, terminos, datos-personales, coljuegos, juego-responsable]
-  Colombian promo legal docs: T&C, datos, juego responsable.
 category: legal
 triggers:
   - términos y condiciones/T&C de promoción/ruleta/premio/bono/sorteo
@@ -10,11 +10,7 @@ triggers:
   - juego promocional/juego de azar/Coljuegos/casino
   - juego responsable/Ley 1581 de 2012/Ley 2300 de 2023
   - reporte de compliance/promoción digital con azar
-metadata:
-  author: Ragnar — NeuralCrew Labs / Digital Expressions
-  created: 2026-08-18
-  jurisdiction: Colombia
----
+metadata:---
 
 # Promociones y Marketing — Documentos Legales en Colombia
 

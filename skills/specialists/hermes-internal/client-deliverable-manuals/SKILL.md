@@ -1,15 +1,12 @@
 ---
 name: client-deliverable-manuals
-description: "Use when writing client operational manuals or guides."
+description: >-
+  Use when writing client operational manuals or guides. Use when creating client operational manuals or guides. hermes: tags: [deliverables, manuals, docx, pdf, neuralcrew, client-docs]
 tags: [manuales, entregables, docx, pdf, clientes, neuralcrew, casino, operativo]
-  Use when creating client operational manuals or guides.
 version: 1.0.0
 author: hermes
 license: MIT
-metadata:
-  hermes:
-    tags: [deliverables, manuals, docx, pdf, neuralcrew, client-docs]
----
+metadata:---
 
 # Manuales y entregables operativos para clientes (NeuralCrew Labs)
 

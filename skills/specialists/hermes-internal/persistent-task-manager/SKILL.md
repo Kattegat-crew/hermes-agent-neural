@@ -1,15 +1,11 @@
 ---
 name: persistent-task-manager
-description: "Use when tracking tasks across sessions (Brain Wiki/Notion)."
-  Manage persistent task tracking across sessions. Maintains Brain Wiki tasks file
-  and syncs with Notion DB. Loads tasks at session start, updates on every task change.
+description: >-
+  Use when tracking tasks across sessions (Brain Wiki/Notion). Manage persistent task tracking across sessions. Maintains Brain Wiki tasks file and syncs with Notion DB. Loads tasks at session start, updates on every task change. hermes: tags: [tasks, tracking, persistence, notion, brain-wiki]
 version: 1.0.0
 author: Ragnar
 license: MIT
-metadata:
-  hermes:
-    tags: [tasks, tracking, persistence, notion, brain-wiki]
----
+metadata:---
 
 # Persistent Task Manager
 

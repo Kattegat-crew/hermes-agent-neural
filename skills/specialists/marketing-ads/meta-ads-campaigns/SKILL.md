@@ -276,6 +276,15 @@ Los clips de evento vienen de 50 a 260s (y a veces 368x496 de resolución). Para
 5. Verificar el **frame al 1s** del corte con vision_analyze — suele capturar el ganador con cartón + billetes. El frame del medio (50%) a veces es máquinas/vacío; no te fíes de él, revisa inicio y fin.
 6. Subir a `/opt/reels/assets/` y publicar. El upscale de low-res tarda → dar a ffmpeg timeout 200-400s.
 
+## ads_optimizer (repo m-c-g) — vía canónica de ejecución (16-oct)
+El módulo `modules/ads_optimizer` del repo m-c-g implementa el loop de 9 etapas (brief → hipótesis → manifiesto → variantes → validación → ejecución → resultados → calidad de leads → siguiente experimento) con gobernanza: `dry_run` por defecto, creación solo en PAUSED, spend gate sellado por autorización de chat, outbox idempotente. Los manifests de ejemplo (examples/{golden,lucky}_halloween_manifest.json) traen datos reales: cuentas act_1581421999562187 (Golden) / act_1525564931963110 (Lucky), composio metaads_tactic-vison / metaads_moly-ponent, 7 sedes Golden con geo keys y veto Funza.
+
+### Destinos de conversión verificados (NO asumir dominios)
+- **Golden:** `https://goldengame.com.co/eventos` (HTTP 200; la ruta /eventos/halloween-2026 NO existe como canónica — el Admin definió /eventos).
+- **Lucky:** `https://paradiseclubcasinos.com.co/eventos` — **`luckybrothers.com.co` NO RESUELVE (NXDOMAIN)**; aunque aparezca en docs/manifests, nunca usar ese dominio. La página /eventos de Paradise es venue-safe verificada (solo Halloween/sorteo/eventos; el contenido de tragamonedas/efectivo vive en el home, que NO debe ser destino del ad).
+- **Pitfall:** los `pixel_id` de los manifests de ejemplo son placeholders (114422334455667 / 225533445566778) — conseguir los Pixel IDs reales de cada cuenta antes de ejecutar.
+- Verificar SIEMPRE el destino del ad en vivo (`curl` + grep de términos de juego online) antes de validar el manifest: el bloqueo Meta es el DESTINO, no el copy.
+
 ## Referencias
 - `references/metaads-2026-09-07.md` — word_ids/conexiones, Ad Accounts Golden/Paradise, insights por campaña, hallazgo de pixel (0 en todas las webs), plan Bingo Millonario.
 - `references/capi-golden-deployment-2026-09-07.md` — detalles del despliegue CAPI + pixel Golden, pruebas end-to-end, Stape por qué NO usarlo.

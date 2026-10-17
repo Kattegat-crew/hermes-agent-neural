@@ -1,19 +1,16 @@
 ---
 name: specification-handoff
-description: "Use when handing a spec plus prompt to an external editor"
+description: >-
+  Use when handing a spec plus prompt to an external editor Prepara SPEC/PROMPT para editor de código externo (AGY). hermes: tags: [handoff, specification, code-editor, prompt, repos, entregables]
 tags: [spec, prompt, handoff, entrega, repo, agy, especificacion]
-  Prepara SPEC/PROMPT para editor de código externo (AGY).
 version: 1.0.0
 author: hermes
 license: MIT
 metadata:
-  hermes:
-    tags: [handoff, specification, code-editor, prompt, repos, entregables]
 triggers:
   - "el usuario pide 'prepara un prompt para un editor de código' / 'implementa cambio en el repo' sin acceso de escritura"
   - "repo destino montado read-only (/opt/repos/*) y el trabajo lo ejecuta otro agente"
-  - "hay que entregar una especificación estructurada + instrucciones de implementación a AGY/OpenCode/Claude"
----
+  - "hay que entregar una especificación estructurada + instrucciones de implementación a AGY/OpenCode/Claude"---
 
 # Specification Handoff — SPEC + PROMPT para editores externos
 

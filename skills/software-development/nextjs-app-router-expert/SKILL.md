@@ -1,11 +1,10 @@
 ---
 name: nextjs-app-router-expert
-description: "Use when building Next.js App Router apps"
+description: >-
+  Use when building Next.js App Router apps Routes, and caching strategies.'
 tags: [nextjs, app-router, react, server-actions, streaming, caching, frontend]
-  Routes, and caching strategies.'
 license: MIT
-compatibility: opencode
----
+compatibility: opencode---
 
 
 # Next.js App Router Expert

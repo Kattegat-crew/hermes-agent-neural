@@ -1,17 +1,10 @@
 ---
 name: web-serving-diagnosis
-description: "Use when a VPS web page stops loading."
+description: >-
+  Use when a VPS web page stops loading. Diagnose VPS web page access issues. author: ragnar version: "1.0.0" license: MIT hermes: tags: [web, nginx, ssl, https, http, vps, diagnosis] related_skills: [vps-ops, nginx-certbot-reverse-proxy, reel-gallery-deploy]
 tags: [web, nginx, https, vps, diagnostico, ssl]
-  Diagnose VPS web page access issues.
 category: devops
-metadata:
-  author: ragnar
-  version: "1.0.0"
-  license: MIT
-  hermes:
-    tags: [web, nginx, ssl, https, http, vps, diagnosis]
-    related_skills: [vps-ops, nginx-certbot-reverse-proxy, reel-gallery-deploy]
----
+metadata:---
 
 # Web Serving Diagnosis — VPS
 

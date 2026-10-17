@@ -1,6 +1,6 @@
 ---
 name: vault-access
-description: "Use when you need an API key, token or password"
+description: "Access secrets: read .env first (fast), fallback to Vaultwarden if missing. Use when you need an API key, token, password, or any secret."
 triggers:
   - need api key
   - need token
@@ -14,24 +14,24 @@ triggers:
   - donde esta el
   - busque el
   - access key
-tags: [vaultwarden, secretos, credenciales, api-key, tokens, env, seguridad, vault]
-
 ---
 
 # Vault Access — Guía para Agentes
 
-**REGLA #1**: Los secretos viven en Vaultwarden (`vault.neuralcrewlabs.com`). Nunca buscar en archivos .env directamente.
+**REGLA #1**: Buscar secretos en este orden (fallback):
+1. **Primario: `.env`** — rápido, cubre el 90% de los casos. Cada servicio tiene su archivo `.env` sincronizado desde el vault cada 30 min.
+2. **Fallback: Vaultwarden** — cuando el `.env` no tiene la clave, o el valor está vacío. Usar `vw` CLI (recomendado) o `bw` CLI.
 
-**REGLA #2**: Los .env se regeneran desde el vault cada 30 minutos (timer systemd). Si un valor cambió en el vault, el .env se actualiza solo. **Comprobar SIEMPRE** con `tail -20 /var/log/vault-sync.log`: la última línea debe ser `SUMMARY ok=N skipped=0 failed=0`. Un run caído NO se nota por sí solo (pasó del 04-sep al 15-sep-2026 sin que nadie lo viera).
+**REGLA #2**: Los `.env` se regeneran desde el vault cada 30 minutos (timer systemd). El vault es la fuente de verdad; los `.env` son la caché local. Si un valor cambió en el vault, el `.env` se actualiza solo.
 
 **REGLA #3**: Nunca imprimir valores de secretos a transcripts, logs, o reportes.
 
 ## Cómo leer un secreto
 
-### Opción A — Desde el .env (más rápido, para el 90% de los casos)
+### Paso 1 — Buscar en el `.env` (primario)
 
 ```bash
-# Cada servicio tiene su .env regenerado desde el vault
+# Cada servicio tiene su .env sincronizado desde el vault
 # Ejemplo: leer DATABASE_URL de NCA
 source /neuralcrew_agent/.env
 echo $DATABASE_URL
@@ -43,8 +43,6 @@ echo $PG_DATABASE_PASSWORD
 
 **Archivos .env por servicio:**
 
-Los primeros son de **DEV** (host local). Los marcados *PROD* viven en el servidor PROD: desde DEV solo se leen por SSH.
-
 | Servicio | Archivo |
 |----------|---------|
 | NCA (nca-api) | `/neuralcrew_agent/.env` |
@@ -53,7 +51,7 @@ Los primeros son de **DEV** (host local). Los marcados *PROD* viven en el servid
 | ActivePieces (local) | `/root/activepieces/.env` |
 | Coolify | `/data/coolify/source/.env` |
 | Cloudflare | `/root/.config/cloudflare/credentials.env` |
-| Reel Worker | `/root/marketing-campaign-generator/.env` |
+| Reel Worker | `/root/video-ai-generator/.env` |
 | ActivePieces (prod) | `/opt/docker/activepieces/.env` |
 | Formbricks (prod) | `/opt/docker/formbricks/.secrets.env` |
 | Langfuse (prod) | `/opt/docker/langfuse/.secrets.env` |
@@ -62,9 +60,15 @@ Los primeros son de **DEV** (host local). Los marcados *PROD* viven en el servid
 | Paperless (prod) | `/opt/paperless/.env` |
 | PocketID (prod) | `/opt/pocket-id/.env` |
 | Webhook Gateway (prod) | `/opt/docker/webhook-gateway/.env` |
+| Webhook Paradise (prod) | `/opt/docker/webhook-gateway/.env.paradise` |
+| Webhook Redemptions (prod) | `/opt/docker/webhook-gateway/.env.redemptions` |
 | Hermes (prod) | `/opt/hermes/.env` |
 
-### Opción B — Vía vw CLI (RECOMENDADO para agentes y scripts)
+**Si la clave no está en el `.env` o el valor está vacío → Paso 2.**
+
+### Paso 2 — Buscar en el vault (fallback)
+
+#### Opción A — `vw` CLI (recomendado)
 
 El comando `vw` está instalado en el PATH del sistema (`/usr/local/bin/vw`). Gestiona autenticación, sesión y caché en memoria automáticamente sin leaks.
 
@@ -84,21 +88,23 @@ vw list "Terceros"
 vw list "Hermes"
 ```
 
-### Opción C — Desde el vault vía bw CLI nativo (fallback)
+#### Opción B — `bw` CLI nativo (alternativa)
 
 ```bash
-# Setup (una vez por sesión)
-set -a; . /root/.bw-bot.env; set +a   # la contrasena vive SOLO en /root/.bw-bot.env (root 0600). NUNCA incrustarla aqui.
-# OJO: `grep -oP '^BW_PASSWORD=\K.*'` devuelve el valor CON comillas y rompe `--passwordenv`; usar source.
+# Setup (una vez por sesión) — NO hardcodear passwords, usar el bot env
+set -a; . /root/.bw-bot.env; set +a
 bw config server https://vault.neuralcrewlabs.com 2>/dev/null
-bw login agents@neuralcrewlabs.com --passwordenv BW_PASSWORD 2>&1 | tail -1
-SESSION=$(bw unlock --passwordenv BW_PASSWORD --raw)
+bw logout 2>/dev/null || true
+SESSION=$(bw login agents@neuralcrewlabs.com --passwordenv BW_PASSWORD --raw 2>/dev/null)
 
 # Buscar un item por nombre
 bw list items --search "Formbricks" --session "$SESSION"
 
 # Obtener un item completo
 bw get item <item-id> --session "$SESSION"
+
+# Al terminar
+bw logout --session "$SESSION" 2>/dev/null
 ```
 
 ## Colecciones en el vault
@@ -145,8 +151,7 @@ NeuralCrew Labs/
 
 ```bash
 # 1. Login al vault
-set -a; . /root/.bw-bot.env; set +a   # la contrasena vive SOLO en /root/.bw-bot.env (root 0600). NUNCA incrustarla aqui.
-# OJO: `grep -oP '^BW_PASSWORD=\K.*'` devuelve el valor CON comillas y rompe `--passwordenv`; usar source.
+set -a; . /root/.bw-bot.env; set +a
 bw config server https://vault.neuralcrewlabs.com 2>/dev/null
 bw login agents@neuralcrewlabs.com --passwordenv BW_PASSWORD 2>&1 | tail -1
 SESSION=$(bw unlock --passwordenv BW_PASSWORD --raw)
@@ -243,10 +248,8 @@ python3 /opt/vault/timer/sync-env.py "$SESSION"
   2. Sync de items
   3. Python `sync-env.py` lee el mapping y actualiza cada .env
   4. Reinicia el servicio afectado (si se configuró)
-- Logs: `/var/log/vault-sync.log` (última línea = `SUMMARY ok= skipped= failed=`)
+- Logs: `/var/log/vault-sync.log`
 - Mapping: `/opt/vault/timer/vault-to-env-map.json`
-- Un target admite `"mode"`, `"restart"` y `"owner"` (usuario para chown; p.ej. `"owner": "hermes"` cuando el .env lo lee un servicio no-root)
-- **Resiliencia (15-sep-2026)**: si el directorio padre de un target no existe, el script lo salta con WARNING en vez de abortar el run completo. Un proyecto borrado ya no puede tumbar el sync de los demás.
 
 ## Errores comunes
 
@@ -255,6 +258,4 @@ python3 /opt/vault/timer/sync-env.py "$SESSION"
 | "Item not found" | Nombre no coincide exactamente | Buscar con `bw list items --search` |
 | "Session expired" | Token de bw venció | Re-hacer unlock |
 | .env no se actualiza | Timer no corre | `systemctl status vault-sync.timer` |
-| Run falla y NINGÚN .env de la cola se actualiza | Un target con directorio padre inexistente abortaba el script (outage 04→15-sep-2026) | Arreglado: `sync-env.py` salta ese target con WARNING y sigue (verificar `skipped=N` en el SUMMARY) |
-| `bw login --passwordenv` falla | El valor se leyó con `grep -oP` (incluye comillas) | Cargar con `set -a; . /root/.bw-bot.env; set +a` |
 | Secret wrong value | Vault no sincronizado | `bw sync --session $SESSION` |

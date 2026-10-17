@@ -1,19 +1,16 @@
 ---
 name: manual-operativo-promociones
-description: "Use when writing casino staff operating manuals."
+description: >-
+  Use when writing casino staff operating manuals. Manual operativo de casino para cajeras y personal. hermes: tags: [manual, operativo, cajeras, casino, promociones, bingo, redes-sociales, deliverable]
 tags: [manual, operativo, casino, cajeras, promociones, docx, redes]
-  Manual operativo de casino para cajeras y personal.
 version: 1.0.0
 author: hermes
 license: MIT
 metadata:
-  hermes:
-    tags: [manual, operativo, cajeras, casino, promociones, bingo, redes-sociales, deliverable]
 triggers:
   - manual para cajeras o personal de local de casino
   - promocion presencial (bingo, ruleta, sorteos) que necesita instrucciones operativas por local
-  - manual a partir de terminos y condiciones de una promocion de casino
----
+  - manual a partir de terminos y condiciones de una promocion de casino---
 
 # Manual operativo de promociones (personal de local / cajeras)
 

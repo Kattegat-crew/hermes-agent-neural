@@ -1,8 +1,8 @@
 ---
 name: colombia-contratos-empresa
-description: "Use when drafting or reviewing Colombia contracts."
+description: >-
+  Use when drafting or reviewing Colombia contracts. Contratos y constitución de empresa en Colombia. author: Ragnar — Nexa Labs / Digital Expressions created: 2026-08-11 last_updated: 2026-08-11 jurisdiction: Colombia
 tags: [colombia, contratos, sas, honorarios, dian, camara-comercio, legal]
-  Contratos y constitución de empresa en Colombia.
 category: legal
 triggers:
   - contrato/contrato de prestación de servicios/contrato de servicios profesionales
@@ -11,12 +11,7 @@ triggers:
   - honorarios/facturación Colombia/RUT/DIAN
   - sociedad/acciones simplificada/Cámara de Comercio
   - "cómo facturar en Colombia/registro mercantil"
-metadata:
-  author: Ragnar — Nexa Labs / Digital Expressions
-  created: 2026-08-11
-  last_updated: 2026-08-11
-  jurisdiction: Colombia
----
+metadata:---
 
 # Contratos y Constitución de Empresa en Colombia
 

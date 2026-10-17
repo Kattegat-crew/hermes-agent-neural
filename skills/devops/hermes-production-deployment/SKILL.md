@@ -1,11 +1,8 @@
 ---
 name: hermes-production-deployment
-description: "Use when planning a multi-client Hermes deployment."
+description: >-
+  Use when planning a multi-client Hermes deployment. Production deployment of Hermes agents for multiple clients. Includes: full VPS setup plan with dependency mapping, Neural-Brain (Gentle AI + Engram + GGA), Tailscale network topology, DNS architecture, resource limits per container, and day-by-day deployment timeline.
 tags: [hermes, deployment, multitenant, vps, perfiles, neural-brain]
-  Production deployment of Hermes agents for multiple clients.
-  Includes: full VPS setup plan with dependency mapping, Neural-Brain
-  (Gentle AI + Engram + GGA), Tailscale network topology, DNS architecture,
-  resource limits per container, and day-by-day deployment timeline.
 version: 1.1.0
 author: Ragnar
 triggers:
@@ -14,8 +11,7 @@ triggers:
   - infra: coolify / langfuse / activepieces / observabilidad / monitoreo
   - multi-agente: varios agentes / perfiles / profiles
   - vps: nuevo servidor / VPS / servidor nuevo / plan de despliegue / deployment plan
-  - infra-estructura: arquitectura completa / stack completo / recursos por contenedor
----
+  - infra-estructura: arquitectura completa / stack completo / recursos por contenedor---
 
 # Hermes Production Deployment — Agentes en Producción
 

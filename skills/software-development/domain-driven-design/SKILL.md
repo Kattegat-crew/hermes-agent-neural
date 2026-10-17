@@ -1,11 +1,10 @@
 ---
 name: domain-driven-design
-description: "Use when modeling complex domain logic with DDD"
+description: >-
+  Use when modeling complex domain logic with DDD Value Objects, and Ubiquitous Language.'
 tags: [ddd, domain-driven-design, bounded-context, aggregates, value-objects, arquitectura, modelado]
-  Value Objects, and Ubiquitous Language.'
 license: MIT
-compatibility: opencode
----
+compatibility: opencode---
 
 
 # Domain-Driven Design (DDD)

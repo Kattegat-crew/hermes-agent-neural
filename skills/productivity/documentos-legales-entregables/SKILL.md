@@ -1,19 +1,16 @@
 ---
 name: documentos-legales-entregables
-description: "Use when producing complete legal deliverables as .docx."
+description: >-
+  Use when producing complete legal deliverables as .docx. Entregables legales: verificar papeles, sin huecos, .docx. hermes: tags: [legal, compliance, entregables, docx, cliente, verificacion, placeholders, documentos]
 tags: [legal, compliance, entregables, docx, verificacion]
-  Entregables legales: verificar papeles, sin huecos, .docx.
 version: 1.0.0
 author: hermes
 metadata:
-  hermes:
-    tags: [legal, compliance, entregables, docx, cliente, verificacion, placeholders, documentos]
 triggers:
   - "mejora/revisa este documento legal con los datos que tenemos / no dejes campos por llenar"
   - "T&C, política de datos, aviso de privacidad u otro entregable legal de un cliente (casino, promoción, contrato)"
   - "ocultar/omitir/spacios vacíos/PENDIENTE/[CORCHETES] en un documento para entregar"
-  - "generar un .docx profesional con portada, índice y tablas para un cliente"
----
+  - "generar un .docx profesional con portada, índice y tablas para un cliente"---
 
 # Producción de documentos legales/compliance entregables para clientes
 

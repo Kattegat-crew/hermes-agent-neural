@@ -1,18 +1,12 @@
 ---
 name: system-onboarding
-description: "Use when onboarding a new AI agent environment"
+description: >-
+  Use when onboarding a new AI agent environment Process for onboarding Ragnar (the AI orchestrator) into a new environment. Covers identity setup, tool installation, credential configuration, ROSTER definition, and initial project setup. Use when setting up the AI agent for a new company or project. hermes: tags: [onboarding, setup, configuration, identity, tools]
 tags: [onboarding, setup, bootstrap, credenciales, pip, gh-cli, ambiente]
-  Process for onboarding Ragnar (the AI orchestrator) into a new environment.
-  Covers identity setup, tool installation, credential configuration, ROSTER
-  definition, and initial project setup. Use when setting up the AI agent
-  for a new company or project.
 version: 1.0.0
 author: dominus
 license: MIT
-metadata:
-  hermes:
-    tags: [onboarding, setup, configuration, identity, tools]
----
+metadata:---
 
 # System Onboarding
 

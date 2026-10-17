@@ -1,17 +1,12 @@
 ---
 name: discord-reporter
-description: "Use when sending a report or notice to Discord on request."
+description: >-
+  Use when sending a report or notice to Discord on request. Send status reports, summaries, and notifications to Discord channels. Use when the user wants to send a report, update, or message to a Discord channel or specific user. Triggered on demand — not automatic. hermes: tags: [discord, messaging, reporting, notifications]
 tags: [discord, reportes, notificaciones, mensajeria]
-  Send status reports, summaries, and notifications to Discord channels.
-  Use when the user wants to send a report, update, or message to a Discord
-  channel or specific user. Triggered on demand — not automatic.
 version: 1.0.0
 author: Ragnar
 license: MIT
-metadata:
-  hermes:
-    tags: [discord, messaging, reporting, notifications]
----
+metadata:---
 
 # Discord Reporter
 
