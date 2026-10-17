@@ -81,4 +81,4 @@
 
 ## Progress & Next Step
 
-F1 inventory and review are accepted, with profile counts sourced from the explorer handoff rather than reviewer enumeration. Initial documentation work-unit: `d1f34cba59` (`docs(observability): define phased Langfuse fleet plan`). Review-correction work-unit is pending commit; do not amend the initial commit. F2.1 read-only discovery may proceed. Keep F2.2 implementation gated until the DEV staging owner, exact change surface, credential injection, pins, rollback, and explicit authorization are resolved.
+F1 inventory and review are accepted, with profile counts sourced from the explorer handoff rather than reviewer enumeration. Initial documentation work-unit: `d1f34cba59` (`docs(observability): define phased Langfuse fleet plan`). Review corrections were committed as `27b2e43a51` (`docs(observability): clarify phase-specific canary gates`); the initial commit was not amended. F2.1 read-only discovery may proceed. Keep F2.2 implementation gated until the DEV staging owner, exact change surface, credential injection, pins, rollback, and explicit authorization are resolved.
