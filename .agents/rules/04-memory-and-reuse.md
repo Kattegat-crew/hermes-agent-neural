@@ -17,6 +17,11 @@ Before proposing any code modification or running mutating commands, execute the
    - Locate the relevant reusable modules before planning implementation.
 
 ---
+3. **Scan & Consume Project Skills (`.skills/` / `.agents/skills/`)**:
+   - Inspect installed skills to load conventions, patterns, and testing standards before touching code.
+   - For fleet or system operations, invoke `skill_route` on Hermes or consult `/opt/hermes-agent/skills/`.
+
+---
 
 ## 2. Code Reuse & Anti-Duplication Rule
 
