@@ -1258,6 +1258,57 @@ def build_skills_system_prompt(
         extra_roots = [(t, d) for t, d in get_skill_search_roots(skills_dir) if t != TIER_LOCAL]
         if not skills_dir.exists() and not extra_roots:
             return ""
+
+        # Check if on-demand catalog mode is enabled (zero-skills base prompt).
+        # Eliminates ~14,000 tokens of static index bloat from every model call,
+        # prompting the agent to discover/load skills in State 3 (Planning).
+        try:
+            from hermes_cli.config import load_config_readonly
+            from hermes_constants import get_default_hermes_root
+            _cfg = load_config_readonly()
+            _skills_cfg = _cfg.get("skills") or {}
+            _on_demand = False
+            if isinstance(_skills_cfg, dict):
+                _on_demand = (
+                    _skills_cfg.get("on_demand") is True
+                    or str(_skills_cfg.get("mode", "")).lower() == "on_demand"
+                )
+            # If not explicitly defined in active profile, inherit from root config.yaml
+            if not _on_demand:
+                import yaml
+                _root_cfg = get_default_hermes_root() / "config.yaml"
+                if _root_cfg.exists():
+                    try:
+                        with open(_root_cfg, "r", encoding="utf-8") as _rf:
+                            _rc = yaml.safe_load(_rf) or {}
+                            _r_skills = _rc.get("skills") or {}
+                            if isinstance(_r_skills, dict):
+                                _on_demand = (
+                                    _r_skills.get("on_demand") is True
+                                    or str(_r_skills.get("mode", "")).lower() == "on_demand"
+                                )
+                    except Exception:
+                        pass
+            if os.getenv("HERMES_SKILLS_ON_DEMAND", "").lower() in ("1", "true", "yes"):
+                _on_demand = True
+        except Exception:
+            _on_demand = False
+
+        if _on_demand:
+            return (
+                "## Skills (On-Demand Catalog)\n"
+                "You have access to an extensive library of specialized skills (stored in `/opt/hermes-agent/skills/` and `/opt/data/skills/`, routed on-demand via `skill_route`). "
+                "Skills encode specialized domain workflows, API protocols, editorial/compliance standards, and expert procedures.\n\n"
+                "OPERATING PROTOCOL:\n"
+                "1. Pure conversation, casual greetings, brainstorming, and direct Q&A do NOT require skills. Respond immediately without loading skills or calling tools.\n"
+                "2. When a task requires specialized domain knowledge, procedures, copywriting/editorial standards, legal/compliance rules, or technical workflows:\n"
+                "   - Call `skill_route(query=\"<task description and context>\")` (Jev) first — it searches the catalog and automatically loads the matching `SKILL.md` in one step.\n"
+                "   - Use `skill_search(query=\"<topic>\")` / `skills_list(query=\"<topic>\")` and `skill_view(name=\"<skill_name>\")` as fallback or when loading additional skills or linked reference files (`skill_view(name=\"<skill_name>\", file_path=\"references/...\")`).\n"
+                "   - Incorporate the loaded skill's canonical procedure into your execution plan.\n"
+                "3. In State 4 (Confirmation), present the plan (including required skills or subagents) to the user and wait for authorization before mutating execution.\n"
+                "4. Universal file support: You can always read and inspect files of any format (text, code, PDF, DOCX, XLSX, images) directly using standard tools (`read_file`).\n"
+                "- hermes-agent: Core Hermes instructions, architecture, commands, and multi-agent coordination."
+            )
         return _build_skills_system_prompt_inner(
             skills_dir, extra_roots, available_tools, available_toolsets, compact_categories)
     finally:

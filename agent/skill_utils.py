@@ -215,16 +215,11 @@ def _config_cache_key(config_path: Path) -> Optional[tuple[Any, ...]]:
     return None if version is None else (str(config_path), *version)
 
 
-def _load_raw_config() -> dict[str, Any]:
-    """Read config.yaml with a version-keyed cache (no hermes_cli.config import)."""
-    from agent.safe_worker_policy import worker_config_snapshot
+def _load_raw_config_at(config_path: Path) -> dict[str, Any]:
+    """Read a specific config.yaml with a version-keyed cache."""
     from hermes_cli.config_backend import config_exists, read_config_doc
-
-    snapshot = worker_config_snapshot()
-    if snapshot is not None:
-        return snapshot
-    config_path = get_config_path()
     if not config_exists(config_path):
+        return {}
         return {}
     cache_key = _config_cache_key(config_path)
     with _RAW_CONFIG_CACHE_LOCK:
@@ -246,10 +241,32 @@ def _load_raw_config() -> dict[str, Any]:
     return parsed
 
 
+def _load_raw_config() -> dict[str, Any]:
+    """Read config.yaml with a version-keyed cache (no hermes_cli.config import)."""
+    from agent.safe_worker_policy import worker_config_snapshot
+    snapshot = worker_config_snapshot()
+    if snapshot is not None:
+        return snapshot
+    return _load_raw_config_at(get_config_path())
+
+
 def _skills_cfg() -> Optional[dict[str, Any]]:
-    """The ``skills:`` mapping from config.yaml, or None when absent/malformed."""
-    skills_cfg = _load_raw_config().get("skills")
-    return skills_cfg if isinstance(skills_cfg, dict) else None
+    """The ``skills:`` mapping from config.yaml (inheriting root config.yaml defaults for profiles), or None when absent/malformed."""
+    config_path = get_config_path()
+    raw = _load_raw_config_at(config_path)
+    skills_cfg = raw.get("skills")
+    skills_dict = dict(skills_cfg) if isinstance(skills_cfg, dict) else None
+
+    if config_path.parent.parent.name == "profiles":
+        root_cfg_path = config_path.parent.parent.parent / "config.yaml"
+        root_skills = _load_raw_config_at(root_cfg_path).get("skills")
+        if isinstance(root_skills, dict):
+            merged = dict(root_skills)
+            if skills_dict:
+                merged.update(skills_dict)
+            return merged
+
+    return skills_dict
 
 
 def _skills_cfg_get(key: str) -> Any:
