@@ -28,7 +28,30 @@
 ---
 
 ## 2. Handover from Last Session
-* **Current Handover (2026-10-16 — Tiered Cascading Skill Routing & Fleet-Wide Jev Activation)**:
+* **Current Handover (2026-10-17 — Skills Catalog Audit & Consolidation, Router Option A, and Fleet Reflex Matrix)**:
+  - **Completed**:
+    - **Global Skills Catalog Hygiene & Purge**:
+      - Purged graveyard `skills/_retirados` and all 79 `*.pre-rename-20260929` junk residue files permanently.
+      - Resolved collisions (`vault-access` promoted to `core/vault-access/SKILL.md`).
+      - Fixed all 36 broken YAML frontmatters using block scalars `>-` (0 broken YAMLs across tree).
+      - Purged noise: Wall Street financial models, macOS desktop utilities, Amazon e-commerce, and 27 `specialists/ai-ml/` frontier training recipes.
+      - Fused 7 scattered clusters into canonical Spanish core skills: `copy-quality-es`, `hermes-cron-ops`, `meta-ads-ops`, `vps-deployment-ops`, `hermes-provider-ops`, `multi-agent-collaboration`, `google-workspace-ops`, and `brain-knowledge-ops`.
+      - Purged framework-specific and generic code stubs migrating to repo-level SDD (`autoskills`), leaving Hermes central skills dedicated strictly to fleet & system operations, business, campaigns, multimedia, and multi-agent coordination.
+      - Reduced catalog from 708 to 560 verified skills across 8 clean top categories. 0 stubs (<100 words), 0 broken YAMLs.
+    - **TypeSafe (Jev) Skill Router — Option A (On-Demand Tool Routing)**:
+      - Expanded `INDEX_WIDTH` from 60 to 180 characters in `typesafe_router/roster.py` to preserve rich context and triggers.
+      - Registered `skill_route` as an on-demand tool (`toolset="skills"`) with schema and handler in `typesafe-skill-router` v1.1.0.
+      - Exposed `pre_hook_enabled` toggle and configured `pre_hook_enabled: false` across `/opt/hermes-agent-data/config.yaml` and all 11 profiles (`profiles/*/config.yaml`), guaranteeing 0 accidental Jev fires on chitchat/conversation and zero wasted tokens.
+      - Unit test suite: 75 passed in 1.61s (including new `tests/test_skill_route_tool.py`).
+    - **Operational Reflex Matrix in `AGENTS.md`**:
+      - Installed the concise 14-line **Mapa Canónico de Recursos e Infraestructura** across all 11 profiles and root default `ragnar`.
+      - Canonical channels established: Vaultwarden (`/usr/local/bin/vw`), Google Workspace MCP (`ncl_google`), Google Drive & Sheets API (`google-workspace-ops`), ActivePieces (`http://localhost:3000`), Twenty CRM, Composio Meta Ads, and VPS Host execution (`ssh -o BatchMode=yes root@10.0.2.1`).
+      - Zero plaintext secrets exposed; all `AGENTS.md` maintained under 70 lines (far below the 300-line ceiling).
+  - **Verified by**:
+    - Comprehensive python audit (`Total skills: 560, Categories: 8, Broken YAML: 0, Stubs: 0`).
+    - `pytest` in `typesafe-skill-router` (75 passed in 1.61s).
+    - `git status` clean in both repositories.
+
   - **Completed**:
     - **Fleet-Wide Predetermined Skill Manifest**:
       - Compiled [`/opt/hermes-agent-data/config/agent_tier1_skills.json`](file:///opt/hermes-agent-data/config/agent_tier1_skills.json) based on Roshi's authoritative report (`diseno-catalogos-por-agente-20260925.md`) and `gen_agentes_skills.py`.
