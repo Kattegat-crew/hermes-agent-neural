@@ -73,9 +73,33 @@ En canales donde conviven varios agentes (ej. `#video-prod`, `#operaciones`):
 2. **Prohibición de Agradecimientos Vacíos**: Queda terminantemente prohibido que dos agentes intercambien mensajes de cortesía (*"Gracias", "De nada", "Quedo atento"*) que mantengan el canal activo sin generar trabajo real.
 3. **Límite de Turnos Autónomos**: Si dos agentes intercambian más de 3 mensajes consecutivos sin intervención humana, el agente orquestador debe detenerse y solicitar confirmación al usuario.
 
+## 4. Jerarquía Planner → Sub-planner → Worker y Despertar de Especialistas (s6)
+
+La coordinación a escala no es plana ni peer-to-peer; se organiza en árbol jerárquico donde cada worker opera sobre su contexto/repo aislado y reporta **únicamente a su asignador**:
+
+| Rol | Agente Principal | Responsabilidad |
+|-----|------------------|-----------------|
+| **Planner** | Ragnar (default) | Entiende el objetivo de negocio, lo descompone en sub-tareas, rutea y agrega el reporte final. |
+| **Sub-planner** | Ragnar o delegación anidada | Cuando un bloque se divide en sub-dominios, gestiona y rutea a sus workers. |
+| **Worker** | Especialistas (Bragi=contenido, Sindri=dev/video, Freyja=diseño, etc.) | Ejecuta la tarea concreta y devuelve evidencia verificable a su asignador. |
+
+### Ciclo del Planner (7 Pasos Mandatorios)
+1. **Entender el objetivo**: Entregable esperado y criterio de aceptación verificable (no tickets monolíticos).
+2. **Descomponer**: Tareas de 2-5 minutos con contexto acotado.
+3. **Asignar**: Destino (`dominio`), `parent_task` y `dependencias`.
+4. **Contexto autocontenido**: El worker NO ve la conversación del planner; inyectar solo insumos necesarios.
+5. **Evidencia observable**: Archivo en disco >0 bytes, commit SHA, ID real o salida de comando. Prohibido reportar "listo" sin prueba técnica.
+6. **Reporte agregado en bloque**: UN solo informe al usuario al finalizar la fase, no saturar con mensajes intermedios.
+7. **Escalar stuck**: Si tras 2 intentos un método falla, cambiar de enfoque o escalar al planner.
+
+### Ledger de Coordinación y Despertar on-demand
+- `delegation_state.json`: Registra padre→hijos (`pending` → `run` → `done` con evidencia | `failed`). Idempotente.
+- **Servicios s6 de especialistas**: Los gateways de especialistas corren bajo s6 (`gateway-bragi`, `gateway-sindri`, `gateway-freyja`). Se despiertan on-demand cuando son mencionados en Discord/Desktop o cuando el planner activa su tarea asignada.
+
 ---
 
 ## Gotchas y Errores Críticos
 
 1. **Permisos en `.git/objects`**: Si un worktree es creado por `root`, otro agente corriendo con `uid 10000` fallará con `insufficient permission for adding an object`. Siempre verificar pertenencia de usuario con `chown -R hermes:hermes .git/`.
 2. **Worktrees bloqueados**: Si un proceso termina abruptamente, el lock de Git puede quedar huérfano. Desbloquear con `git worktree unlock <ruta>` o `git worktree prune`.
+3. **Reportes sin evidencia**: Ningún worker puede marcar una tarea como completada sin proveer evidencia tangible (ruta de archivo, status code, commit SHA).

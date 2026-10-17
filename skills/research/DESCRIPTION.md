@@ -1,3 +1,3 @@
 ---
-description: Skills for academic research, paper discovery, literature review, domain reconnaissance, market data, content monitoring, and scientific knowledge retrieval.
+description: Skills for reaching web content when direct access fails — blocked, paywalled, rate-limited, or bot-walled pages.
 ---
