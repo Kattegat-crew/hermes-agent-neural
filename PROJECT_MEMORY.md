@@ -2,8 +2,8 @@
 
 ## Current Initiative — Langfuse Fleet Observability (2026-10-16)
 - Created `.specs/langfuse-fleet-observability/{01-spec,02-design,03-tasks}.md` as the SDD record for the phased Hermes/Codex/OpenCode/AGY plan.
-- Phase F1 inventory evidence is documented; its independent review is pending (prior review #1984 is partial with findings). No functional implementation is complete.
-- Do not advance before each phase's independent reviewer returns a terminal result. DEV staging owner, credential injection boundary, server migration decision, OpenCode privacy decision, and separate PROD authorization remain unresolved.
+- Phase F1 inventory was accepted by `/root/phase1_review` with tracked downstream gaps; this is not native RDD approval. Explorer handoff reports 10 enabled named DEV profiles (root/vigia off) and 11 enabled named PROD profiles (root/two test profiles off or unconfigured); reviewer did not independently enumerate names.
+- F2.1 read-only discovery may proceed. F2.2 remains gated on staging ownership, credential injection, exact scope, and authorization. No functional implementation is complete and no trace was emitted.
 - No secrets are included here. No source, runtime, dependency, service, or production changes were made by the documentation phase.
 
 > **Session Lifecycle Contract**:

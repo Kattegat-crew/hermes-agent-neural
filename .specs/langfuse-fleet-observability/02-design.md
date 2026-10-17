@@ -20,7 +20,7 @@ flowchart LR
     V[Vault] -->|runtime credential injection| H
 ```
 
-No client is considered operational based only on an installed SDK, enabled config, or successful import. A positive event must be verified in the intended project without recording its secret-bearing configuration.
+No client is considered operational based only on an installed SDK, enabled config, or successful import. For activation phases only, verify a positive canary in the intended project after naming and authorizing the environment; the canary must contain no sensitive content. Inventory and documentation work emit no trace.
 
 ## 2. Public Interfaces & Contracts
 
@@ -32,7 +32,7 @@ No new Hermes public API is approved by this design. Use existing integration po
 - Never log or document API-key values. Reference only a secret's logical name or Vault path when necessary and safe.
 - Minimize to operational metadata by default. Prompt text, model outputs, tool arguments/results, and user identifiers remain excluded until explicitly approved.
 - A profile/service map is an explicit inventory artifact; names of systemd units alone do not establish profile binding.
-- A positive ingestion result is observed evidence tied to the intended project and timestamp, with payload contents redacted.
+- For telemetry activation, a positive ingestion result is observed evidence tied to the intended project and named, authorized environment; the canary contains no sensitive content and only redacted evidence is recorded.
 
 ## 4. Trade-Offs & Alternatives Considered
 
@@ -45,7 +45,7 @@ No new Hermes public API is approved by this design. Use existing integration po
 
 ## 5. Observability & Error Handling
 
-Treat these as separate results: SDK import, integration initialization, profile/service enablement, event emission, and server ingestion. Report the exact failing layer and a redacted error category. If any check is unavailable or ambiguous, leave the phase pending; do not claim success or retry a mutating operation blindly.
+Treat these as separate results: SDK import, integration initialization, profile/service enablement, event emission, and server ingestion. Report the exact failing layer and a redacted error category. If an applicable check for the current phase is unavailable or ambiguous, leave that phase pending; do not claim success or retry a mutating operation blindly.
 
 ## 6. Compatibility Evidence & References
 

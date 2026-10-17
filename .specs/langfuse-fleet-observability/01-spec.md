@@ -1,6 +1,6 @@
 # Feature Specification: Langfuse Fleet Observability
 
-* **Status**: Draft — Phase 1 inventory documented; independent review pending
+* **Status**: In Progress — Phase 1 inventory accepted with downstream gaps tracked
 * **Author**: Codex
 * **Target Module**: Hermes DEV/PROD operations, Codex, OpenCode, and AGY integrations
 * **Created**: 2026-10-16
@@ -18,13 +18,14 @@ The work is phased so that compatibility, privacy, credentials, and rollback are
 
 ### Goals
 - [ ] Restore Hermes DEV importability using the existing pinned dependency set and a compatible environment; do not add dependencies without approval and an exact pin.
-- [ ] Prove an authorized, non-synthetic positive ingestion event for the intended Langfuse project before declaring any integration operational.
+- [ ] For an activation phase, prove a positive ingestion canary in a specifically named, explicitly authorized environment before declaring an integration operational; include no sensitive content.
 - [ ] Inventory and instrument the approved Hermes profiles, Codex, OpenCode, and AGY only after compatibility and data-minimization decisions are resolved.
 - [ ] Require an independent review at the end of every phase before advancing.
 - [ ] Stage production only after DEV acceptance and explicit approval of the server, credential, and rollout operations.
 
 ### Non-Goals (Out of Scope)
-- No blanket authorization to upgrade Langfuse, modify services, restart processes, read or disclose secrets, create synthetic traces, or access remote systems.
+- No blanket authorization to upgrade Langfuse, modify services, restart processes, read or disclose secrets, or access remote systems.
+- Inventory and documentation work do not emit traces. An activation canary requires a named, explicitly authorized environment and must contain no sensitive content.
 - No production rollout is authorized by this specification.
 - No prompt, tool-argument, model-response, or other sensitive-content capture unless an explicit privacy decision approves the exact fields and retention.
 - No assertion that missing credentials or incomplete service/profile bindings imply absence of telemetry.
@@ -33,8 +34,8 @@ The work is phased so that compatibility, privacy, credentials, and rollback are
 
 * **US-1**: As an operator, I want each approved integration to be verifiably compatible and ingesting, so that dashboards reflect real fleet activity rather than package-presence assumptions.
   * **Requirement 1.1**: Record exact runtime, SDK, server, and plugin versions before changing an environment.
-  * **Requirement 1.2**: A phase is not accepted until its independent reviewer returns a terminal result and its functional acceptance evidence is recorded.
-  * **Requirement 1.3**: Require a positive ingestion check for the intended project; do not emit synthetic traces as test fixtures.
+  * **Requirement 1.2**: A phase is not accepted until its independent reviewer returns a terminal result and its applicable phase acceptance evidence is recorded.
+  * **Requirement 1.3**: For an activation phase, require a positive ingestion canary only in a specifically named, explicitly authorized environment, with no sensitive content. No trace is emitted as part of inventory or documentation work.
   * **Requirement 1.4**: Keep credentials in Vault or approved mode-0600 secret files; never put secret values in Git or Markdown.
   * **Requirement 1.5**: Default to metadata-only, minimized telemetry; block integrations that cannot meet the approved data policy.
 
@@ -43,7 +44,7 @@ The work is phased so that compatibility, privacy, credentials, and rollback are
 * **Scenario 1 — DEV Hermes recovery**
   * **Given**: The active Hermes runtime is Python 3.14 and the package tree contains CPython 3.13 extensions.
   * **When**: The approved DEV repair is staged using the existing exact pins.
-  * **Then**: A real Hermes runtime imports the SDK successfully, an approved non-synthetic event is observed in the intended Langfuse project, and rollback is documented before the phase reviewer is requested.
+  * **Then**: A real Hermes runtime imports the SDK successfully. If the phase activates telemetry, a canary is observed in the intended Langfuse project only after the environment is named and authorized, and the canary contains no sensitive content. Document rollback before the phase reviewer is requested. Inventory/documentation phases emit no trace and do not require runtime rollback.
 
 * **Scenario 2 — Unsupported integration or privacy mismatch**
   * **Given**: A plugin requires a newer Langfuse server or captures prompt/tool payloads without an approved minimization control.
@@ -53,7 +54,7 @@ The work is phased so that compatibility, privacy, credentials, and rollback are
 * **Scenario 3 — Production rollout**
   * **Given**: DEV acceptance and its phase review are complete.
   * **When**: A distinct production authorization names the target, operation, and credential/session.
-  * **Then**: Stage only the approved profiles, verify positive ingestion and health, and retain a reversible rollback boundary; otherwise do not touch production.
+  * **Then**: Stage only the approved profiles, verify a positive canary with no sensitive content and health in the named authorized production environment, and retain a reversible rollback boundary; otherwise do not touch production.
 
 ## 5. Security, VPS & Operational Considerations
 
