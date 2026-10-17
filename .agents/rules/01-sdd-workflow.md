@@ -51,3 +51,20 @@ No feature, major refactor, or non-trivial architectural change may be committed
   4. Do not modify files outside the agreed design boundaries.
   5. **Continuous Skill Nutrition**: When solving novel framework edge cases or discovering new project conventions, enrich the corresponding skill in `.skills/` or run `npx autoskills` to keep procedural memory updated.
   6. Once all tasks are complete, execute full regression suites and archive/mark the spec as `Completed`.
+
+---
+
+## 2. Catalog Boundary & Repository Engineering Skills (CRITICAL)
+
+`/opt/hermes-agent` serves two distinct roles that MUST NEVER be conflated when developing or debugging this repository:
+
+1. **Repository Engineering Skills (`.skills/` $\to$ `.agents/skills/` & `.claude/skills/`, 13 stack skills)**:
+   - When intervening in the **Hermes codebase itself** (Python core, gateway, tools, plugins, `apps/desktop` Electron/React, `scripts/whatsapp-bridge` Node.js, or Docker/s6), agents MUST consult **only** `.atl/skill-registry.md` and load the relevant stack skill(s) from `.skills/<skill>/SKILL.md`:
+     - *Core & Architecture*: `hermes-agent`, `hermes-agent-skill-authoring`, `api-and-interface-design`, `codebase-inspection`, `code-review-and-quality`
+     - *Python & Testing*: `python-patterns`, `python-testing-patterns`, `systematic-debugging`
+     - *Desktop & Web (`apps/desktop`, `website`)*: `react-best-practices`, `typescript-advanced-types`
+     - *Bridge & Infra (`scripts/whatsapp-bridge`, `docker/`)*: `nodejs-backend-patterns`, `hermes-s6-container-supervision`, `bash-defensive-patterns`
+2. **Bundled Fleet Runtime Catalog (`skills/` & `optional-skills/`, ~571 skills)**:
+   - The top-level `skills/` and `optional-skills/` directories are **bundled product data** distributed for end-user/fleet agents at runtime.
+   - **STRICT PROHIBITION**: Coding agents modifying the Hermes engine MUST NOT scan, index, or bulk-load `skills/` or `optional-skills/` as repository development instructions, unless the task explicitly asks to author or edit a bundled fleet skill.
+
