@@ -60,6 +60,13 @@ def test_dispatch_failure_terminalizes_the_attempt(tmp_path, monkeypatch):
         row = executions.get_execution(claimed["execution_id"])
 
         assert "-15" in (record.get("last_error") or ""), record.get("last_error")
+        # A field dispatch failure must say HOW the worker died and whether it got as far
+        # as the ack — the reported error used to be a bare "exit -15".
+        error = record.get("last_error") or ""
+        assert "SIGTERM" in error, error
+        assert "dispatch=degraded" in error, error
+        assert "ack_seen=False" in error, error
+        assert "elapsed=" in error, error
         assert row["status"] not in ("running", "pending", "handoff_pending"), row["status"]
 
         # The whole point: nothing left for the dead-owner recovery to adopt.

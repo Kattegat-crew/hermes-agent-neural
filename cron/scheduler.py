@@ -12,6 +12,7 @@ import json
 import logging
 import os
 import re
+import signal
 import subprocess
 import sys
 import threading
@@ -3740,6 +3741,7 @@ def _launch_external_cron_worker(job: dict) -> bool:
     repo_root = Path(__file__).resolve().parent.parent
     worker_env = pin_hermes_tree_on_pythonpath(worker_env, repo_root)
     worker_env[WORKER_MARKER] = "1"
+    spawn_started = time.monotonic()
     try:
         stderr_fd = os.open(stderr_path, os.O_WRONLY | os.O_CREAT | os.O_TRUNC, 0o600)
         try:
@@ -3839,9 +3841,15 @@ def _launch_external_cron_worker(job: dict) -> bool:
                     "system-level service install, run `sudo loginctl enable-linger <gateway-user>`; "
                     "the next fire dispatches without scope isolation."
                 )
+            try:
+                signal_name = signal.Signals(-returncode).name if returncode < 0 else "none"
+            except ValueError:
+                signal_name = "unknown"
             raise RuntimeError(
-                f"cron external worker exited before ownership acknowledgement "
-                f"(exit {returncode}){stderr_tail}"
+                "cron external worker exited before ownership acknowledgement "
+                f"(exit {returncode} {signal_name}, dispatch={dispatch.mode}, "
+                f"pid={process.pid}, ack_seen={ack_path.exists()}, "
+                f"elapsed={time.monotonic() - spawn_started:.1f}s){stderr_tail}"
             )
         time.sleep(0.05)
 
