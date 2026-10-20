@@ -352,6 +352,8 @@ Never fix bugs without a test.
 - **Testing implementation details** — test behavior/results, not internal method calls
 - **Happy path only** — always test edge cases, errors, and boundaries
 - **Brittle tests** — tests should verify behavior, not structure; refactoring shouldn't break them
+- **Change-detector tests** — tests that fail whenever data that is *expected to change* gets updated (model catalogs, config versions, enumeration counts). Assert invariants and contracts (e.g., "all models have context lengths"), not data snapshots.
+- **Reading source code in tests** — NEVER write tests that read `.py`, `.ts`, or other source files with regex/filesystem to verify code shape. That tests syntax formatting, not runtime behavior. Extract small testable functions and execute them.
 
 ## Final Rule
 

@@ -94,6 +94,33 @@ or evidence activates that risk. Supporting skills may deepen an axis but may
 not redefine the canonical policy's causality, stage, verdict, or blocking
 rules.
 
+## Two-Axis Parallel Review Mode (Standards vs Spec)
+
+When conducting significant diff, branch, or pull request reviews, spawn two parallel review sub-agents with isolated contexts to avoid cross-contamination:
+
+### Axis 1: Standards Sub-agent
+Evaluates conformance with repository standards plus Martin Fowler's 12 Code Smell Baselines:
+- **Mysterious Name**: Functions/variables whose names do not reveal intent.
+- **Duplicated Code**: Identical or near-identical logic repeated across files.
+- **Feature Envy**: Method accessing another object's internal data more than its own.
+- **Data Clumps**: Fields/parameters traveling together that should form a typed struct/model.
+- **Primitive Obsession**: Raw strings/ints representing domain concepts without a type.
+- **Repeated Switches**: Divergent switch/if-elif statements on the same type across the diff.
+- **Shotgun Surgery**: One logical change forcing edits across many scattered files.
+- **Divergent Change**: One file/module edited for several unrelated reasons.
+- **Speculative Generality**: Unrequested hooks, generic parameters, or dead abstractions.
+- **Message Chains**: Long `a.b().c().d()` navigational coupling.
+- **Middle Man**: Functions or classes that only delegate onward with zero value add.
+- **Refused Bequest**: Subclasses ignoring or overriding most inherited behavior (use composition).
+
+### Axis 2: Spec Sub-agent
+Evaluates fidelity against the originating SDD specification (`01-spec.md` / `02-design.md`):
+- **Missing Requirements**: Capabilities demanded by the spec that are missing or partial.
+- **Scope Creep**: Behaviors in the diff not requested by the spec.
+- **Contract Inversions**: Requirements that appear implemented but violate the intended API contract.
+
+Reports are presented side-by-side: code following all standards but implementing the wrong feature fails Spec; code implementing the spec but violating modularity fails Standards. Reporting separately prevents one axis from masking the other.
+
 ## Completion Check
 
 Before returning:
