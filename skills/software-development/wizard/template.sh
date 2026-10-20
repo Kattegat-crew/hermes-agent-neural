@@ -135,19 +135,21 @@ ask_secret() {
 }
 
 # write_env KEY VALUE upserts KEY='VALUE' into ENV_FILE (replaces any existing
-# line) and sets $KEY. Idempotent. Creates ENV_FILE at mode 0600; writes through
-# a symlink and keeps an existing file's mode.
+# line) and sets $KEY. Idempotent. Enforces mode 0600 to prevent credential exposure.
 write_env() {
-  local key="$1" value="$2" tmp sq="'\\''"
-  [[ -e "$ENV_FILE" ]] || (umask 077 && : > "$ENV_FILE")
+  local key="$1" value="$2" tmp sq="'\\''" target_file
+  target_file=$(readlink -f "$ENV_FILE" 2>/dev/null || echo "$ENV_FILE")
+  [[ -e "$target_file" ]] || (umask 077 && : > "$target_file")
   tmp=$(mktemp)
-  grep -vE "^${key}=" "$ENV_FILE" > "$tmp" || true
+  chmod 0600 "$tmp" 2>/dev/null || true
+  grep -vE "^${key}=" "$target_file" > "$tmp" || true
   printf "%s='%s'\n" "$key" "${value//\'/$sq}" >> "$tmp"
-  cat "$tmp" > "$ENV_FILE"
+  cat "$tmp" > "$target_file"
+  chmod 0600 "$target_file" 2>/dev/null || true
   rm -f "$tmp"
   printf -v "$key" '%s' "$value"
   WRITTEN_ENV+=("$key")
-  printf '  %s✓ wrote%s %s → %s\n' "$GREEN" "$RESET" "$key" "$ENV_FILE"
+  printf '  %s✓ wrote%s %s → %s (mode 0600)\n' "$GREEN" "$RESET" "$key" "$ENV_FILE"
 }
 
 # set_secret NAME VALUE sets a GitHub Actions repo secret via gh. Falls back
