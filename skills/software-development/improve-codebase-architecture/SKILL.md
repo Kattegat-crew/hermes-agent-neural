@@ -1,60 +1,70 @@
 ---
 name: improve-codebase-architecture
-description: "Scan a codebase for deepening opportunities, present them as a visual HTML report with Mermaid and Tailwind, and propose architectural refactors."
-tags: [architecture, design, refactoring, deep-modules, report, quality]
-version: 1.0.0
-author: NeuralCrew Labs (adapted from Matt Pocock / John Ousterhout)
+description: >-
+  Auditoría y escaneo de módulos superficiales en el repositorio. Generación de reportes visuales en HTML con Mermaid y Tailwind para proponer refactorizaciones hacia módulos profundos.
+tags: [arquitectura, auditoria, refactorizacion, deep-modules, reporte, calidad]
+version: 2.0.0
+author: NeuralCrew / Hermes Fleet
 license: MIT
 platforms: [linux, macos, windows]
 ---
 
-# Improve Codebase Architecture
+# Auditoría y Profundización de Arquitectura de Código
 
-Surface architectural friction and propose **deepening opportunities**: refactors that turn shallow modules into deep ones. The aim is testability and AI-navigability.
+Habilidad canónica para escanear un repositorio en busca de fricción estructural y proponer **oportunidades de profundización**: refactorizaciones quirúrgicas que transforman módulos superficiales y dispersos en módulos profundos, altamente cohesivos y testeables.
 
-This command is informed by the project's domain model, SDD specs, and built on a shared design vocabulary:
+---
 
-- Refer to the `codebase-design` skill for the architecture vocabulary (**module**, **interface**, **depth**, **seam**, **adapter**, **leverage**, **locality**) and its principles (the deletion test, "the interface is the test surface", "one adapter = hypothetical seam, two = real"). Use these terms exactly in every suggestion, and don't drift into "component," "service," "API," or "boundary."
-- Use Engram (`/opt/engram/`) and `PROJECT_MEMORY.md` to avoid re-proposing previously rejected architectural changes.
+## Cuándo usar esta Skill (Triggers y Síntomas)
 
-## Process
+Usa esta skill inmediatamente cuando se presente cualquiera de estas situaciones:
+- Peticiones del usuario: *"audita la arquitectura de este proyecto"*, *"encuentra código espagueti o mal estructurado"*, *"dónde tenemos deuda técnica modular"*, o *"genera un reporte de arquitectura"*.
+- Repositorios con alta tasa de cambios recientes donde se percibe aumento de complejidad accidental (*software entropy*).
+- Preparación previa a una iniciativa mayor en SDD (fase de descubrimiento técnico antes de `01-spec.md`).
+- Sesiones de mantenimiento preventivo o revisión periódica de salud del código.
 
-### 1. Explore
+---
 
-**Scope before you scan: YAGNI.** Deepening a module pays off by making future changes to it easier, so put extra weight on the parts of the codebase that have recently changed. Decide *where* to look before you look:
+## Proceso de Auditoría y Detección de Fricción
 
-- If the user named a direction (a module, a subsystem, a pain point), take it, and skip the inference below.
-- Otherwise, walk back a good stretch of the commit history (`git log --oneline -30`) to find the codebase's hot spots, the files and areas that keep coming up, and let those paths pull your attention first.
+### 1. Exploración Basada en Hotspots de Git
+No escanees el repositorio a ciegas: aplica el principio YAGNI y prioriza las zonas de cambio activo.
+- Si el usuario especificó un módulo o directorio, enfócate directamente en él.
+- Si no hay dirección previa, analiza los últimos 30-50 commits (`git log --oneline -50`) para identificar las áreas con mayor frecuencia de cambios y colisiones.
 
-Look for areas where:
-- Understanding one concept requires bouncing between many small, pass-through modules.
-- Modules are **shallow**, with an interface nearly as complex as the implementation.
-- Pure functions have been extracted just for testability, but the real bugs hide in how they're called (no **locality**).
-- Tightly-coupled modules leak across their seams.
-- Parts of the codebase are untested, or hard to test through their current interface.
+### 2. Detección de Síntomas de Superficialidad
+Busca activamente:
+- **Módulos superficiales**: Clases o archivos con muchas firmas públicas pero lógica insignificante (pasarelas redundantes).
+- **Falta de localización**: Funciones que obligan a los consumidores a coordinar 4 o 5 llamadas en un orden estricto para lograr una sola acción de negocio.
+- **Fugas a través de costuras (seam leaks)**: Módulos supuestamente aislados que acceden directamente a estructuras internas de otros componentes.
+- **Dificultad de testeo**: Zonas del sistema que no cuentan con tests o cuyos tests requieren mocks excesivos.
 
-Apply the **deletion test** to anything suspected as shallow: would deleting it concentrate complexity, or just move it? A "yes, concentrates" is the signal you want.
+Aplica el **test de eliminación**: Si al borrar el módulo la complejidad desaparece, era código superficial prescindible; si la complejidad se dispersa en los consumidores, merecía consolidarse como módulo profundo.
 
-### 2. Present Candidates as an HTML Report
+---
 
-Write a self-contained HTML file to `/tmp/architecture-review-<timestamp>.html` so nothing lands in the git repository. Open it or notify the user of the path.
+## Generación del Reporte Visual en HTML
 
-The report uses **Tailwind via CDN** for layout and styling, and **Mermaid via CDN** for diagrams where a graph/flow/sequence reliably communicates the structure.
+Para no contaminar el repositorio con archivos temporales, el reporte se genera como un archivo autónomo en `/tmp/architecture-review-<timestamp>.html`.
 
-For each candidate, render a card with:
-- **Files**: Which files/modules are involved.
-- **Problem**: Why the current architecture is causing friction.
-- **Solution**: Plain English description of what would change.
-- **Benefits**: Explained in terms of locality and leverage, and how tests would improve.
-- **Before / After diagram**: Side-by-side, custom-drawn, illustrating the shallowness and the deepening.
-- **Recommendation strength**: One of `Strong`, `Worth exploring`, `Speculative`.
+El reporte utiliza:
+- **Tailwind CSS** vía CDN para maquetación limpia y legible.
+- **Mermaid.js** vía CDN para diagramas de dependencias, secuencias y flujo de llamadas.
+- Estructura de tarjetas con:
+  - **Archivos involucrados**: Rutas exactas en monoespacio.
+  - **Problema detectado**: Una frase concreta sobre la causa de fricción.
+  - **Solución propuesta**: Descripción clara del módulo profundo resultante.
+  - **Ganancias**: Beneficios en apalancamiento, localización y reducción de tests.
+  - **Diagrama comparativo Antes / Después**: Visualización lado a lado de la simplificación.
+  - **Nivel de recomendación**: `Fuerte`, `Vale la pena explorar`, o `Especulativa`.
 
-End the report with a **Top recommendation** section: which candidate to tackle first and why.
-See [`HTML-REPORT.md`](HTML-REPORT.md) for full scaffolding and styling patterns.
+Para los detalles de plantilla HTML y estilos, consulta [`HTML-REPORT.md`](HTML-REPORT.md).
 
-### 3. Review Loop
+---
 
-Once the user selects a candidate:
-1. Walk the decision tree: constraints, dependencies, the shape of the deepened module, what sits behind the seam, what tests survive.
-2. If approved for implementation in an SDD repository, formulate the proposal into Phase 1 (`01-spec.md`) and Phase 2 (`02-design.md`) under `.specs/<feature-name>/`.
-3. Record the architectural decision in Engram (`engram save --type architecture`).
+## Flujo de Grilling y Enlace con SDD
+
+Una vez que el usuario revisa el reporte y selecciona un candidato:
+1. Conduce una entrevista técnica rápida (*grilling*) sobre invariantes, interfaces deseadas y dependencias a encapsular.
+2. Si la refactorización es aprobada para ejecución en un repositorio con SDD, formula la iniciativa en Git bajo `.specs/<nombre-iniciativa>/` (`01-spec.md` → `02-design.md` → `03-tasks.md`).
+3. Registra la decisión arquitectónica en Engram con `engram save --type architecture`.

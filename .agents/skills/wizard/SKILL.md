@@ -1,52 +1,74 @@
 ---
 name: wizard
-description: "Generate an interactive bash wizard that walks a human step by step through manual operations (provisioning infrastructure, third-party dashboards, OAuth, secrets, DNS)."
-tags: [automation, bash, hitl, onboarding, devops, secrets, operations]
-version: 1.0.0
-author: NeuralCrew Labs (adapted from Matt Pocock)
+description: >-
+  Generación de scripts bash interactivos guiados paso a paso para operaciones manuales humanas (provisionamiento, dashboards externos, Meta CAPI, secretos y cutover).
+tags: [automatizacion, bash, wizard, hitl, operaciones, secretos, devops]
+version: 2.0.0
+author: NeuralCrew / Hermes Fleet
 license: MIT
 platforms: [linux, macos, windows]
 ---
 
-# Wizard: Interactive Human-In-The-Loop Scripts
+# Scripts Interactivos Asistidos (Wizards Human-in-the-Loop)
 
-A **wizard** is an interactive bash script that walks a human, step by step, through a manual procedure that's tedious to do by hand and tedious to re-explain to an AI every time. It opens each URL, says exactly what to click and copy, captures the values, writes them where they belong (`.env`, secrets, configs), confirms at every stage, and shows progress.
+Habilidad canónica para generar scripts interactivos en Bash que guían a un operador humano paso a paso a través de procedimientos manuales que no pueden ser automatizados directamente por un agente (ej. login en dashboards con 2FA, creación de credenciales en Meta Business Manager, vinculación de OAuth o corte de servicios críticos).
 
-The delightful UX is solved by [`template.sh`](template.sh): stage-by-stage progress, confirmation gates, cross-platform URL opening (Linux, macOS, WSL), hidden secret entry, idempotent `.env` upserts, and a closing summary. **Your job is only to scope the procedure and author its stages below the STAGES marker.**
+---
 
-A wizard is ephemeral by default: built for one run, saved to a scratch or `scripts/` path, deleted when the job's done. Commit it only when the user wants a repeatable setup path that should live in the repo.
+## Cuándo usar esta Skill (Triggers y Síntomas)
 
-## Process
+Usa esta skill inmediatamente cuando se presente cualquiera de estas situaciones:
+- El operador debe realizar tareas en un navegador externo donde el agente no tiene acceso: *"cómo configuro el token de Meta CAPI"*, *"ayúdame a crear las credenciales de Google Workspace"*, o *"guíame para rotar la clave de Vaultwarden"*.
+- Procedimientos complejos propensos a errores humanos: pasos que requieren copiar valores sensibles (API keys, IDs de píxel, tokens de acceso) e inyectarlos de forma segura en archivos `.env` o en Vault.
+- Migraciones o transiciones de infraestructura que requieran puntos de confirmación explícita antes de ejecutar acciones destructivas o irreversibles.
+- Evitar redactar bloques enormes de texto en el chat que el usuario deba interpretar manualmente: en su lugar, se entrega un script ejecutable que abre URLs y solicita las entradas interactivamente.
 
-### 1. Scope the Procedure
+---
 
-Work out every manual step the human must take and every value that gets captured along the way:
+## Arquitectura de un Wizard (`template.sh`)
 
-- For setup: inspect `.env`, `.env.example`, `docker-compose*`, framework config, credentials.
-- For a migration: identify the current state, target state, and irreversible actions between them.
+La experiencia de usuario ya está resuelta y estandarizada en [`template.sh`](template.sh). Incluye de forma nativa:
+- Progreso etapa por etapa con contador visual (`Etapa X de N`).
+- Apertura automática de URLs en el navegador del operador (compatible con Linux, macOS y WSL).
+- Captura de secretos oculta en terminal (`ask_secret`) para no exponer contraseñas ni tokens en pantalla ni en logs.
+- Persistencia idempotente de variables clave-valor en el archivo `.env` objetivo (`write_env`).
+- Puntos de confirmación obligatorios (`confirm`) antes de cualquier paso crítico.
+- Limpieza de pantalla (`_clear`) en cada etapa para mantener el foco en la instrucción actual.
 
-**Done when:** Every stage is named in order, and for each captured value you know:
-1. Where the human gets it (exact dashboard page or CLI command).
-2. Where it's written (`.env`, a secret vault, or a config file).
-3. Whether it's secret (hidden entry via `ask_secret`) or public (`ask`).
+> **Regla de Oro**: La librería superior de `template.sh` (antes del marcador `# STAGES`) es inmutable y común a todos los scripts. El agente **únicamente** redacta las etapas específicas del procedimiento al final del archivo.
 
-### 2. Map Each Stage's Journey
+---
 
-For each stage, write the precise path a human follows: which URL to open, what to do there, where a value is shown, which variable it fills (e.g., "Meta Events Manager → Settings → Conversions API → Generate Access Token → copy"). Never invent steps that may not exist; verify with docs or ask the human first.
+## Procedimiento de Construcción de un Wizard
 
-### 3. Author the Wizard
+### 1. Definir el Alcance y las Variables
+Antes de generar código, determina:
+- Qué archivos de configuración se modificarán (ej. `/opt/hermes-agent-data/.env` o el `.env` local del repositorio).
+- Lista ordenada de variables a capturar (ej. `META_ACCESS_TOKEN`, `META_PIXEL_ID`).
+- Si la variable es pública (`ask`) o secreta (`ask_secret`).
 
-Copy `template.sh` to the target script path (e.g., `scripts/setup-meta-capi.sh`). Author the stages below the `# STAGES` marker. Use the library helpers:
-- `stage "Stage Name"`
-- `say "Instructions"` / `step "Action item"`
-- `open_url "https://..."`
-- `ask "PROMPT" VAR_NAME` / `ask_secret "PROMPT" VAR_NAME`
-- `write_env "KEY" "$VALUE"`
-- `confirm "Are you ready to proceed with this irreversible action?"`
-- Set `TOTAL_STAGES` to the number of stages written.
+### 2. Mapear la Ruta Exacta en el Dashboard
+Para cada etapa, documenta la ruta visual exacta sin ambigüedades:
+- URL de entrada directa.
+- Menús exactos a pulsar: ej. *"Configuración del negocio → Orígenes de datos → Conjuntos de datos → Píxeles → Generar token de acceso"*.
+- Indicación precisa de qué campo copiar.
 
-### 4. Verify and Hand Off
+### 3. Generar el Script a partir de `template.sh`
+Copia la plantilla al destino temporal o de scripts (ej. `/tmp/setup-meta-token.sh` o `scripts/setup-service.sh`) y redacta las etapas:
 
-1. Verify syntax: `bash -n <script>`.
-2. Make executable: `chmod +x <script>`.
-3. Do NOT run it unattended: it blocks on human input and opens URLs. Tell the user how to run it in their terminal.
+```bash
+# Ejemplo de etapa configurada
+stage "Generación del Token de Meta Conversions API"
+say "Abre el Administrador de Eventos de Meta en el navegador:"
+open_url "https://business.facebook.com/events_manager2"
+step "1. Selecciona la cuenta publicitaria de Casino Golden."
+step "2. Ve a Configuración y busca la sección 'API de conversiones'."
+step "3. Haz clic en 'Generar token de acceso' y copia el valor largo."
+ask_secret "Pega aquí el Token de Acceso generado" META_CAPI_TOKEN
+write_env "META_CAPI_TOKEN" "$META_CAPI_TOKEN"
+```
+
+### 4. Verificación y Entrega
+1. Valida la sintaxis con `bash -n <ruta-del-script>`.
+2. Asigna permisos de ejecución: `chmod +x <ruta-del-script>`.
+3. Informa al usuario el comando exacto para ejecutarlo en su terminal (nunca lo ejecutes en background de forma desatendida, ya que requiere input humano).
