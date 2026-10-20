@@ -4407,21 +4407,29 @@ class TelegramAdapter(TelegramHeldInboundMixin, BasePlatformAdapter):
             from hermes_cli.models_catalog_static import group_providers
         except Exception:
             group_providers = None
-        by_slug = {p.get("slug"): p for p in providers}
+        # group_providers() lowercases every slug (its lookup index is
+        # lowercase-only), but user-defined providers keep their config key
+        # case ("NaN-Builders", "B.AI").  Resolve fold rows case-insensitively
+        # against the raw provider list and emit RAW slugs in callback_data so
+        # the mp: handler's exact `p["slug"] ==` match still finds them —
+        # previously any mixed-case custom provider silently lost its button.
+        by_slug = {str(p.get("slug", "")).lower(): p for p in providers}
         buttons: list = []
         if group_providers is not None:
             for row in group_providers([p.get("slug") for p in providers]):
                 if row["kind"] == "group":
-                    members = [by_slug[m] for m in row["members"] if m in by_slug]
+                    members = [by_slug[str(m).lower()] for m in row["members"] if str(m).lower() in by_slug]
                     count = sum(m.get("total_models", len(m.get("models", []))) for m in members)
                     label = f"{row['label']} ▸ ({count})"
                     if any(m.get("is_current") for m in members):
                         label = f"✓ {label}"
                     buttons.append(InlineKeyboardButton(label, callback_data=f"mpg:{row['group_id']}"))
                 else:
-                    p = by_slug.get(row["slug"])
+                    p = by_slug.get(str(row["slug"]).lower())
                     if p is not None:
                         buttons.append(self._provider_button(p))
+                    else:
+                        logger.warning("picker: unresolvable provider row %r (provider list out of sync)", row["slug"])
         else:
             buttons = [self._provider_button(p) for p in providers]
         page_buttons, page_meta = self._format_choice_page(buttons, page, self._PROVIDER_PAGE_SIZE)
@@ -4574,8 +4582,8 @@ class TelegramAdapter(TelegramHeldInboundMixin, BasePlatformAdapter):
                 _label, _desc, member_slugs = PROVIDER_GROUPS.get(group_id, ("", "", []))
             except Exception:
                 _label, member_slugs = "", []
-            by_slug = {p["slug"]: p for p in state["providers"]}
-            members = [by_slug[m] for m in member_slugs if m in by_slug]
+            by_slug = {str(p["slug"]).lower(): p for p in state["providers"]}
+            members = [by_slug[str(m).lower()] for m in member_slugs if str(m).lower() in by_slug]
             if not members:
                 await query.answer(text=_toast("platform.telegram.picker.group_not_found"))
                 return

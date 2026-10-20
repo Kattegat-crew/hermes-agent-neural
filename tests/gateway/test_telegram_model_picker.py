@@ -94,6 +94,7 @@ class TestProviderKeyboardCaseFolding:
         {"slug": "moa", "name": "Mixture of Agents", "total_models": 4, "models": ["a"]},
         {"slug": "NaN-Builders", "name": "NaN-Builders", "total_models": 13, "models": ["glm5.3-flash"]},
         {"slug": "nous", "name": "Nous Portal", "total_models": 56, "models": ["a"]},
+        {"slug": "opencode-zen", "name": "OpenCode Zen", "total_models": 21, "models": ["a"]},
         {"slug": "opencode-go", "name": "OpenCode Go", "total_models": 43, "models": ["a"]},
         {"slug": "openai-codex", "name": "ChatGPT or Codex Subscription", "total_models": 9, "models": ["a"]},
         {"slug": "opencode-free", "name": "OpenCode Free", "total_models": 3, "models": ["a"]},
@@ -123,14 +124,15 @@ class TestProviderKeyboardCaseFolding:
         callbacks = self._keyboard_callbacks(self._PROVIDERS)
         assert "mpg:opencode" in callbacks
         assert "mp:opencode-go" not in callbacks  # folded into the group
-        assert "mp:opencode-free" not in callbacks
+        assert "mp:opencode-zen" not in callbacks
+        assert "mp:opencode-free" in callbacks  # not a group member: stays single
 
     def test_group_drill_callback_resolves_mixed_case_members(self):
         # PROVIDER_GROUPS members are lowercase-declared; state providers may
         # keep raw case. The mpg: drill lookup must be case-insensitive too.
         import plugins.platforms.telegram.adapter as m
 
-        from hermes_cli.models import PROVIDER_GROUPS
+        from hermes_cli.models_catalog_static import PROVIDER_GROUPS
         assert "opencode-go" in {s for g in PROVIDER_GROUPS.values() for s in g[2]}
         state = {
             "providers": [
