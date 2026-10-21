@@ -136,9 +136,14 @@ ask_secret() {
 
 # write_env KEY VALUE upserts KEY='VALUE' into ENV_FILE (replaces any existing
 # line) and sets $KEY. Idempotent. Enforces mode 0600, atomic write, POSIX key format,
-# and explicitly rejects symbolic links to prevent credential tampering/traversal.
+# and explicitly rejects symbolic links and directories to prevent credential tampering/traversal.
 write_env() {
   local key="$1" value="$2" tmp sq="'\\''" target_dir
+
+  if [[ -d "$ENV_FILE" ]]; then
+    printf '  %s✗ ERROR: %s is a directory. ENV_FILE must be a regular file path.%s\n' "${RED:-}" "$ENV_FILE" "${RESET:-}" >&2
+    return 1
+  fi
 
   if [[ -L "$ENV_FILE" ]]; then
     printf '  %s✗ ERROR: %s is a symbolic link. Writing secrets through symlinks is prohibited for security.%s\n' "${RED:-}" "$ENV_FILE" "${RESET:-}" >&2
@@ -153,7 +158,8 @@ write_env() {
   target_dir=$(dirname "$ENV_FILE")
   [[ -d "$target_dir" ]] || mkdir -p "$target_dir"
 
-  tmp=$(mktemp)
+  # Invariant: create temp file in same directory to guarantee atomic rename on same filesystem
+  tmp=$(mktemp "${target_dir}/.env.tmp.XXXXXX" 2>/dev/null || mktemp)
   chmod 0600 "$tmp" 2>/dev/null || true
   if [[ -f "$ENV_FILE" ]]; then
     grep -vE "^${key}=" "$ENV_FILE" > "$tmp" || true

@@ -94,4 +94,30 @@ if [[ "$VAL_READ" != "test'quote'val" ]]; then
 fi
 echo "PASSED"
 
+# Test 5: Rejects directory target
+echo -n "Test 5: Rejects existing directory as ENV_FILE... "
+DIR_TARGET="$TEST_DIR/existing_dir"
+mkdir -p "$DIR_TARGET"
+ORIG_DIR_PERMS=$(stat -c "%a" "$DIR_TARGET" 2>/dev/null || stat -f "%OLp" "$DIR_TARGET")
+
+if bash -c "$(source_lib "$DIR_TARGET")
+write_env 'TEST_KEY' 'dir_overwrite'
+" 2>/dev/null; then
+  echo "FAILED: write_env should have failed when ENV_FILE is a directory"
+  exit 1
+fi
+
+NEW_DIR_PERMS=$(stat -c "%a" "$DIR_TARGET" 2>/dev/null || stat -f "%OLp" "$DIR_TARGET")
+if [[ "$NEW_DIR_PERMS" != "$ORIG_DIR_PERMS" ]]; then
+  echo "FAILED: Directory permissions altered from $ORIG_DIR_PERMS to $NEW_DIR_PERMS"
+  exit 1
+fi
+
+CHILD_COUNT=$(find "$DIR_TARGET" -type f | wc -l)
+if [[ "$CHILD_COUNT" -ne 0 ]]; then
+  echo "FAILED: Temporary file dumped inside directory ($CHILD_COUNT files found)"
+  exit 1
+fi
+echo "PASSED"
+
 echo "=== All write_env hardening tests passed! ==="

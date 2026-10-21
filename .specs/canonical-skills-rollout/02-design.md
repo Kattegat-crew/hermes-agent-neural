@@ -54,24 +54,30 @@ flowchart TD
 write_env() {
   local key="$1" value="$2" tmp sq="'\\''" target_dir
 
-  # Invariant 1: Reject symlinks unconditionally
+  # Invariant 1: Reject directories unconditionally
+  if [[ -d "$ENV_FILE" ]]; then
+    printf '  %s✗ ERROR: %s is a directory. ENV_FILE must be a regular file path.%s\n' "${RED:-}" "$ENV_FILE" "${RESET:-}" >&2
+    return 1
+  fi
+
+  # Invariant 2: Reject symlinks unconditionally
   if [[ -L "$ENV_FILE" ]]; then
-    printf '  %s✗ ERROR: %s is a symbolic link. Writing secrets through symlinks is prohibited for security.%s\n' "$RED" "$ENV_FILE" "$RESET" >&2
+    printf '  %s✗ ERROR: %s is a symbolic link. Writing secrets through symlinks is prohibited for security.%s\n' "${RED:-}" "$ENV_FILE" "${RESET:-}" >&2
     return 1
   fi
 
-  # Invariant 2: Validate POSIX variable identifier format
+  # Invariant 3: Validate POSIX variable identifier format
   if [[ ! "$key" =~ ^[A-Za-z_][A-Za-z0-9_]*$ ]]; then
-    printf '  %s✗ ERROR: Invalid variable identifier "%s". Must match POSIX format ^[A-Za-z_][A-Za-z0-9_]*$%s\n' "$RED" "$key" "$RESET" >&2
+    printf '  %s✗ ERROR: Invalid variable identifier "%s". Must match POSIX format ^[A-Za-z_][A-Za-z0-9_]*$%s\n' "${RED:-}" "$key" "${RESET:-}" >&2
     return 1
   fi
 
-  # Invariant 3: Ensure parent directory exists with safe permissions
+  # Invariant 4: Ensure parent directory exists with safe permissions
   target_dir=$(dirname "$ENV_FILE")
   [[ -d "$target_dir" ]] || mkdir -p "$target_dir"
 
-  # Invariant 4: Create temp file with 0600 mode and assemble new content
-  tmp=$(mktemp)
+  # Invariant 5: Create temp file in same directory to guarantee atomic rename on same filesystem
+  tmp=$(mktemp "${target_dir}/.env.tmp.XXXXXX" 2>/dev/null || mktemp)
   chmod 0600 "$tmp" 2>/dev/null || true
   if [[ -f "$ENV_FILE" ]]; then
     grep -vE "^${key}=" "$ENV_FILE" > "$tmp" || true
