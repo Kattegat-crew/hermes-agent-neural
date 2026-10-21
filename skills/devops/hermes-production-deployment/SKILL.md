@@ -11,7 +11,8 @@ triggers:
   - infra: coolify / langfuse / activepieces / observabilidad / monitoreo
   - multi-agente: varios agentes / perfiles / profiles
   - vps: nuevo servidor / VPS / servidor nuevo / plan de despliegue / deployment plan
-  - infra-estructura: arquitectura completa / stack completo / recursos por contenedor---
+  - infra-estructura: arquitectura completa / stack completo / recursos por contenedor
+---
 
 # Hermes Production Deployment — Agentes en Producción
 

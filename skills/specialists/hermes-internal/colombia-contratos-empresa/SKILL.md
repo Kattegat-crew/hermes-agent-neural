@@ -11,7 +11,8 @@ triggers:
   - honorarios/facturación Colombia/RUT/DIAN
   - sociedad/acciones simplificada/Cámara de Comercio
   - "cómo facturar en Colombia/registro mercantil"
-metadata:---
+metadata: {}
+---
 
 # Contratos y Constitución de Empresa en Colombia
 

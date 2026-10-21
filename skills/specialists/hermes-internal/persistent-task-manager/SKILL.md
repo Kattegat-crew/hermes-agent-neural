@@ -5,7 +5,8 @@ description: >-
 version: 1.0.0
 author: Ragnar
 license: MIT
-metadata:---
+metadata: {}
+---
 
 # Persistent Task Manager
 

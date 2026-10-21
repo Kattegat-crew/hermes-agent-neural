@@ -5,7 +5,8 @@ description: >-
 version: 1.0.0
 author: Ragnar
 license: MIT
-metadata:---
+metadata: {}
+---
 
 # Knowledge Absorption — De Fuentes a Brain
 
@@ -206,13 +207,15 @@ Cuando el usuario comparte una imagen (screenshot, gráfico, diagrama, infograf�
 
 2. **Crear página Brain con frontmatter:**
    ```markdown
-   ---
+
+---
    title: {description_short}
    type: image_analysis
    tags: [image, {chart_type|diagram|infographic}, {category}]
    created: YYYY-MM-DD
    source: local
-   ---
+
+---
 
    # {Title}
 

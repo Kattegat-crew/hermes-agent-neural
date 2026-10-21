@@ -10,7 +10,8 @@ metadata:
 triggers:
   - T&C / términos y condiciones de promoción, sorteo, rifa o ruleta
   - casino / juegos de suerte y azar / Coljuegos / bono promocional
-  - política de tratamiento de datos / aviso de privacidad Colombia (Ley 1581)---
+  - política de tratamiento de datos / aviso de privacidad Colombia (Ley 1581)
+---
 
 # Compliance de Juegos Promocionales en Colombia (casinos, ruletas, sorteos)
 

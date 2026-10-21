@@ -6,7 +6,8 @@ tags: [traduccion, translation, localizacion, glosario, chino, ingles, markdown]
 version: 1.117.3
 metadata:
         - bun
-        - npx---
+        - npx
+---
 
 # Translator
 

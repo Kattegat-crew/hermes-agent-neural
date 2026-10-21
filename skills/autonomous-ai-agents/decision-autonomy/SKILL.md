@@ -4,7 +4,8 @@ description: >-
   Use when deciding to act autonomously or ask first. Cuándo actuar sin preguntar y cuándo consultar al usuario. Evita loops de inacción (esperar confirmación que nunca llega).
 tags: [autonomia, decisiones, guardrails, escalacion, timeout, orquestacion]
 version: 1.0.0
-author: Ragnar---
+author: Ragnar
+---
 
 # Decision Autonomy — Cuándo Actuar Solo
 

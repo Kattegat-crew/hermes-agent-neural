@@ -2,7 +2,8 @@
 name: reel-pipeline
 description: >-
   Use when generating a vertical 9:16 AI reel. e imagen-a-video. Usa OpenCode Go para el 90% del trabajo (gratis) y Monid Seedance 2.0 para el realismo final (pago por clip). Pipeline de 3 capas: rustico → refinar → realismo.'
-tags: [reels, seedance, monid, vertical, video, pipeline, 9:16, ia]---
+tags: [reels, seedance, monid, vertical, video, pipeline, 9:16, ia]
+---
 
 
 # Reel Pipeline Skill

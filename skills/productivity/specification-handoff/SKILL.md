@@ -10,7 +10,8 @@ metadata:
 triggers:
   - "el usuario pide 'prepara un prompt para un editor de código' / 'implementa cambio en el repo' sin acceso de escritura"
   - "repo destino montado read-only (/opt/repos/*) y el trabajo lo ejecuta otro agente"
-  - "hay que entregar una especificación estructurada + instrucciones de implementación a AGY/OpenCode/Claude"---
+  - "hay que entregar una especificación estructurada + instrucciones de implementación a AGY/OpenCode/Claude"
+---
 
 # Specification Handoff — SPEC + PROMPT para editores externos
 

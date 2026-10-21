@@ -10,7 +10,8 @@ triggers:
   - "mejora/revisa este documento legal con los datos que tenemos / no dejes campos por llenar"
   - "T&C, política de datos, aviso de privacidad u otro entregable legal de un cliente (casino, promoción, contrato)"
   - "ocultar/omitir/spacios vacíos/PENDIENTE/[CORCHETES] en un documento para entregar"
-  - "generar un .docx profesional con portada, índice y tablas para un cliente"---
+  - "generar un .docx profesional con portada, índice y tablas para un cliente"
+---
 
 # Producción de documentos legales/compliance entregables para clientes
 

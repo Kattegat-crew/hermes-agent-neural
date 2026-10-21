@@ -6,7 +6,8 @@ tags: [funnels, deconstruccion, email, webinar, copywriting, analisis, osint]
 version: 1.0.0
 author: Ragnar
 license: MIT
-metadata:---
+metadata: {}
+---
 
 # Deconstrucción de Funnels
 

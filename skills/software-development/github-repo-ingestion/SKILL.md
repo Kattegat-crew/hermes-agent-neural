@@ -6,7 +6,8 @@ tags: [github, repos, ingestion, wiki, outline, brain-wiki, research]
 version: 1.1.0
 author: Ragnar (NeuralCrew Labs)
 metadata:
-prerequisites:---
+prerequisites: {}
+---
 
 # GitHub Repo Ingestion
 

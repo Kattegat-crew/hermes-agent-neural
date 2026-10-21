@@ -10,7 +10,8 @@ triggers:
   - T&C / términos y condiciones de una promoción que une a DOS o más empresas (cada una con su propio documento)
   - "generar documento legal por empresa / no pueden compartir documentos"
   - verificar que un .docx no tenga huecos ([CORCHETE], PENDIENTE) ni contenido contaminado de otro cliente
-  - el operador decide NO tramitar autorización de la promoción (posición: es marketing)---
+  - el operador decide NO tramitar autorización de la promoción (posición: es marketing)
+---
 
 # Paquetes de compliance para promociones de casino multi-empresa
 

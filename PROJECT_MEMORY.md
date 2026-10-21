@@ -299,6 +299,11 @@
 ---
 
 ## 3. Operational Decisions & Gotchas
+* **Skills Architecture & Hardening (2026-10-20)**:
+  - Formally specified under `.specs/canonical-skills-rollout/` (Approved).
+  - 15 stack engineering skills in `.agents/skills/` (aliased via `.skills/`), mirrored to `.claude/skills/` with zero broken symlinks, indexed in `.atl/skill-registry.md`.
+  - Hardened `template.sh` in `wizard`: `write_env` strictly rejects symlinks, validates POSIX variable identifiers (`^[A-Za-z_][A-Za-z0-9_]*$`), creates `0600` temp files, and replaces atomically (`mv -f`). Verified with `tests/test_template_hardening.sh`.
+  - Fleet catalog integrity: 100% of the 574 `SKILL.md` files pass native `_validate_frontmatter` with 0 syntax or delimiter errors.
 * **Separation of Concerns**: Kept `ARCHITECTURE.md` (static operational truth and reusable code inventory) decoupled from `PROJECT_MEMORY.md` (ephemeral session state) to protect system maps from accidental agent truncation and prevent prompt cache degradation.
 * **WhatsApp Session**: Never touch `/opt/hermes-agent-data/whatsapp/session/` (symlink `/opt/data/whatsapp/session/`).
 * **Ownership**: All project files must remain owned by `hermes:hermes`.

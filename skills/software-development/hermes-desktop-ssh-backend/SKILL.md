@@ -14,7 +14,8 @@ triggers:
   - ssh-session-token-file
   - remote Hermes install does not support
   - no aparecen bots
-  - ssh no me deja---
+  - ssh no me deja
+---
 
 # Hermes Desktop ↔ VPS por SSH (workflow estable)
 

@@ -3,7 +3,8 @@ name: hermes-ecosystem-tools
 description: >-
   Use when evaluating Hermes community plugins. Discover/evaluate Hermes Agent community plugins and skills.
 tags: [hermes, plugins, skills, evaluacion, github, ecosistema]
-category: devops---
+category: devops
+---
 
 # Hermes Ecosystem Tools
 

@@ -6,7 +6,8 @@ tags: [pip, python, pep668, instalacion, paquetes, entorno]
 version: 1.0.0
 author: hermes
 license: MIT
-metadata:---
+metadata: {}
+---
 
 # Pip Install in Broken Environment
 

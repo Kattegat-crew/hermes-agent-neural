@@ -2,7 +2,8 @@
 name: agent-fork-adaptation
 description: >-
   Use when forking an AI agent for a new company. Proceso completo para hacer fork de un agente IA existente (Hermes, Codex, Claude Code) y adaptarlo a las necesidades de una empresa. Incluye: análisis de arquitectura, documentación técnica (PRD, TRD), diseño multi-tenant, sistema de módulos/subagentes, y plan de implementación.
-tags: [fork, agente, prd, trd, multi-tenant, arquitectura, ragnar]---
+tags: [fork, agente, prd, trd, multi-tenant, arquitectura, ragnar]
+---
 
 # Agent Fork Adaptation
 

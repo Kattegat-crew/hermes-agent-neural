@@ -6,7 +6,8 @@ tags: [onboarding, setup, bootstrap, credenciales, pip, gh-cli, ambiente]
 version: 1.0.0
 author: dominus
 license: MIT
-metadata:---
+metadata: {}
+---
 
 # System Onboarding
 

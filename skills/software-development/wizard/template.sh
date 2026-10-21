@@ -135,21 +135,38 @@ ask_secret() {
 }
 
 # write_env KEY VALUE upserts KEY='VALUE' into ENV_FILE (replaces any existing
-# line) and sets $KEY. Idempotent. Enforces mode 0600 to prevent credential exposure.
+# line) and sets $KEY. Idempotent. Enforces mode 0600, atomic write, POSIX key format,
+# and explicitly rejects symbolic links to prevent credential tampering/traversal.
 write_env() {
-  local key="$1" value="$2" tmp sq="'\\''" target_file
-  target_file=$(readlink -f "$ENV_FILE" 2>/dev/null || echo "$ENV_FILE")
-  [[ -e "$target_file" ]] || (umask 077 && : > "$target_file")
+  local key="$1" value="$2" tmp sq="'\\''" target_dir
+
+  if [[ -L "$ENV_FILE" ]]; then
+    printf '  %s✗ ERROR: %s is a symbolic link. Writing secrets through symlinks is prohibited for security.%s\n' "${RED:-}" "$ENV_FILE" "${RESET:-}" >&2
+    return 1
+  fi
+
+  if [[ ! "$key" =~ ^[A-Za-z_][A-Za-z0-9_]*$ ]]; then
+    printf '  %s✗ ERROR: Invalid variable identifier "%s". Must match POSIX format ^[A-Za-z_][A-Za-z0-9_]*$%s\n' "${RED:-}" "$key" "${RESET:-}" >&2
+    return 1
+  fi
+
+  target_dir=$(dirname "$ENV_FILE")
+  [[ -d "$target_dir" ]] || mkdir -p "$target_dir"
+
   tmp=$(mktemp)
   chmod 0600 "$tmp" 2>/dev/null || true
-  grep -vE "^${key}=" "$target_file" > "$tmp" || true
+  if [[ -f "$ENV_FILE" ]]; then
+    grep -vE "^${key}=" "$ENV_FILE" > "$tmp" || true
+  fi
   printf "%s='%s'\n" "$key" "${value//\'/$sq}" >> "$tmp"
-  cat "$tmp" > "$target_file"
-  chmod 0600 "$target_file" 2>/dev/null || true
-  rm -f "$tmp"
+
+  chmod 0600 "$tmp" 2>/dev/null || true
+  mv -f "$tmp" "$ENV_FILE"
+  chmod 0600 "$ENV_FILE" 2>/dev/null || true
+
   printf -v "$key" '%s' "$value"
   WRITTEN_ENV+=("$key")
-  printf '  %s✓ wrote%s %s → %s (mode 0600)\n' "$GREEN" "$RESET" "$key" "$ENV_FILE"
+  printf '  %s✓ wrote%s %s → %s (mode 0600, atomic)\n' "${GREEN:-}" "${RESET:-}" "$key" "$ENV_FILE"
 }
 
 # set_secret NAME VALUE sets a GitHub Actions repo secret via gh. Falls back

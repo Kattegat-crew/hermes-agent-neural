@@ -10,7 +10,8 @@ triggers:
   - juego promocional/juego de azar/Coljuegos/casino
   - juego responsable/Ley 1581 de 2012/Ley 2300 de 2023
   - reporte de compliance/promoción digital con azar
-metadata:---
+metadata: {}
+---
 
 # Promociones y Marketing — Documentos Legales en Colombia
 

@@ -6,7 +6,8 @@ tags: [manuales, entregables, docx, pdf, clientes, neuralcrew, casino, operativo
 version: 1.0.0
 author: hermes
 license: MIT
-metadata:---
+metadata: {}
+---
 
 # Manuales y entregables operativos para clientes (NeuralCrew Labs)
 

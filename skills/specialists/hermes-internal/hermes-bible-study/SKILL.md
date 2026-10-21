@@ -24,7 +24,8 @@ triggers:
   - hermes kanban
   - hermes delegation patterns
   - hermes overnight
-  - hermes autonomous---
+  - hermes autonomous
+---
 
 # The Hermes Bible — Community Knowledge Base
 

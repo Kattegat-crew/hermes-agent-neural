@@ -6,7 +6,8 @@ tags: [discord, reportes, notificaciones, mensajeria]
 version: 1.0.0
 author: Ragnar
 license: MIT
-metadata:---
+metadata: {}
+---
 
 # Discord Reporter
 

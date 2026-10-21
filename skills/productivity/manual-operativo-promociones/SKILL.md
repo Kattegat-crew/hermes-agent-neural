@@ -10,7 +10,8 @@ metadata:
 triggers:
   - manual para cajeras o personal de local de casino
   - promocion presencial (bingo, ruleta, sorteos) que necesita instrucciones operativas por local
-  - manual a partir de terminos y condiciones de una promocion de casino---
+  - manual a partir de terminos y condiciones de una promocion de casino
+---
 
 # Manual operativo de promociones (personal de local / cajeras)
 

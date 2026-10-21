@@ -6,7 +6,8 @@ tags: [video, ffmpeg, pil, animacion, rendering, mp4, motion]
 version: 1.0.0
 author: hermes
 license: MIT
-metadata:---
+metadata: {}
+---
 
 # PIL + ffmpeg Animation Rendering
 
