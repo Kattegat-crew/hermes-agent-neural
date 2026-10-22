@@ -45,6 +45,19 @@ re-dibujado, ver `reel-voice-lipsync` (sync-lipsync de fal).
    contra la guía nativa → aprobar con **Δ medio ≤0.1s**. Y QA de nivel:
    `ffmpeg -i mixed.mp4 -map 0:a -filter:a volumedetect` → mean_volume ≈ nivel del clip fuente (−17 dB).
 
+## Montaje multi-escena con onsets manuales (validado 19-oct-2026, master Golden 20s)
+
+Cuando hay varios clips (S01..S04) que deben entrar en un timeline duro (p. ej. 20.00s) y
+fit_voice da pads falsos o atempo <0.7, NO usar los WAV fitados. Receta:
+
+1. **Onset real del habla nativa por clip**: `ffmpeg -i clip.mp4 -af silencedetect=noise=-32dB:d=0.25 -f null -` → primer silence_end = onset (más fiable que whisper para el arranque).
+2. **Presupuestar el timeline** por segmento: `dur_seg >= onset + dur_tts + cola`, recortando video (`trim=start=0:duration=…`) y audio (`adelay=<ms>|<ms>,apad,atrim=0:<dur_seg>` por toma, luego `concat=n=5:v=0:a=1`).
+3. **Cola gráfica**: estirar el último clip con `tpad=stop_mode=clone:stop_duration=…` y montar la cartela legal con `drawtext` + `textfile=` (3 archivos .txt evitan escapar `:` y `·` en el filtro).
+4. **loudnorm VA DENTRO de filter_complex** (`concat=…,loudnorm=I=-16:TP=-1.0:LRA=11[aout]`): `-af` y `-filter_complex` no combinan sobre el mismo stream mapeado — con `-af` falla o se ignora.
+5. **QA obligatorio**: (a) STT del MASTER final con faster-whisper — las líneas deben salir completas, en orden, en los tiempos previstos y nada cortado; (b) `ebur128` → I ≈ −16 LUFS; (c) frame de la cartela recortado (`crop`) pasado a visión para verificar legibilidad/sin cortes.
+
+Resultado verificado: 5 líneas STT en 0.27/2.91/6.17/10.67/12.77s, −15.1 LUFS, sincronía aceptable sin atempo artificial.
+
 ## Reglas del proyecto (no negociables)
 
 - **Nada de pago sin OK explícito del Admin** (este mix cuesta $0, pero el clip que lo

@@ -51,3 +51,25 @@ WHERE chat_id=? ORDER BY last_activity_at DESC LIMIT 10;
 1. `cronjob_manage(action='list')` → confirmar `last_status: ok` y el `deliver` correcto.
 2. Leer el archivo de salida de esa corrida y ver si tiene texto (texto = mensaje enviado; vacío = silencio).
 3. Cruzar con `gateway.log` cuando la entrega pasa por el gateway.
+
+## Receta de continuidad multi-canal («¿en qué nos quedamos?»)
+
+Cuando el usuario pregunta por un hilo que vivió en OTRO canal (Telegram/WhatsApp/Discord):
+
+1. **Identificar el canal real por el JSON de origen** embebido en el `content` del mensaje del usuario (`{"platform": "telegram", "chat_id": "8709909260", "chat_type": "dm", ...}`) — no asumir el canal actual de la sesión.
+2. **Listar las sesiones DM de ese chat:**
+   ```sql
+   SELECT id, chat_id, source, chat_type,
+          datetime(started_at,'unixepoch','-5 hours') AS inicio, message_count
+   FROM sessions WHERE chat_id=? AND chat_type='dm'
+   ORDER BY started_at DESC;
+   ```
+   La sesión viva es la de `message_count` alto con `ended_at` NULL. Las columnas de época (`timestamp`, `started_at`) vienen en UTC: convertir SIEMPRE con `datetime(x,'unixepoch','-5 hours')` para Bogotá antes de citar horas.
+3. **Leer el último intercambio user→assistant del tema** y barrer por palabras clave para confirmar que no hubo respuestas posteriores del usuario (si las hubo, los pendientes listados ya no están vigentes):
+   ```sql
+   SELECT id, datetime(timestamp,'unixepoch','-5 hours'),
+          substr(replace(content,char(10),' '),1,160)
+   FROM messages WHERE role='user' AND timestamp > strftime('%s','YYYY-MM-DD')
+     AND (content LIKE '%<tema>%' OR content LIKE '%<sinónimo>%');
+   ```
+4. **Reportar citando sesión `id` + fecha/hora Bogotá**, separando explícitamente lo ya acordado de lo pendiente de respuesta del usuario. No inventar el estado: si el último turno fue del asistente, decir que no hubo respuesta.

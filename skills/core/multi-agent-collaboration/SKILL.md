@@ -62,7 +62,33 @@ Un handoff NUNCA se hace diciendo únicamente *"te toca"*. Debe contener evidenc
 
 ---
 
-## 3. Prevención de Bucles en Canales Compartidos de Discord
+### 2.b Buzón inter-agente asíncrono (`agent_exchange`, PROD)
+
+Para encargos/tareas formales a otro agente de la flota (ej. Ragnar→Bob) o escalaciones asíncronas, el canal canónico es el buzón de archivos, no un mensaje de chat:
+
+- **Rutas**: enviar a `/opt/data/inbox/<agente>/pending/ticket-*.json`; el watcher del destino lo reclama en ≤5 min (pasa a `processing/` y cierra en `done/` con `respuesta` y `evidencia`). Los entrantes de otros agentes caen en `/opt/data/inbox/<yo>/from-<remitente>/`.
+- **Schema del ticket** (JSON válido obligatorio): `id` (convención `ticket-YYYYMMDD-<agente>-NNN`, secuencia según `done/`), `de`, `asunto`, `tarea` (texto completo del encargo/informe), `archivos: []`, `intentos_fallidos: []`, `canal_entrega`, `prioridad`, `creado_en` (ISO UTC).
+- **`canal_entrega`**: prefijos válidos según `agent_exchange.py` → `VALID_DELIVERY_PREFIXES = ("/opt/data/", "whatsapp:", "bot-chat:", "telegram:")`. Para que el resultado le llegue al agente destino en su propio chat usar `bot-chat:<perfil>`; cualquier otro valor es rechazado por el watcher.
+- **Verificación de la entrega**: escribir el JSON localmente, validarlo con `json.load`, `scp` al `pending/`, y verificar leyéndolo de vuelta en PROD. Alinear dueño con la convención del buzón (`chown 10000:10000`) — los tickets previos lo usan.
+- **Pitfall — buzón entrante pasivo**: NO existe cron que notifique archivos nuevos en `from-<agente>/`; solo se descubren consultando la carpeta (u ofreciendo al usuario un watcher que avise por `bot-chat:<yo>`). Nunca asumir que "no llegó nada" sin listar el directorio.
+
+---
+
+### 2.c Ticket Kanban como canal de handoff durable
+
+Para trabajo que cruza agentes y debe sobrevivir reinicios, requerir decision humana o dejar auditoria: **la tarjeta Kanban** (`kanban_create`), no el chat ni el buzon. Detalle, latencias medidas y pitfalls en `references/kanban-ticket-handoff.md`.
+
+Reglas nucleo:
+- `assignee` debe ser un perfil real (`ls /opt/hermes-agent-data/profiles/`); si no existe, el spawn falla y se auto-bloquea por `failure_limit`.
+- El hijo hereda `summary` + `metadata` del padre verbatim: el padre cierra con rutas absolutas, hashes, tests y costos.
+- Cerrar siempre con `kanban_complete(...)` o `kanban_block(kind=..., reason=...)`; salir sin eso es `protocol_violation`.
+- Latencia DEV medida: creada -> reclamada 38 s; padre `done` -> hijo arranca 28 s. El cuello de botella no es el transporte, es coordinar por reloj (crons) o por chat (humano de rele).
+- **Regla de Ragnar**: orquesta, pero ejecuta directo cuando es verificacion independiente, trabajo sin dueno en la flota, urgencia de infraestructura, peticion explicita del Admin, o cuando delegar cuesta mas que hacerlo.
+- Limite duro: cada worker es un proceso OS completo con su modelo y MCP -> 2-3 concurrentes realistas en DEV (4 cores / 7.9 GB), aunque `derive_default_max_in_progress()` devuelva 8.
+
+---
+
+## 3. Prevencion de Bucles en Canales Compartidos de Discord
 
 En canales donde conviven varios agentes (ej. `#video-prod`, `#operaciones`):
 

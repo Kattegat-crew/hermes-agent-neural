@@ -78,6 +78,8 @@ del mp4 → primero explicar "silencia el audio del clip en CapCut" antes de toc
 
 - `elevenlabs_client.py --stts` del repo puede devolver salida no-audio (bug wrapper): llamar el endpoint directo con `Accept: audio/mpeg` y decodificar con ffmpeg.
 - El atempo >1.08 se nota (voz apurada); si la voz excede mucho el clip, recortar texto, no estirar más.
+- **PITFALL GRAVE — el `pad` de fit_voice puede ser FALSO (verificado 19-oct-2026, Golden reel2)**: el pad depende de los timestamps de palabra de whisper sobre el audio NATIVO, y whisper puede perder la primera frase → pad inflado (S01 reportó pad=2.48s cuando el habla real empieza en 0.62s; mean delta -0.24s «inaceptable» sin causa real). SIEMPRE cruzar el `pad` del reporte contra `ffmpeg -af silencedetect=noise=-32dB:d=0.25` del clip ANTES de usar el WAV fitado. Si difieren >0.5s, descartar el fit y colocar la voz natural (atempo 1.0) manualmente en el onset real (ver `reel-audio-mixing`, montaje multi-escena con onsets manuales).
+- Igual criterio para el atempo: si fit_voice pide atempo <0.7 (voz de marca 30%+ más lenta que la nativa = suena borracha), NO estirar; colocar la voz natural en el onset nativo y verificar con STT del master final.
 - `sync-lipsync` v2 puede no existir/NoFound: el modelo base `fal-ai/sync-lipsync` verificado vivo 29/08.
 - El wrapper de Monid (`monid-client.py`) no acepta params de audio/lipsync — la corrección de voz SIEMPRE es capa posterior, no parámetro de generación.
 - El output de lipsync recorta el video a la duración de la voz: para tails sin diálogo, concatenar el tail desde el clip original en CapCut.

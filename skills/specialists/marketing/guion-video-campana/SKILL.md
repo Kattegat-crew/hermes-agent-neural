@@ -41,5 +41,12 @@ Workflow probado (Reel 2 Chiquinquirá Lucky y Reel 2 Pacho Golden, sept 2026).
 ## Voz
 - Clips con voz nativa Seedance (generate_audio + DIALOGUE) para que el usuario monte los WAVs ElevenLabs en CapCut (método aprobado). fal sync-lipsync RECHAZADO por el usuario («muy fea») → fit_voice SIEMPRE.
 
+## Versionado post-aprobación (el Admin cambia duración/literal en chat, oct 2026)
+- Si el Admin cambia duración o locución DESPUÉS de aprobar un guion (ej. 30 s → 20 s), NO editar el lote aprobado: crear carpeta nueva `reel2-<tema>-v0X/` (cp -r), editar `guion-cerrado.md` A MANO (el generador nunca la sobreescribe), regenerar los 10 prompts (imagen+video) con un script propio en `scripts/` que reutilice MASTER/REFS/`video_prompt` del preparador v2 del repo m-c-g (sin duplicar lógica), y mover el lote viejo a `assets/campanas/<campana>/_archive/<motivo>-<fecha>/`. Registrar el cambio en `.specs/<tarea>/01-spec.md` con costo recalculado.
+- El video se cobra por SEGUNDO GENERADO, no por el target: objetivo 20 s → 23–25 s generados (se recorta la cartela en post). Presupuestar con los totales reales de `lote-preparado.json` (imágenes+video), nunca con el target.
+- Literal canónico en PROD (`GUIONES-V2-APROBADOS-LITERAL.md`): no editar la tabla original; hacer `cp -p` a `.bak-<fecha>` y APPEND de una sección «AJUSTES VIGENTES DEL ADMINISTRADOR» que prevalece sobre la tabla.
+- Handoff con Bob vía `agent_exchange.py` (PROD `/opt/data/scripts`): `send --from ragnar --tarea "<cuerpo>"` — ojo, `--deliver` es un CANAL de entrega (default `bot-chat:ragnar`), no el mensaje; el cuerpo va en `--tarea`. Tickets solo-informativos se marcan «INFORMATIVO (no ejecutar):» para que Bob no actúe.
+- Marcadores `guion-cerrado.md.drive-conflicto` del sync XLSX↔Drive: son notas de texto del detector (ruta canónica vs. ruta alternativa), NO datos. Si el repo es la verdad, borrar el marcador y dejar que el próximo sync suba la versión del repo.
+
 ## Referencias
 - `references/keyframe-despliegue-y-oauth.md` — receta completa: diagnóstico del cache-buster en prod, subida de keyframes vía ssh/scp, y credencial de Drive por ActivePieces cuando google_token.json expira.

@@ -76,6 +76,33 @@ python3 -c "import yaml; yaml.safe_load(open('/opt/hermes-agent-data/profiles/ro
 
 ---
 
+## 4. OpenCode Zen (`OpenCode-Go`) — proveedor fallback de la flota
+
+Configurado en DEV y PROD como fallback cuando NaN falla: `https://opencode.ai/zen/go/v1`
+con 4 modelos (`mimo-v2.6-flash`, `qwen3.8-flash`, `deepseek-v4-flash`, `glm-5.3-flash`).
+
+Al probar la API manualmente (curl/scripts), cuidado con estos tres comportamientos:
+1. **Cloudflare bloquea por User-Agent**: un UA tipo `python-requests` recibe HTTP 403
+   aunque la key sea válida. Probar con `curl` usando un UA de navegador.
+2. **Header obligatorio `x-opencode-session`**: sin él el endpoint devuelve HTTP 400
+   `MissingSessionID`. Hermes lo envía nativamente en cada request
+   (`agent/opencode_affinity.py`), así que solo afecta a pruebas manuales.
+3. **Key expirada**: responde HTTP 401 con cuerpo `api_key_expired` — distinguir del
+   403 de Cloudflare (que no implica nada sobre la key).
+
+### Rotación de key y recarga bajo s6 (verificado 19/10/2026)
+
+Al rotar `${OPENCODE_GO_API_KEY}` en `/opt/data/.env`:
+- El env del contenedor (`/run/s6/container_environment/`) queda **congelado con la key
+  vieja** hasta recrear el contenedor — NO es la fuente efectiva.
+- Hermes llama `load_hermes_dotenv()` al importar cada proceso y carga `HERMES_HOME/.env`
+  con **`override=True`** (`hermes_cli/env_loader.py:506`), pisando el env heredado.
+- Consecuencia: **basta un `s6-svc -r` del servicio** (no recreate del contenedor) para
+  que el proceso nuevo cargue la key nueva.
+- Verificación sin `/proc/<pid>/environ` (puede dar Permission denied dentro del
+  contenedor): comprobar que el proceso arrancó DESPUÉS del mtime del `.env`
+  (`s6-svstat` vs `stat -c %y /opt/data/.env`) + llamada real HTTP 200 a un modelo.
+
 ## Gotchas y Errores Críticos con Proveedores
 
 1. **Reinicio de procesos**: Modificar `config.yaml` no surte efecto inmediato si el daemon de Hermes ya está corriendo en memoria. Si el cambio es para un cron o servicio persistente, reiniciar el servicio o proceso afectado.
