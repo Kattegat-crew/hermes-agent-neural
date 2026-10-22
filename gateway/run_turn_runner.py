@@ -36,6 +36,13 @@ if TYPE_CHECKING:  # string annotations only; never imported at runtime (cycle)
 # Log-record parity with the origin module.
 logger = logging.getLogger("gateway.run")
 
+
+@dataclasses.dataclass(frozen=True)
+class _ProgressStatusUpdate:
+    """Heartbeat text and routing metadata consumed by the per-turn progress writer."""
+    text: str
+    metadata: Any = None
+
 # Consecutive turns a session's persisted transcript may lag its live cached history before
 # _load_turn_history escalates the lag line from WARNING to ERROR (#114266: 11 days of WARNING).
 _TRANSCRIPT_LAG_ESCALATION_TURNS = 3
@@ -289,19 +296,18 @@ class TurnRunner:
                         else t("gateway.progress.tool_pending", emoji=emoji, tool=tool_name))
             ctx.progress_queue.put(code)
             return None
-        if code is not None:
+        is_replace = getattr(ctx, "progress_grouping", "accumulate") == "replace"
+        if code is not None and not is_replace:
             return code
-        if not preview:
+        if not preview and not args:
             return t("gateway.progress.tool_pending", emoji=emoji, tool=tool_name)
         from agent.display import get_tool_verb, prepare_tool_preview, tool_verb_connector, verb_drops_preview
-        prepared = prepare_tool_preview(tool_name, args, fallback=preview, max_len=self._preview_cap())
-        preview = adapter.format_tool_preview(prepared) if adapter is not None else prepared.text
-        # Friendly labels: human-phrased line for built-in tools ("🔍 Searching the web for ...")
-        # by prefixing the verb onto the computed preview, so the command/url/query is kept.
+        prepared = prepare_tool_preview(tool_name, args, fallback=preview or "", max_len=self._preview_cap())
+        preview_text = adapter.format_tool_preview(prepared) if adapter is not None else prepared.text
         verb = get_tool_verb(tool_name)
         if not verb:
-            return t("gateway.progress.tool_preview", emoji=emoji, tool=tool_name, preview=preview)
-        return f"{emoji} {verb}" if verb_drops_preview(tool_name) else f"{emoji} {verb}{tool_verb_connector(tool_name)}{preview}"
+            return t("gateway.progress.tool_preview", emoji=emoji, tool=tool_name, preview=preview_text)
+        return f"{emoji} {verb}" if verb_drops_preview(tool_name) else f"{emoji} {verb}{tool_verb_connector(tool_name)}{preview_text}"
 
     def _progress_emit(self, msg: str) -> None:
         """Dedup consecutive identical lines (execute_code boilerplate), then route to the native
@@ -364,6 +370,9 @@ class TurnRunner:
             return self.tasks[call_id]
 
         def apply_event(self, raw: Any) -> bool:
+            if isinstance(raw, _ProgressStatusUpdate):
+                self._upsert("__heartbeat__", raw.text)
+                return True
             event_type = raw.get("type") if isinstance(raw, dict) else None
             if event_type not in {"tool.started", "tool.completed"}:
                 return False
@@ -545,9 +554,14 @@ class TurnRunner:
         _progress_len_fn: Any
         _PROGRESS_TEXT_LIMIT: int
         _edit_accepts_metadata: bool
+        metadata: Any
+        heartbeat_update: bool = False
+        suppress_replace_updates: bool = False
+        edit_retry_at: float = 0.0
 
     def _progress_edit_state(self, adapter) -> TurnRunner._ProgressEditState:
         ctx = self._ctx
+        edit_method = getattr(adapter, "edit_message", None)
         len_fn = adapter.message_len_fn if isinstance(adapter, BasePlatformAdapter) else len
         try:
             raw_limit = int(getattr(adapter, "MAX_MESSAGE_LENGTH", 4000) or 4000)
@@ -567,7 +581,8 @@ class TurnRunner:
             # Leave room for platform quirks / formatting; tiny test adapters keep a usable limit.
             _PROGRESS_TEXT_LIMIT=max(1, raw_limit - (64 if raw_limit > 128 else 0)),
             # Overflow edits pass metadata (Telegram topic/thread routing) only when edit_message takes it.
-            _edit_accepts_metadata=bool(ctx._progress_metadata) and _accepts_keyword(adapter.edit_message, "metadata"),
+            _edit_accepts_metadata=callable(edit_method) and _accepts_keyword(edit_method, "metadata"),
+            metadata=ctx._progress_metadata,
         )
 
     async def _edit_progress_message(self, st, message_id: str, content: str):
@@ -576,7 +591,7 @@ class TurnRunner:
         if getattr(st.adapter, "REQUIRES_EDIT_FINALIZE", False):
             kwargs["finalize"] = True
         if st._edit_accepts_metadata:
-            kwargs["metadata"] = ctx._progress_metadata
+            kwargs["metadata"] = st.metadata
         return await st.adapter.edit_message(**kwargs)
 
     @staticmethod
@@ -598,7 +613,8 @@ class TurnRunner:
     async def _send_progress_text(self, st, text: str):
         ctx = self._ctx
         result = await st.adapter.send(
-            chat_id=ctx.source.chat_id, content=text, reply_to=ctx._progress_reply_to, metadata=ctx._progress_metadata,
+            chat_id=ctx.source.chat_id, content=text, reply_to=ctx._progress_reply_to,
+            metadata=getattr(st, "metadata", ctx._progress_metadata),
         )
         self._track_progress_result(result)
         return result
@@ -645,6 +661,25 @@ class TurnRunner:
 
     def _progress_absorb(self, st, raw) -> Any:
         """Fold a queue item into the bubble buffer; returns the line to render this tick."""
+        st.heartbeat_update = isinstance(raw, _ProgressStatusUpdate)
+        if st.heartbeat_update:
+            st.metadata = raw.metadata
+            raw = raw.text
+        else:
+            st.metadata = getattr(self._ctx, "_progress_metadata", None)
+        is_replace = (
+            getattr(self._ctx, "progress_grouping", "accumulate") == "replace"
+            or getattr(st, "progress_grouping", "accumulate") == "replace"
+        )
+        if is_replace:
+            if isinstance(raw, tuple) and len(raw) == 3 and raw[0] == "__dedup__":
+                _, base_msg, count = raw
+                line = f"{base_msg} (×{count + 1})"
+            else:
+                line = str(raw)
+            st.progress_lines = [line]
+            return line
+
         if isinstance(raw, tuple) and len(raw) == 3 and raw[0] == "__dedup__":
             _, base_msg, count = raw
             if not st.progress_lines:
@@ -690,6 +725,11 @@ class TurnRunner:
         Transient network errors (ConnectError, timeouts) must not disable editing; only permanent
         failures (not found, permissions) set can_edit=False. Flood control backs off but keeps editing.
         """
+        is_replace = self._ctx.progress_grouping == "replace"
+        if is_replace and st.suppress_replace_updates:
+            return True
+        if st.edit_retry_at and time.monotonic() < st.edit_retry_at:
+            return True
         if st.can_edit and st.progress_msg_id is not None:
             result = await self._edit_progress_message(st, st.progress_msg_id, "\n".join(st.progress_lines))
             if result.success:
@@ -699,14 +739,28 @@ class TurnRunner:
                 return False
             if any(w in (getattr(result, "error", "") or "").lower() for w in ("flood", "retry after")):
                 logger.info("[%s] Progress edit flood control, backing off", st.adapter.name)
+                retry_after = getattr(result, "retry_after", None)
+                try:
+                    delay = float(retry_after) if retry_after is not None else 1.5
+                except (TypeError, ValueError):
+                    delay = 1.5
+                st.edit_retry_at = time.monotonic() + max(1.5, min(delay, 300.0))
+                return True
             else:
                 st.can_edit = False
+            if is_replace and not st.can_edit:
+                # Once an existing replace bubble cannot be edited, neither heartbeat nor tool
+                # status can safely create a second bubble while the original may remain visible.
+                st.suppress_replace_updates = True
+                return True
             await self._send_progress_text(st, msg)
             return True
         # First tool: send all accumulated text as a new message; editing unsupported: just this line.
         result = await self._send_progress_text(st, "\n".join(st.progress_lines) if st.can_edit else msg)
         if result.success and result.message_id:
             st.progress_msg_id = result.message_id
+        if is_replace and not st.can_edit and result.success and result.message_id:
+            st.suppress_replace_updates = True
         return True
 
     async def send_progress_messages(self):
@@ -721,10 +775,10 @@ class TurnRunner:
         # each update would be a separate bubble. getattr, not attribute access: duck-typed
         # adapters (test fakes, minimal plugins) may lack edit_message — treated as "can't edit".
         adapter_edit = getattr(type(adapter), "edit_message", None)
-        if adapter_edit is None or adapter_edit is BasePlatformAdapter.edit_message:
-            self._drain_progress_queue()
-            return
+        supports_edit = adapter_edit is not None and adapter_edit is not BasePlatformAdapter.edit_message
         st = self._progress_edit_state(adapter)
+        if not supports_edit:
+            st.can_edit = False
         last_edit_ts = 0.0
         EDIT_INTERVAL = 1.5  # Minimum seconds between edits (Telegram flood control)
         while True:
@@ -740,6 +794,8 @@ class TurnRunner:
                     continue
                 if self._is_reset_marker(raw):
                     self._reset_progress_bubble(st)
+                    continue
+                if not supports_edit and not isinstance(raw, _ProgressStatusUpdate):
                     continue
                 msg = self._progress_absorb(st, raw)
                 if not await self._roll_progress_overflow_if_needed(st):

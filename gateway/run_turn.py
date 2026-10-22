@@ -2968,11 +2968,16 @@ class GatewayTurnMixin:
         _generic_status_recent: list[str] = []
         _generic_status_catalog = resolve_status_phrase_catalog(user_config, platform_key)
 
+        from gateway.display_config import is_multi_agent_chat
+        _is_multi_agent = is_multi_agent_chat(source, user_config=user_config, adapter=adapter)
+
         def _display_surface_mode(
             setting: str, *, default: bool = False,
             require_platform_override_for: set[Any] | None = None, allow_generic: bool = False,
         ) -> str:
             """Return off|raw|generic for a gateway visibility surface."""
+            if _is_multi_agent and setting in {"long_running_notifications", "interim_assistant_messages", "thinking_progress"}:
+                return "off"
             if require_platform_override_for:
                 current_platform = _gateway_platform_value(source.platform)
                 platform_only = {_gateway_platform_value(item) for item in require_platform_override_for}
@@ -2998,9 +3003,14 @@ class GatewayTurnMixin:
                         if kind in {"heartbeat", "waiting", "long_running", "status"}
                         else t("gateway.progress.status_fallback_short"))
 
+        from gateway.display_config import is_multi_agent_chat
+        _is_multi_agent = is_multi_agent_chat(source, user_config=user_config, adapter=adapter)
+
         # Webhooks can't edit messages, so tool progress / log mode are off there.
         is_webhook = source.platform == Platform.WEBHOOK
-        tool_progress_enabled = progress_mode not in {"off", "log"} and not is_webhook
+        tool_progress_enabled = progress_mode not in {"off", "log"} and not is_webhook and not _is_multi_agent
+        if _is_multi_agent:
+            progress_mode = "off"
         # Live status for text-rendering typing indicators (Slack); independent of tool_progress.
         _live_status_mode = resolve_display_setting(user_config, platform_key, "live_status", "full")
         _live_status_adapter = (
@@ -3036,6 +3046,9 @@ class GatewayTurnMixin:
                 _native_slack_task_cards = bool(adapter.native_task_cards_enabled())
             except Exception:
                 logger.debug("Slack native task-card config check failed", exc_info=True)
+        _long_running_mode = _display_surface_mode(
+            "long_running_notifications", default=True, allow_generic=True,
+        )
         return self._RunAgentDisplay(
             user_config=user_config, platform_key=platform_key, enabled_toolsets=enabled_toolsets,
             disabled_toolsets=disabled_toolsets, resolve_display_setting=resolve_display_setting,
@@ -3046,7 +3059,10 @@ class GatewayTurnMixin:
             log_queue=queue.Queue() if log_mode_enabled else None,
             interim_assistant_messages_enabled=interim_assistant_messages_enabled,
             _thinking_enabled=_thinking_enabled, _native_slack_task_cards=_native_slack_task_cards,
-            needs_progress_queue=tool_progress_enabled or _thinking_enabled or _native_slack_task_cards,
+            needs_progress_queue=(
+                tool_progress_enabled or _thinking_enabled or _native_slack_task_cards
+                or _long_running_mode != "off"
+            ),
             _generic_status_phrase=_generic_status_phrase,
         )
 
@@ -4194,31 +4210,40 @@ class GatewayTurnMixin:
         no longer owns the session slot or the executor finished. ``_executor_task_holder[0]`` is
         bound just after this task is scheduled (reads as None until then).
 
-        Interval: agent.gateway_notify_interval / HERMES_AGENT_NOTIFY_INTERVAL (default 180s; 0 or
+        Interval: agent.gateway_notify_interval / HERMES_AGENT_NOTIFY_INTERVAL (default 20s; <= 0 or
         long_running_notifications=off disables)."""
-        from gateway.run import _float_env, _interim_metadata, _non_conversational_metadata
+        from gateway.run import (
+            _interim_metadata,
+            _non_conversational_metadata,
+            format_duration_es,
+            resolve_gateway_notify_interval,
+        )
+        from gateway.activity_labels import activity_label
+        from gateway.run_turn_runner import _ProgressStatusUpdate
+
         _notify_start = time.time()
-        _NOTIFY_INTERVAL = _float_env("HERMES_AGENT_NOTIFY_INTERVAL", 180)
+        _cfg = getattr(disp, "user_config", None)
+        _NOTIFY_INTERVAL = resolve_gateway_notify_interval(_cfg)
         _long_running_mode = disp._display_surface_mode("long_running_notifications", default=True, allow_generic=True)
         if _NOTIFY_INTERVAL <= 0 or _long_running_mode == "off":
             return
         source, session_key, agent_holder = turn_ctx.source, turn_ctx.session_key, turn_ctx.agent_holder
         _status_thread_metadata = turn_ctx._status_thread_metadata
-        _notify_adapter = self._delivery_adapter_for(source)
-        if not _notify_adapter:
+        if not turn_ctx.progress_queue:
             return
-        _heartbeat_msg_id: Optional[str] = None
         while True:
             await asyncio.sleep(_NOTIFY_INTERVAL)
             if not self._should_emit_long_running_notification(
                 session_key, agent_holder[0], _executor_task_holder[0]
             ):
                 break
-            _elapsed_mins = int((time.time() - _notify_start) // 60)
+            _elapsed_s = int(time.time() - _notify_start)
+            _elapsed_mins = int(_elapsed_s // 60)
+            _elapsed_str = format_duration_es(_elapsed_s)
             # Terse heartbeat by default; the iteration counter is gated on busy_ack_detail.
             _status_detail = ""
             _want_iteration_detail = bool(
-                disp.resolve_display_setting(disp.user_config, disp.platform_key, "busy_ack_detail", True)
+                disp.resolve_display_setting(disp.user_config, disp.platform_key, "busy_ack_detail", False)
             )
             _a = self._agent_activity_summary(agent_holder[0])
             with suppress(Exception):
@@ -4226,7 +4251,7 @@ class GatewayTurnMixin:
                     _parts = []
                     if _want_iteration_detail:
                         _parts.append(format_iteration_progress(_a["api_call_count"], _a["max_iterations"]))
-                    _action = _a.get("current_tool") or _a.get("last_activity_desc")
+                    _action = activity_label(_a) or _a.get("current_tool") or _a.get("last_activity_desc")
                     if _action:
                         _parts.append(str(_action))
                     if _parts:
@@ -4234,33 +4259,16 @@ class GatewayTurnMixin:
             _heartbeat_text = (
                 disp._generic_status_phrase("status")
                 if _long_running_mode == "generic"
-                else t("gateway.progress.working_heartbeat", minutes=_elapsed_mins, detail=_status_detail)
+                else t("gateway.progress.working_heartbeat", duration=_elapsed_str, minutes=max(1, _elapsed_mins), detail=_status_detail)
             )
-            try:
-                _notify_res = None
-                if _heartbeat_msg_id:
-                    try:
-                        _notify_res = await _notify_adapter.edit_message(source.chat_id, _heartbeat_msg_id, _heartbeat_text)
-                    except Exception as _ee:
-                        logger.debug("Heartbeat edit failed: %s", _ee)
-                        _notify_res = None
-                if not (_notify_res and getattr(_notify_res, "success", False)):
-                    # The edit above awaited; a drain/restart notice may have gone out meanwhile, and
-                    # a fresh "Working" bubble after it reads as a contradiction (#10990).
-                    if not self._should_emit_long_running_notification(
-                        session_key, agent_holder[0], _executor_task_holder[0]
-                    ):
-                        break
-                    _notify_res = await _notify_adapter.send(
-                        source.chat_id, _heartbeat_text,
-                        metadata=_interim_metadata(_non_conversational_metadata(_status_thread_metadata, platform=source.platform)),
-                    )
-                    if getattr(_notify_res, "success", False) and getattr(_notify_res, "message_id", None):
-                        _heartbeat_msg_id = str(_notify_res.message_id)
-                        if turn_ctx._cleanup_progress:
-                            turn_ctx._cleanup_msg_ids.append(_heartbeat_msg_id)
-            except Exception as _ne:
-                logger.debug("Long-running notification error: %s", _ne)
+            if not self._should_emit_long_running_notification(
+                session_key, agent_holder[0], _executor_task_holder[0]
+            ):
+                break
+            metadata = _interim_metadata(
+                _non_conversational_metadata(_status_thread_metadata, platform=source.platform)
+            )
+            turn_ctx.progress_queue.put(_ProgressStatusUpdate(_heartbeat_text, metadata))
 
     async def _run_agent_inner(
         self, message: str, context_prompt: str, history: list[dict[str, Any]],

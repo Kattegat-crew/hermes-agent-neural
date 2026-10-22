@@ -815,7 +815,7 @@ gateway:
     timeout_stuck_tool: "El agente parece atascado en la herramienta `{tool}` ({seconds} s desde la última actividad, {progress})."
     timeout_last_activity: "Última actividad: {activity} (hace {seconds} s, {progress}). Es posible que el agente estuviera esperando una respuesta de la API."
     timeout_hint: "Para aumentar el límite, establece agent.gateway_timeout en config.yaml (valor en segundos, 0 = sin límite) y reinicia el gateway.\nInténtalo de nuevo o usa /reset para empezar de cero."
-    working_heartbeat: "⏳ Trabajando — {minutes} min{detail}"
+    working_heartbeat: "⏳ Trabajando — {duration}{detail}"
     thinking_prefix: "💬 {text}"
     tool_head: "{emoji} {tool}"
     tool_verbose: "{emoji} {tool}({keys})\n{args}"
@@ -3866,3 +3866,21 @@ tips:
     p09: "Explica este error y cómo solucionarlo"
     p10: "Crea un recordatorio o programa una tarea recurrente"
     p11: "Escribe / para explorar los comandos, o Ctrl+P para la paleta"
+
+# Long-running progress heartbeat ("⏳ Working — N min — <action>").
+long_running:
+  working:            "⏳ Trabajando — {minutes} min — {action}"
+  working_plain:      "⏳ Trabajando — {minutes} min"
+  waiting_answer:     "⏳ Esperando tu respuesta — {minutes} min"
+  waiting_approval:   "⏳ Esperando tu aprobación — {minutes} min"
+  action_model:       "esperando al modelo"
+  action_receiving:   "recibiendo la respuesta del modelo"
+  action_shell:       "ejecutando comandos"
+  action_files:       "revisando archivos"
+  action_writing:     "escribiendo cambios"
+  action_web:         "consultando la web"
+  action_vision:      "analizando imágenes"
+  action_code:        "ejecutando código"
+  action_delegation:  "coordinando subtareas"
+  action_tools:       "usando herramientas"
+

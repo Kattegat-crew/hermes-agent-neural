@@ -3483,7 +3483,12 @@ class DiscordAdapter(DiscordMediaMixin, DiscordThreadTitlesMixin, DiscordVoiceIn
         if not self._client:
             return SendResult(success=False, error="Not connected")
         try:
-            channel = await self._resolve_channel(chat_id)
+            target_id = chat_id
+            if metadata and metadata.get("thread_id"):
+                target_id = metadata["thread_id"]
+            channel = await self._resolve_channel(target_id)
+            if not channel:
+                return SendResult(success=False, error=f"Channel {target_id} not found")
             msg = channel.get_partial_message(int(message_id))
             formatted = self.format_message(content)
             _preview_key = (str(chat_id), str(message_id))
@@ -3527,6 +3532,13 @@ class DiscordAdapter(DiscordMediaMixin, DiscordThreadTitlesMixin, DiscordVoiceIn
                 await self._record_response_async((metadata or {}).get("reply_to_message_id"), result, content, True)
             return result
         except Exception as e:  # pragma: no cover - defensive logging
+            if "10008" in str(e) or "Unknown Message" in str(e):
+                threads = getattr(channel, "threads", [])
+                for th in threads:
+                    with suppress(Exception):
+                        th_msg = th.get_partial_message(int(message_id))
+                        await th_msg.edit(content=formatted)
+                        return SendResult(success=True, message_id=message_id)
             logger.error("[%s] Failed to edit Discord message %s: %s", self.name, message_id, e, exc_info=True)
             return SendResult(success=False, error=str(e))
 
@@ -3539,13 +3551,20 @@ class DiscordAdapter(DiscordMediaMixin, DiscordThreadTitlesMixin, DiscordVoiceIn
         if not self._client:
             return False
         try:
-            channel = self._client.get_channel(int(chat_id))
+            channel = await self._resolve_channel(chat_id)
             if not channel:
-                channel = await self._client.fetch_channel(int(chat_id))
+                return False
             msg = channel.get_partial_message(int(message_id))
             await msg.delete()
             return True
         except Exception as e:
+            if "10008" in str(e) or "Unknown Message" in str(e):
+                threads = getattr(channel, "threads", []) if "channel" in locals() and channel else []
+                for th in threads:
+                    with suppress(Exception):
+                        th_msg = th.get_partial_message(int(message_id))
+                        await th_msg.delete()
+                        return True
             logger.debug("[%s] Failed to delete Discord message %s: %s", self.name, message_id, e)
             return False
 

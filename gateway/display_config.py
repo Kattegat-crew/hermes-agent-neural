@@ -220,3 +220,37 @@ def _normalise(setting: str, value: Any) -> Any:
     """Normalise a user-supplied value for *setting*; unknown settings pass through."""
     norm = _NORMALISERS.get(setting)
     return norm(value) if norm else value
+
+
+def is_multi_agent_chat(source: Any, user_config: dict[str, Any] | None = None, adapter: Any = None) -> bool:
+    """Return True if the chat involves 2+ agents to prevent ping-pong loops.
+
+    In multi-agent chats (channels, groups or threads shared by multiple bots), live progress
+    updates and intermediate heartbeat notifications must be completely suppressed so they
+    never trigger message-creation or message-update events in peer bots.
+    """
+    if source is None:
+        return False
+
+    chat_id = str(getattr(source, "chat_id", "") or "")
+    thread_id = str(getattr(source, "thread_id", "") or "")
+    parent_chat_id = str(getattr(source, "parent_chat_id", "") or "")
+
+    # 1. Configured multi-agent channels/chats list: display.multi_agent_channels
+    disp_cfg = (user_config or {}).get("display", {}) if isinstance(user_config, dict) else {}
+    multi_list = disp_cfg.get("multi_agent_channels") or disp_cfg.get("multi_agent_chats") or []
+    if isinstance(multi_list, (list, tuple, set)):
+        multi_set = {str(item).strip() for item in multi_list}
+        if any(candidate and candidate in multi_set for candidate in (chat_id, thread_id, parent_chat_id)):
+            return True
+
+    # 2. Discord thread_require_mention check (the canonical multi-bot gate in Discord)
+    if adapter is not None and getattr(source, "platform", None) and str(getattr(source.platform, "value", "")).lower() == "discord":
+        if hasattr(adapter, "_discord_thread_require_mention") and thread_id:
+            try:
+                if adapter._discord_thread_require_mention():
+                    return True
+            except Exception:
+                pass
+
+    return False

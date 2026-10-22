@@ -838,7 +838,7 @@ gateway:
     timeout_stuck_tool: "The agent appears stuck on tool `{tool}` ({seconds}s since last activity, {progress})."
     timeout_last_activity: "Last activity: {activity} ({seconds}s ago, {progress}). The agent may have been waiting on an API response."
     timeout_hint: "To increase the limit, set agent.gateway_timeout in config.yaml (value in seconds, 0 = no limit) and restart the gateway.\nTry again, or use /reset to start fresh."
-    working_heartbeat: "⏳ Working — {minutes} min{detail}"
+    working_heartbeat: "⏳ Working — {duration}{detail}"
     thinking_prefix: "💬 {text}"
     tool_head: "{emoji} {tool}"
     tool_verbose: "{emoji} {tool}({keys})\n{args}"
@@ -3981,3 +3981,21 @@ tips:
     p09: "Explain this error and how to fix it"
     p10: "Set a reminder or schedule a recurring task"
     p11: "Type / to browse commands, or Ctrl+P for the palette"
+
+# Long-running progress heartbeat ("⏳ Working — N min — <action>").
+long_running:
+  working:            "⏳ Working — {minutes} min — {action}"
+  working_plain:      "⏳ Working — {minutes} min"
+  waiting_answer:     "⏳ Waiting for your reply — {minutes} min"
+  waiting_approval:   "⏳ Waiting for your approval — {minutes} min"
+  action_model:       "waiting for the model"
+  action_receiving:   "receiving the model's response"
+  action_shell:       "running commands"
+  action_files:       "reviewing files"
+  action_writing:     "writing changes"
+  action_web:         "checking the web"
+  action_vision:      "analyzing images"
+  action_code:        "running code"
+  action_delegation:  "coordinating subtasks"
+  action_tools:       "using tools"
+

@@ -1068,6 +1068,51 @@ def _float_env(name: str, default: float) -> float:
         return float(default)
 
 
+def format_duration_es(elapsed_seconds: float | int) -> str:
+    """Format elapsed time in Spanish (e.g. '20 s', '1 min', '2 min', '1 h 15 min')."""
+    total_seconds = max(0, int(elapsed_seconds))
+    if total_seconds < 60:
+        return f"{total_seconds} s"
+    total_mins = total_seconds // 60
+    if total_mins < 60:
+        return f"{total_mins} min"
+    hours = total_mins // 60
+    mins = total_mins % 60
+    return f"{hours} h {mins} min" if mins else f"{hours} h"
+
+
+def resolve_gateway_notify_interval(user_config: Optional[dict] = None, env_val: Optional[float] = None) -> float:
+    """Resolve the gateway notification interval in seconds.
+
+    Precedence:
+    1. Explicit env_val parameter (or HERMES_AGENT_NOTIFY_INTERVAL env var if env_val is None).
+       Values <= 0 explicitly disable notifications (returning 0.0).
+    2. user_config['agent']['gateway_notify_interval'].
+       Values <= 0 disable notifications (returning 0.0).
+    3. Default to 20.0 seconds.
+    """
+    if env_val is None:
+        raw_env = os.environ.get("HERMES_AGENT_NOTIFY_INTERVAL")
+        if raw_env is not None and raw_env.strip() != "":
+            try:
+                env_val = float(raw_env)
+            except (ValueError, TypeError):
+                env_val = None
+    if env_val is not None:
+        return max(0.0, float(env_val)) if env_val > 0 else 0.0
+
+    if isinstance(user_config, dict):
+        cfg = user_config.get("agent", {}).get("gateway_notify_interval")
+        if cfg is not None:
+            try:
+                val = float(cfg)
+                return max(0.0, val) if val > 0 else 0.0
+            except (ValueError, TypeError):
+                pass
+
+    return 20.0
+
+
 def _stamp_hygiene_compression_provenance(
     agent: Any, desc: str, provenance: ActivityProvenance, debug_label: str) -> None:
     """Best-effort activity provenance stamp for hygiene compression transitions."""

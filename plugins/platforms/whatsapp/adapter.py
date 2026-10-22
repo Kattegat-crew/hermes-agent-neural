@@ -813,6 +813,17 @@ class WhatsAppAdapter(WhatsAppBehaviorMixin, BasePlatformAdapter):
         except Exception as e:
             return SendResult(success=False, error=str(e))
 
+    async def delete_message(self, chat_id: str, message_id: str) -> bool:
+        """Delete a previously sent WhatsApp message (revoke for everyone)."""
+        if await self._bridge_unavailable():
+            return False
+        try:
+            async with self._bridge_req("post", "delete", 15, json={"chatId": to_whatsapp_jid(chat_id), "messageId": message_id}) as resp:
+                return resp.status == 200
+        except Exception as e:
+            logger.debug("[%s] Failed to delete WhatsApp message %s: %s", self.name, message_id, e)
+            return False
+
     @_needs_bridge
     async def _send_media_to_bridge(self, chat_id: str, file_path: str, media_type: str, caption: Optional[str] = None, file_name: Optional[str] = None) -> SendResult:
         if not os.path.exists(file_path):
