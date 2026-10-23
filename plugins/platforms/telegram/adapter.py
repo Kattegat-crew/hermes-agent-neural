@@ -4047,9 +4047,9 @@ class TelegramAdapter(TelegramHeldInboundMixin, TelegramTopicRoutingMixin, BaseP
                 "temporary failure",
                 "httpx",
             )
+            safe_error = _redact_telegram_error_text(e)
             _is_transient = any(m in err_str for m in _transient_markers)
             if _is_transient:
-                safe_error = _redact_telegram_error_text(e)
                 logger.warning(
                     "[%s] Transient network error editing message %s (will retry): %s",
                     self.name,
