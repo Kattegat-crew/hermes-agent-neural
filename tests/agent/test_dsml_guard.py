@@ -70,13 +70,12 @@ def test_double_fullwidth_closed_block_recovers_call():
     assert "Voy a revisar los servicios." in g.response
 
 
-def test_truncated_unclosed_block_strips_to_end():
+def test_truncated_unclosed_block_strips_to_end_and_never_executes():
+    # Anti-ghost guard #1: a value cut mid-string must never be executed — the block is
+    # stripped from the user-facing text but left to the layer-2 generic re-prompt.
     g = apply_dsml_guard(SINGLE_FW_TRUNCATED, VALID_TOOLS)
     assert g.leak_found is True
-    assert g.reemit_call == {
-        "name": "web_search",
-        "arguments": {"query": "deepseek dsml leak"},
-    }
+    assert g.reemit_call is None
     assert "Ejecuto la búsqueda." in g.response
     assert "DSML" not in g.response
 
@@ -131,6 +130,67 @@ def test_undeclared_tool_still_strips_markup():
 def test_reemit_call_arguments_are_json_roundtrip_safe():
     g = apply_dsml_guard(DOUBLE_FW_CLOSED, VALID_TOOLS)
     json.dumps(g.reemit_call["arguments"])  # must not raise
+
+
+def test_leak_inside_code_fence_is_legitimate_content():
+    # Documenting this very bug in an answer must not strip the example nor execute it.
+    text = (
+        "Así se ve la fuga:\n"
+        "```\n"
+        '<｜｜DSML｜｜ invoke name="terminal">\n'
+        '<｜｜DSML｜｜ parameter name="command" string="true">rm -rf /</｜｜DSML｜｜ parameter>\n'
+        "</｜｜DSML｜｜ invoke>\n"
+        "```\n"
+        "Eso es todo."
+    )
+    g = apply_dsml_guard(text, VALID_TOOLS)
+    assert g.leak_found is False
+    assert g.response == text
+    assert g.reemit_call is None
+
+
+def test_single_ascii_pipe_variant_recovers_call():
+    text = (
+        'Ok.\n<|DSML| invoke name="terminal">\n'
+        '<|DSML| parameter name="command" string="true">date</|DSML| parameter>\n'
+        "</|DSML| invoke>"
+    )
+    g = apply_dsml_guard(text, VALID_TOOLS)
+    assert g.leak_found is True
+    assert g.reemit_call == {"name": "terminal", "arguments": {"command": "date"}}
+    assert g.response.strip() == "Ok."
+
+
+def test_truncation_between_marker_and_keyword_is_still_a_leak():
+    # Markup cut right after the marker: '<｜DSML｜ inv ...' must strip, not reach users.
+    text = "Inicio.\n<｜｜DSML｜｜ inv"
+    g = apply_dsml_guard(text, VALID_TOOLS)
+    assert g.leak_found is True
+    assert g.reemit_call is None
+    assert "DSML" not in g.response
+    assert "Inicio." in g.response
+
+
+def test_nudge_flags_are_ephemeral_in_persistence_and_compaction():
+    from agent.session_persistence import _EPHEMERAL_SCAFFOLDING_FLAGS as persist_flags
+    from agent.conversation_compression import _SYNTHETIC_USER_FLAGS as compact_flags
+
+    assert "_dsml_guard_nudge" in persist_flags
+    assert "_dsml_guard_nudge" in compact_flags
+
+
+def test_truncated_value_dragging_close_tags_is_never_reemitted():
+    # Cut right after the value: the trailing close-tag text must not leak into a
+    # re-emitted argument (closed-only policy renders this moot — no re-emit).
+    text = (
+        "Hola.\n"
+        '<｜DSML｜ invoke name="terminal">\n'
+        '<｜DSML｜ parameter name="command" string="true">uptime</｜｜DSML｜｜ parameter>'
+    )
+    g = apply_dsml_guard(text, VALID_TOOLS)
+    assert g.leak_found is True
+    assert g.reemit_call is None
+    assert "Hola." in g.response
 
 
 # --- Layer 1 (intake): recover_leaked_tool_calls ---
