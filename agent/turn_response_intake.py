@@ -136,6 +136,20 @@ def normalize_model_response(
     if assistant_message.content is not None and not isinstance(assistant_message.content, str):
         assistant_message.content = _coerce_content_text(assistant_message.content)
 
+    # HERMES-DSML-GUARD (layer 1): a DeepSeek response that leaked its DSML tool-call
+    # markup into content with an empty tool_calls array gets the call reconstructed and
+    # injected here — BEFORE the loop's `run_tool_round if tool_calls else
+    # finish_text_response` dispatch — so the tool runs in the same turn at zero extra
+    # tokens. Unrecoverable markup falls through to the final-response guard
+    # (bounded re-prompt + firewall strip).
+    from agent.dsml_guard import recover_leaked_tool_calls
+
+    if recover_leaked_tool_calls(agent, assistant_message):
+        finish_reason = assistant_message.finish_reason
+        agent._buffer_vprint(
+            f"{agent.log_prefix}🛡️ HERMES-DSML-GUARD: leaked DSML call recovered from text — executing in-turn"
+        )
+
     # Agent-as-provider projection: splice the provider-agent's own tool work in as
     # call/result rows before this turn's assistant message; no-op for ordinary providers.
     splice_provider_projection(agent, response, messages)
