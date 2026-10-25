@@ -30,10 +30,12 @@ from typing import Any, Iterable, Optional
 
 logger = logging.getLogger("agent.conversation_loop")
 
-# Opening shapes only: a DSML marker followed by an invocation keyword, or the malformed
-# toolcalls wrapper. A bare marker in prose (no invoke/calls) is NOT a leak.
+# Opening shapes only: a DSML marker followed by an invocation keyword (partial
+# keywords count — the dominant production leak is TRUNCATED mid-token), or the
+# malformed toolcalls wrapper. A bare marker in prose (no invoke/calls shape) is NOT
+# a leak.
 _LEAK_START_RE = re.compile(
-    r"<\s*[｜|]{1,2}\s*DSML[｜|]{1,2}\s*(?:invoke|calls)\b"
+    r"<\s*[｜|]{1,2}\s*DSML[｜|]{1,2}\s*(?:inv(?:ok\w*)?|calls)"
     r"|<\s*toolcalls\s*>"
 )
 # Any DSML/toolcalls closing tag (invoke, calls, parameter — the block may end on the
@@ -43,6 +45,17 @@ _LEAK_CLOSE_RE = re.compile(
     r"|<\s*/\s*toolcalls\s*>"
 )
 _INVOKE_RE = re.compile(r'invoke\s+name="(?P<name>[^"]+)"')
+# Wrapper openers (calls / toolcalls) bound a block; a bare `invoke` opener begins one
+# only when no wrapper is present (the common truncated leak) — it must never bound the
+# block it belongs to.
+_WRAP_START_RE = re.compile(
+    r"<\s*[｜|]{1,2}\s*DSML[｜|]{1,2}\s*calls"
+    r"|<\s*toolcalls\s*>"
+)
+_LEAK_BLOCK_CLOSE_RE = re.compile(
+    r"<\s*/\s*[｜|]{1,2}\s*DSML[｜|]{1,2}\s*(?:invok\w*|calls)\s*>"
+    r"|<\s*/\s*toolcalls\s*>"
+)
 _DSML_PARAM_RE = re.compile(
     r'<\s*[｜|]{1,2}\s*DSML[｜|]{1,2}\s*parameter\s+name="(?P<name>[^"]+)"[^>]*>'
     r"(?P<val>.*?)"
@@ -53,17 +66,6 @@ _XML_PARAM_RE = re.compile(
     r'<\s*parameter\s+name="(?P<name>[^"]+)"[^>]*>'
     r"(?P<val>.*?)"
     r"<\s*/\s*parameter\s*>",
-    re.S,
-)
-# Truncated leak: the param tag never closes and the value runs to the end of the
-# block (the dominant production shape — markup cut mid-invocation).
-_DSML_PARAM_TRUNC_RE = re.compile(
-    r'<\s*[｜|]{1,2}\s*DSML[｜|]{1,2}\s*parameter\s+name="(?P<name>[^"]+)"[^>]*>'
-    r"(?P<val>.*)$",
-    re.S,
-)
-_XML_PARAM_TRUNC_RE = re.compile(
-    r'<\s*parameter\s+name="(?P<name>[^"]+)"[^>]*>(?P<val>.*)$',
     re.S,
 )
 
@@ -95,23 +97,57 @@ class DsmlGuardResult:
     reemit_call: Optional[dict]
 
 
-def _leak_spans(text: str) -> list[tuple[int, int]]:
-    """Spans (start, end) of every leaked block; a truncated block runs to EOS."""
+_CODE_FENCE_RE = re.compile(r"```|~~~")
+
+
+def _code_fence_spans(text: str) -> list[tuple[int, int]]:
+    """Spans of fenced code blocks (``` or ~~~ pairs): a leak-shaped example inside a
+    fence is legitimate content (documenting this very bug) and must never trigger."""
     spans: list[tuple[int, int]] = []
+    open_idx: Optional[int] = None
+    fence: Optional[str] = None
+    for m in _CODE_FENCE_RE.finditer(text):
+        tok = m.group(0)
+        if open_idx is None:
+            open_idx, fence = m.start(), tok
+        elif tok == fence:
+            spans.append((open_idx, m.end()))
+            open_idx, fence = None, None
+    if open_idx is not None:
+        spans.append((open_idx, len(text)))
+    return spans
+
+
+def _in_spans(idx: int, spans: list[tuple[int, int]]) -> bool:
+    return any(start <= idx < end for start, end in spans)
+
+
+def _leak_spans(text: str) -> list[tuple[int, int, bool]]:
+    """Spans (start, end, closed) of every leaked block; a truncated block runs to EOS
+    with ``closed=False``. ``closed`` requires a block-level close (``</…invoke>`` /
+    ``</…calls>`` / ``</toolcalls>``) — a dangling parameter close alone means the
+    invocation never completed, so nothing inside may be executed."""
+    fences = _code_fence_spans(text)
+    spans: list[tuple[int, int, bool]] = []
     pos = 0
     while True:
         m = _LEAK_START_RE.search(text, pos)
-        if m is None or m.start() < pos:
+        if m is None:
             break
-        nxt = _LEAK_START_RE.search(text, m.end())
-        limit = nxt.start() if nxt else len(text)
-        closes = list(_LEAK_CLOSE_RE.finditer(text, m.end(), limit))
-        if closes:
-            spans.append((m.start(), closes[-1].end()))
-            pos = closes[-1].end()
-        else:
-            spans.append((m.start(), len(text)))
-            break
+        if _in_spans(m.start(), fences):
+            pos = m.end()
+            continue
+        nxt_wrap = _WRAP_START_RE.search(text, m.end())
+        limit = nxt_wrap.start() if nxt_wrap else len(text)
+        all_closes = list(_LEAK_CLOSE_RE.finditer(text, m.end(), limit))
+        if all_closes:
+            end = all_closes[-1].end()
+            closed = bool(_LEAK_BLOCK_CLOSE_RE.search(text, m.end(), end))
+            spans.append((m.start(), end, closed))
+            pos = end
+            continue
+        spans.append((m.start(), len(text), False))
+        break
     return spans
 
 
@@ -120,30 +156,25 @@ def _parse_params(block: str) -> Optional[dict]:
     ``None`` when any JSON-looking value fails to parse (anti-ghost guard)."""
     pairs = _DSML_PARAM_RE.findall(block) or _XML_PARAM_RE.findall(block)
     if not pairs:
-        m = _DSML_PARAM_TRUNC_RE.search(block) or _XML_PARAM_TRUNC_RE.search(block)
-        if m is None:
-            return None
-        pairs = [(m.group("name"), m.group("val"))]
+        return None
     args: dict = {}
     for name, val in pairs:
-        v = val
-        if isinstance(val, tuple):
-            # findall with named groups returns tuples; take the val group (last).
-            v = val[-1]
-        if v.lstrip().startswith(("{", "[")):
+        if val.lstrip().startswith(("{", "[")):
             try:
-                args[name] = json.loads(v)
+                args[name] = json.loads(val)
             except (ValueError, TypeError):
                 return None
         else:
-            args[name] = v
+            args[name] = val
     return args
 
 
 def apply_dsml_guard(response: str, valid_tool_names: Iterable[str]) -> DsmlGuardResult:
     """Detect leaked DSML blocks in ``response``; return the stripped text and, when a
-    block reconstructs into a call whose tool is declared in ``valid_tool_names`` with
-    JSON-safe arguments, the re-emit payload. Clean text passes through byte-identical."""
+    structurally CLOSED block reconstructs into a call whose tool is declared in
+    ``valid_tool_names`` with JSON-safe arguments, the re-emit payload. Truncated blocks
+    (the dominant production shape — a value cut mid-string must never be executed) are
+    stripped but never re-emitted. Clean text passes through byte-identical."""
     text = response or ""
     spans = _leak_spans(text)
     if not spans:
@@ -151,7 +182,9 @@ def apply_dsml_guard(response: str, valid_tool_names: Iterable[str]) -> DsmlGuar
 
     allowed = set(valid_tool_names or ())
     reemit: Optional[dict] = None
-    for start, end in spans:
+    for start, end, closed in spans:
+        if not closed:
+            continue  # anti-ghost guard #1: truncated block → layer 2 re-prompt, never execute
         block = text[start:end]
         inv = _INVOKE_RE.search(block)
         if inv is None:
@@ -164,13 +197,20 @@ def apply_dsml_guard(response: str, valid_tool_names: Iterable[str]) -> DsmlGuar
         reemit = {"name": inv.group("name"), "arguments": args}
         break
 
-    cleaned = []
+    parts: list[str] = []
     cursor = 0
-    for start, end in spans:
-        cleaned.append(text[cursor:start])
-        cursor = end
-    cleaned.append(text[cursor:])
-    out = re.sub(r"\n{3,}", "\n\n", "".join(cleaned))
+    for i, (start, end, _closed) in enumerate(spans):
+        left = text[cursor:start].rstrip("\n")
+        if left:
+            parts.append(left)
+        tail = text[end:]
+        skipped = len(tail) - len(tail.lstrip("\n"))
+        if left and tail.lstrip("\n"):
+            parts.append("\n")
+        cursor = end + skipped
+        if i == len(spans) - 1:
+            parts.append(text[cursor:])
+    out = "".join(parts)
     return DsmlGuardResult(response=out, leak_found=True, reemit_call=reemit)
 
 

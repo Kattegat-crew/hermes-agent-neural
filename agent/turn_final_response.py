@@ -276,6 +276,9 @@ def finish_text_response(
         _dsml_retries = getattr(agent, "_dsml_guard_retries", 0)
         if _dsml_retries < 2:
             agent._dsml_guard_retries = _dsml_retries + 1
+            # Keep the durable 'incomplete' row clean: the ephemeral assistant candidate
+            # is built from assistant_message, so sync the stripped text into it.
+            assistant_message.content = _dsml.response
             logger.warning(
                 "HERMES-DSML-GUARD: DSML tool-call markup leaked into final text "
                 "(model=%s provider=%s) — re-prompting (%d/2%s)",
@@ -297,6 +300,10 @@ def finish_text_response(
             return _verdict("continue")
         agent._dsml_guard_strips = getattr(agent, "_dsml_guard_strips", 0) + 1
         final_response = _dsml.response
+        # Firewall must also cover the durable transcript row: it is built from
+        # assistant_message.content below, so sync the stripped text (review finding:
+        # the user-facing text was clean but the persisted/replayed row kept markup).
+        assistant_message.content = _dsml.response
         logger.warning(
             "HERMES-DSML-GUARD: re-prompt budget exhausted — stripped leaked markup "
             "from the final response (model=%s provider=%s, total strips=%d)",
@@ -360,6 +367,9 @@ def finish_text_response(
 
     # Genuine turn end (no dropped-tool-call mismatch): clear stall budget.
     agent._dropped_toolcall_retries = 0
+    # Genuine turn end: re-arm the DSML re-prompt budget per leak episode, not per
+    # session lifetime (same semantics as the dropped-tool-call stall budget above).
+    agent._dsml_guard_retries = 0
 
     # Pop prefill / empty-retry scaffolding before the final response or
     # verification follow-up; it must not become durable transcript.
