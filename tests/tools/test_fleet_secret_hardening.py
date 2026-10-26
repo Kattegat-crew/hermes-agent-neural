@@ -41,3 +41,33 @@ def test_sensitive_assignments_redaction():
     assert "ol_secret_token_12345" not in redacted
     assert "amzn_client_999" not in redacted
     assert "twenty_nc_secret_key" not in redacted
+
+
+def test_dynamic_secret_source_sanitization():
+    from hermes_cli.env_loader import _SECRET_SOURCES
+    _SECRET_SOURCES["SYNTHETIC_DYNAMIC_KEY"] = "command"
+    try:
+        assert _is_provider_env_blocklisted("SYNTHETIC_DYNAMIC_KEY")
+        assert _is_provider_env_blocklisted("synthetic_dynamic_key")
+    finally:
+        _SECRET_SOURCES.pop("SYNTHETIC_DYNAMIC_KEY", None)
+
+
+def test_subprocess_env_stripping():
+    from tools.environments.local import _sanitize_subprocess_env
+    from hermes_cli.env_loader import _SECRET_SOURCES
+    _SECRET_SOURCES["TEST_SECRET_FROM_SOURCE"] = "command"
+    try:
+        env = {
+            "PATH": "/bin",
+            "SAFE_CONFIG": "visible",
+            "TEST_SECRET_FROM_SOURCE": "secret_value_123",
+            "CLOUDFLARE_MCP_TOKEN": "token_val_456",
+        }
+        sanitized = _sanitize_subprocess_env(env)
+        assert "SAFE_CONFIG" in sanitized
+        assert "TEST_SECRET_FROM_SOURCE" not in sanitized
+        assert "CLOUDFLARE_MCP_TOKEN" not in sanitized
+    finally:
+        _SECRET_SOURCES.pop("TEST_SECRET_FROM_SOURCE", None)
+
