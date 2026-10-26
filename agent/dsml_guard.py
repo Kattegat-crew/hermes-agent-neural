@@ -171,6 +171,58 @@ def _leak_spans(text: str) -> list[tuple[int, int, bool]]:
     return spans
 
 
+def _repair_truncated_json(val: str) -> Optional[object]:
+    """Deterministic structural repair of a JSON-looking value cut by the STREAMING
+    boundary: delimiters may be lost at the cut (real case R40 — the closing ``}`` of
+    an array item before ``]``). Only attempted when double quotes are balanced (a cut
+    mid-string leaves odd quotes and must NEVER be repaired — anti-ghost). Walks the
+    value tracking a delimiter stack outside string literals; a closer that does not
+    match the stack top closes everything above it first; at EOS the remaining stack
+    closes in order. Returns the parsed value, or ``None`` when the repaired text
+    still fails to parse (genuinely malformed, never invented)."""
+    if val.count('"') % 2:
+        return None
+    closer_for = {"]": "[", "}": "{"}
+    stack: list[str] = []
+    out: list[str] = []
+    in_str = False
+    esc = False
+    for ch in val:
+        if in_str:
+            out.append(ch)
+            if esc:
+                esc = False
+            elif ch == "\\":
+                esc = True
+            elif ch == '"':
+                in_str = False
+            continue
+        if ch == '"':
+            in_str = True
+            out.append(ch)
+        elif ch in "[{":
+            stack.append(ch)
+            out.append(ch)
+        elif ch in "]}":
+            want = closer_for[ch]
+            if want not in stack:
+                return None  # closer with no opener: unrepairable
+            while stack[-1] != want:
+                out.append("}" if stack.pop() == "{" else "]")
+            out.append(ch)
+            stack.pop()
+        else:
+            out.append(ch)
+    if in_str:
+        return None
+    while stack:
+        out.append("}" if stack.pop() == "{" else "]")
+    try:
+        return json.loads("".join(out))
+    except (ValueError, TypeError):
+        return None
+
+
 def _parse_invoke_args(region: str) -> Optional[dict]:
     """Arguments for ONE invoke from its value region (text between the invoke opener
     and the next invoke opener / block end). Structural parsing per the real 47-case
@@ -194,7 +246,10 @@ def _parse_invoke_args(region: str) -> Optional[dict]:
             try:
                 args[m.group("name")] = json.loads(val)
             except (ValueError, TypeError):
-                return None  # broken JSON object/array: never invent a call
+                repaired = _repair_truncated_json(val)
+                if repaired is None:
+                    return None  # unrepairable JSON-looking value: never invent a call
+                args[m.group("name")] = repaired  # streaming cut lost delimiters (R40)
         elif 'string="false"' in (m.group("attrs") or ""):
             try:  # JSON scalar coercion ('10' → 10, 'true' → true); fallback str
                 args[m.group("name")] = json.loads(val)
@@ -235,17 +290,13 @@ def apply_dsml_guard(response: str, valid_tool_names: Iterable[str]) -> DsmlGuar
 
     parts: list[str] = []
     cursor = 0
-    for i, (start, end, _closed) in enumerate(spans):
-        left = text[cursor:start].rstrip("\n")
-        if left:
-            parts.append(left)
-        tail = text[end:]
-        skipped = len(tail) - len(tail.lstrip("\n"))
-        if left and tail.lstrip("\n"):
-            parts.append("\n")
-        cursor = end + skipped
-        if i == len(spans) - 1:
-            parts.append(text[cursor:])
+    for start, end, _closed in spans:
+        # Pure excision: the surrounding prose (including its exact trailing newlines)
+        # survives BYTE FOR BYTE — no rstrip, no blank-line re-flow (Bob's acceptance
+        # criterion on the real 47-case corpus, R01 etc.).
+        parts.append(text[cursor:start])
+        cursor = end
+    parts.append(text[cursor:])
     out = "".join(parts)
     return DsmlGuardResult(response=out, leak_found=True, reemit_call=reemit, reemit_calls=reemit_calls)
 
