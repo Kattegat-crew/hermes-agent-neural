@@ -202,7 +202,9 @@ def _is_provider_env_blocklisted(name: str, _registered: frozenset | None = None
         if name in _SECRET_SOURCES or upper in _SECRET_SOURCES:
             return True
     except Exception:
-        pass
+        # Prevent fail-open if env_loader import fails; block common credential suffixes
+        if any(marker in upper for marker in ("_SECRET", "_TOKEN", "_KEY", "_PASSWORD", "_DSN")):
+            return True
     return upper in (_registered_adapter_secret_env() if _registered is None else _registered)
 
 

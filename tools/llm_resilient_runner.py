@@ -16,7 +16,7 @@ logging.basicConfig(level=logging.INFO, format="%(asctime)s [%(levelname)s] %(me
 logger = logging.getLogger("llm_runner")
 
 BASE_URL = os.getenv("DASHSCOPE_BASE_URL", "https://api.nan.builders/v1").rstrip("/")
-API_KEY = os.getenv("NAN_API_KEY", "sk-JzBTUfhcFaxWP6QCxnohYw")
+API_KEY = os.getenv("NAN_API_KEY") or os.getenv("NAN_BUILDERS_API_KEY", "")
 
 # Priority order for models
 MODEL_FALLBACK_CHAIN = [
