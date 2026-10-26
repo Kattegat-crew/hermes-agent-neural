@@ -161,6 +161,39 @@ def test_single_ascii_pipe_variant_recovers_call():
     assert g.response.strip() == "Ok."
 
 
+def test_spaced_ascii_variant_recovers_call_no_residue():
+    # Roshi replay divergence 2: '< | DSML | invoke ...' (bars separated by spaces).
+    text = (
+        'Voy.\n< | DSML | invoke name="terminal">\n'
+        '< | DSML | parameter name="command" string="true">date</ | DSML | parameter>\n'
+        "</ | DSML | invoke>"
+    )
+    g = apply_dsml_guard(text, VALID_TOOLS)
+    assert g.leak_found is True
+    assert g.reemit_call == {"name": "terminal", "arguments": {"command": "date"}}
+    assert "DSML" not in g.response
+    assert g.response.strip() == "Voy."
+
+
+def test_single_fullwidth_tool_calls_opener_leaves_no_residue():
+    # Roshi replay divergence 1: '<｜DSML｜ tool_calls>' opener (keyword tool_calls, not
+    # calls) must not survive the strip after the invoke is recovered.
+    text = (
+        "Reviso.\n"
+        "<｜DSML｜ tool_calls>\n"
+        '<｜DSML｜ invoke name="terminal">\n'
+        '<｜DSML｜ parameter name="command" string="true">uptime</｜DSML｜ parameter>\n'
+        "</｜DSML｜ invoke>\n"
+        "</｜DSML｜ tool_calls>"
+    )
+    g = apply_dsml_guard(text, VALID_TOOLS)
+    assert g.leak_found is True
+    assert g.reemit_call == {"name": "terminal", "arguments": {"command": "uptime"}}
+    assert "DSML" not in g.response
+    assert "tool_calls" not in g.response
+    assert g.response.strip() == "Reviso."
+
+
 def test_truncation_between_marker_and_keyword_is_still_a_leak():
     # Markup cut right after the marker: '<｜DSML｜ inv ...' must strip, not reach users.
     text = "Inicio.\n<｜｜DSML｜｜ inv"
