@@ -166,9 +166,9 @@ Strict, non-negotiable operational standard for Ragnar and any delegated agent m
 
 ### 1. Shared Knowledge Vault (`/opt/vault/`) — Single Source of Truth
 Read these stable, permanent files first without needing heavy memory searches:
-- `ESTRATEGIA-EMPRESA.md` — Business strategy, clients (Golden Game, Paradise/Lucky Brothers), service modules, and roles.
-- `REPOS-ARQUITECTURA.md` — Repository topologies, Docker containers, databases, and services.
-- `APIS-INTEGRACIONES.md` — Active APIs, keys, models catalog, and integrations.
+- `HISTORIAL_Y_CONTEXTO_VPS.md` — Business strategy, clients (Golden Game, Paradise/Lucky Brothers), service modules, and roles.
+- `ARCHITECTURE.md` — Repository topologies, Docker containers, databases, and services.
+- `AGENTS.md` — Active APIs, keys, models catalog, and integrations.
 
 ### 2. Global VPS Brain & History (`/opt/vps-brain/`)
 - `HISTORIAL_Y_CONTEXTO_VPS.md` — VPS configuration, system changes, Docker networks, and operational history.

@@ -49,6 +49,21 @@ _STATIC_PROVIDER_ENV_BLOCKLIST = frozenset({
     "HERMES_ANON_API_SECRET", "HERMES_DASHBOARD_BASIC_AUTH_PASSWORD",
     "HERMES_DASHBOARD_BASIC_AUTH_SECRET", "HERMES_DASHBOARD_DRAIN_SECRET",
     "HERMES_DASHBOARD_OIDC_CLIENT_SECRET", "HERMES_MEET_REALTIME_KEY",
+    # NeuralCrew Fleet Custom & Sensitive Infrastructure Secrets (TKT-Bóveda)
+    "PG_RO_DSN", "SUDO_PASSWORD", "NAN_API_KEY", "NAN_BUILDERS_API_KEY",
+    "OPENCODE_GO_API_KEY", "COMPOSIO_KEY", "TYPESAFE_API_KEY", "CONTEXT7_API_KEY",
+    "PAPERLESS_API_KEY", "CLOUDFLARE_MCP_TOKEN", "CLOUDFLARE_MCP_TOKEN_WRITER",
+    "COOLIFY_MCP_TOKEN", "GITHUB_MCP_TOKEN", "PAPERLESS_MCP_TOKEN",
+    "DOCUSEAL_MCP_TOKEN", "STIRLING_MCP_KEY", "FORMBRICKS_MCP_KEY_RO",
+    "FORMBRICKS_MCP_KEY_RW", "OUTLINE_MCP_TOKEN", "TWENTY_MCP_KEY_GOLDEN",
+    "TWENTY_MCP_KEY_LUCKY", "TWENTY_MCP_KEY_NC", "TWENTY_MCP_KEY_GOLDEN_WRITER",
+    "TWENTY_MCP_KEY_LUCKY_WRITER", "TWENTY_MCP_KEY_NC_WRITER",
+    "AMAZON_SPAPI_CLIENT_ID", "AMAZON_SPAPI_CLIENT_SECRET",
+    "AMAZON_SPAPI_REFRESH_TOKEN", "AMAZON_SPAPI_NA_REFRESH_TOKEN",
+    "AMAZON_SPAPI_SANDBOX_CLIENT_ID", "AMAZON_SPAPI_SANDBOX_CLIENT_SECRET",
+    "AMAZON_SPAPI_SANDBOX_REFRESH_TOKEN", "HERMES_LANGFUSE_SECRET_KEY",
+    "A2A_BEARER_TOKEN", "WEBHOOK_SECRET", "BW_PASSWORD", "BW_CLIENTSECRET",
+    "BW_SESSION", "BWS_ACCESS_TOKEN",
 })
 
 
@@ -179,6 +194,15 @@ def _is_provider_env_blocklisted(name: str, _registered: frozenset | None = None
     upper = name.upper()
     if name in _HERMES_PROVIDER_ENV_BLOCKLIST or upper in _HERMES_PROVIDER_ENV_BLOCKLIST:
         return True
+    # Dynamic NeuralCrew secret pattern matching
+    if upper.startswith("AMAZON_SPAPI_") or "_MCP_TOKEN" in upper or "_MCP_KEY" in upper:
+        return True
+    try:
+        from hermes_cli.env_loader import _SECRET_SOURCES
+        if name in _SECRET_SOURCES or upper in _SECRET_SOURCES:
+            return True
+    except Exception:
+        pass
     return upper in (_registered_adapter_secret_env() if _registered is None else _registered)
 
 

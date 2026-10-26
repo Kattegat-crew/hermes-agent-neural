@@ -217,7 +217,7 @@ _PREFIX_PATTERNS = [
 # must sit at a word boundary (``_``-delimited or whole-word) so generic prose words (``password=``,
 # ``token=``, ``KEYBOARD=``, ``PASSAGE=``) do not match — those are handled by the config/form/URL paths,
 # and a bare ``password=…`` in a form body must not be swallowed greedily by ``\S+``. See #77484.
-_SECRET_ENV_NAMES = r"(?:API_?KEY|KEY|TOKEN|SECRET|PASSWORD|PASSWD|PASS|PW|CREDENTIAL|AUTH)"
+_SECRET_ENV_NAMES = r"(?:API_?KEY|KEY|TOKEN|SECRET|PASSWORD|PASSWD|PASS|PW|CREDENTIAL|AUTH|DSN|SPAPI_CLIENT_ID)"
 _ENV_ASSIGN_RE = re.compile(rf"([A-Z0-9_]{{0,50}}{_SECRET_ENV_NAMES}[A-Z0-9_]{{0,50}})\s*=\s*(['\"]?)(\S+)\2")
 # Lowercase env names: only underscore-boundary forms (``openai_key=``) — NOT
 # bare ``password=``/``token=``, which appear in prose, URLs, and form bodies.
@@ -225,7 +225,7 @@ _ENV_ASSIGN_RE = re.compile(rf"([A-Z0-9_]{{0,50}}{_SECRET_ENV_NAMES}[A-Z0-9_]{{0
 # it re.sub retries the greedy prefix at every byte of a long opaque payload.
 # See #77484.
 _ENV_ASSIGN_LOWER_RE = re.compile(
-    r"(?<![a-z0-9_])([a-z0-9_]+(?:_|^)(?:key|pass|pw|token|secret|password|passwd|credential|auth)(?=[^a-z0-9_]|$))\s*=\s*(['\"]?)(\S+)\2",
+    r"(?<![a-z0-9_])([a-z0-9_]+(?:_|^)(?:key|pass|pw|token|secret|password|passwd|credential|auth|dsn|spapi_client_id)(?=[^a-z0-9_]|$))\s*=\s*(['\"]?)(\S+)\2",
     re.IGNORECASE,
 )
 
@@ -308,7 +308,7 @@ _YAML_ASSIGN_RE = re.compile(
 # almost never prose, the same rationale as _ENV_ASSIGN_RE.
 _KEY_KEYWORD_RE = re.compile(
     r"(?:api|auth|access|refresh|session|secret)[ _.\\-]?(?:key|token)"
-    r"|token|secret|passwd|password|pass|pw|credential|auth|key",
+    r"|token|secret|passwd|password|pass|pw|credential|auth|key|dsn|spapi_client_id",
     re.IGNORECASE,
 )
 
@@ -317,8 +317,8 @@ _KEY_KEYWORD_RE = re.compile(
 # describe model limits, tensor names, and cache keys, so those assignments
 # are gated on value shape (_looks_like_opaque_credential).
 _STRONG_KEY_KEYWORD_RE = re.compile(
-    r"(?:api|auth|access|refresh|session|id|bearer)[ _.\\-]?(?:key|token)"
-    r"|key[ _.\\-]?material|secret|passwd|password|pass|pw|credential|auth|bearer",
+    r"(?:api|auth|access|refresh|session|id|bearer|mcp)[ _.\\-]?(?:key|token)"
+    r"|key[ _.\\-]?material|secret|passwd|password|pass|pw|credential|auth|bearer|dsn|spapi_client_id",
     re.IGNORECASE,
 )
 # Password-class keys mask any literal value; for other keys a value that starts like ``$HOME/...``,
