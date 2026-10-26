@@ -29,7 +29,7 @@ logger = logging.getLogger("agent.conversation_loop")
 # Ephemeral retry scaffolding rows popped before the final answer becomes durable.
 _EPHEMERAL_SCAFFOLDING_FLAGS = (
     "_thinking_prefill", "_empty_recovery_synthetic", "_empty_terminal_sentinel",
-    "_dropped_toolcall_nudge",
+    "_dropped_toolcall_nudge", "_dsml_guard_nudge",
 )
 
 
@@ -262,6 +262,54 @@ def finish_text_response(
 
     final_response = agent._strip_think_blocks(final_response).strip()
 
+    # HERMES-DSML-GUARD: DeepSeek (NaN proxy) sometimes emits its native DSML tool-call
+    # markup as plain content with an empty tool_calls array — 56 measured leaks across
+    # 8 profiles (2026-10-14..25), every one ending the turn with zero tools executed
+    # while the user received raw markup. Recovery: a bounded re-prompt (2) that re-issues
+    # the reconstructed call through the structured tool-call mechanism; then the
+    # firewall strips any residue so the user never sees markup. Detection requires a
+    # marker followed by an invocation shape, so prose mentioning the marker is a no-op.
+    from agent.dsml_guard import apply_dsml_guard, build_reemit_nudge
+
+    _dsml = apply_dsml_guard(final_response, set(getattr(agent, "valid_tool_names", None) or ()))
+    if _dsml.leak_found:
+        _dsml_retries = getattr(agent, "_dsml_guard_retries", 0)
+        if _dsml_retries < 2:
+            agent._dsml_guard_retries = _dsml_retries + 1
+            # Keep the durable 'incomplete' row clean: the ephemeral assistant candidate
+            # is built from assistant_message, so sync the stripped text into it.
+            assistant_message.content = _dsml.response
+            logger.warning(
+                "HERMES-DSML-GUARD: DSML tool-call markup leaked into final text "
+                "(model=%s provider=%s) — re-prompting (%d/2%s)",
+                agent.model, agent.provider, _dsml_retries + 1,
+                f", recovered call {_dsml.reemit_call['name']}" if _dsml.reemit_call else "",
+            )
+            agent._emit_diagnostic_status(
+                f"↻ Tool-call markup leaked as text — recovering ({_dsml_retries + 1}/2)"
+            )
+            _dsml_msg = agent._build_assistant_message(assistant_message, "incomplete")
+            _dsml_msg["_dsml_guard_nudge"] = True
+            append_message(messages, _dsml_msg)
+            append_message(messages, {
+                "role": "user", "content": build_reemit_nudge(_dsml.reemit_call),
+                "_dsml_guard_nudge": True,
+            })
+            agent._session_messages = messages
+            final_response = None
+            return _verdict("continue")
+        agent._dsml_guard_strips = getattr(agent, "_dsml_guard_strips", 0) + 1
+        final_response = _dsml.response
+        # Firewall must also cover the durable transcript row: it is built from
+        # assistant_message.content below, so sync the stripped text (review finding:
+        # the user-facing text was clean but the persisted/replayed row kept markup).
+        assistant_message.content = _dsml.response
+        logger.warning(
+            "HERMES-DSML-GUARD: re-prompt budget exhausted — stripped leaked markup "
+            "from the final response (model=%s provider=%s, total strips=%d)",
+            agent.model, agent.provider, agent._dsml_guard_strips,
+        )
+
     # A provider may end a degenerate loop normally with finish_reason="stop" instead of
     # exhausting its output cap (#100716). Check every completed visible text response before
     # any verify/kanban interim emission or durable transcript write.
@@ -319,6 +367,9 @@ def finish_text_response(
 
     # Genuine turn end (no dropped-tool-call mismatch): clear stall budget.
     agent._dropped_toolcall_retries = 0
+    # Genuine turn end: re-arm the DSML re-prompt budget per leak episode, not per
+    # session lifetime (same semantics as the dropped-tool-call stall budget above).
+    agent._dsml_guard_retries = 0
 
     # Pop prefill / empty-retry scaffolding before the final response or
     # verification follow-up; it must not become durable transcript.
