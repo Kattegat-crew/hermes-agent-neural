@@ -193,10 +193,30 @@ def main():
     parser = argparse.ArgumentParser(description="Generate and dispatch Meta Ads Discord Report")
     parser.add_argument("--campaign-id", required=True, help="Meta Campaign ID")
     parser.add_argument("--account", required=True, help="Composio account selector (e.g. metaads_moly-ponent)")
-    parser.add_argument("--webhook-url", required=True, help="Discord Webhook URL")
+    parser.add_argument("--webhook-url", required=False, default=None, help="Discord Webhook URL")
+    parser.add_argument("--webhook-env", default="META_ADS_DISCORD_WEBHOOK", help="Environment variable name for webhook URL (default: META_ADS_DISCORD_WEBHOOK)")
+    parser.add_argument("--env-file", default="/etc/hermes-vault/root.secrets.env", help="Path to env file containing webhook secrets")
     parser.add_argument("--client-name", default="The Grand Paradise Club", help="Client / Business Name")
 
     args = parser.parse_args()
+
+    webhook_url = args.webhook_url
+    if not webhook_url:
+        webhook_url = os.getenv(args.webhook_env)
+    if not webhook_url and args.env_file and os.path.exists(args.env_file):
+        try:
+            with open(args.env_file, "r") as f:
+                for line in f:
+                    line = line.strip()
+                    if line.startswith(f"{args.webhook_env}="):
+                        webhook_url = line.split("=", 1)[1].strip().strip('"').strip("'")
+                        break
+        except Exception as e:
+            print(f"Warning: could not read env file {args.env_file}: {e}", file=sys.stderr)
+
+    if not webhook_url:
+        print(f"Error: webhook URL not provided via --webhook-url or {args.webhook_env} in env/file", file=sys.stderr)
+        sys.exit(1)
 
     print(f"Fetching data for Campaign {args.campaign_id} via {args.account}...")
     data = fetch_campaign_data(args.campaign_id, args.account)
@@ -205,7 +225,7 @@ def main():
     payload = build_discord_payload(data, client_name=args.client_name)
 
     print(f"Sending to Discord webhook...")
-    success = send_to_discord(args.webhook_url, payload)
+    success = send_to_discord(webhook_url, payload)
     if not success:
         sys.exit(1)
 
