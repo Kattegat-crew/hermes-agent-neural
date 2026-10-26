@@ -129,6 +129,67 @@ export async function sendCapiEvent({ pixelId, accessToken, testEventCode, event
 3. **Event Match Quality (EMQ):**
    * Target EMQ score >= 7.0/10. Achieved by sending: email (`em`) + phone (`ph`) + first name (`fn`) + external ID (`external_id`) + IP + User-Agent + `_fbp` cookie.
 
+## Consent Gate (mandatory before any pixel)
+
+Never ship a raw pixel in `index.html` on landing pages with ad tracking: gate ALL Meta loading behind explicit consent, fail-closed.
+
+- **Fail-closed mode flag:** server tracking mode defaults to `OFF` (`META_TRACKING_MODE`); `OFF`/unknown consent = no pixel script, no cookie, no CAPI enqueue. Enable only via explicit config.
+- **Client gate:** remove the `connect.facebook.net/fbevents.js` snippet, its cookie pre-seed and the `<noscript>` img from the HTML. Load the pixel conditionally only after `POST /api/tracking/consent` returns GRANTED and `GET /api/tracking/status` reports `tracking_eligible: true`.
+- **Consent endpoint hardening:** `__Host-` prefixed cookie (Secure, Path=/, SameSite=Lax — requires HTTPS), store only a SHA-256 hash of the consent token server-side, validate `Content-Type` + `Origin` against a strict allowlist (`TRACKING_ALLOWED_ORIGINS`), reject invalid status with 400, return 500 (`consent_unavailable`) instead of fake success when the DB is down. Persist consent in PostgreSQL (survives restarts); memory store only behind `NODE_ENV !== 'production'`.
+- **CSP:** ensure `connect-src` allows `connect.facebook.net`, `graph.facebook.com`, `www.facebook.com` or the pixel will silently fail after consent.
+- **Schema migration is additive and NOT auto-executed:** create the consent table in a `server/migrations/*.sql` file; require human approval before running it. Details: `references/consent-gate.md`.
+
+## Dual-Ingest Event Contract (deterministic IDs)
+
+For hybrid events, derive `event_id` as **UUIDv5 over a stable identity tuple** (`brand|event_name|stable_identity`) so client and server compute the same id without a round-trip; the same tuple doubles as the idempotency key on the server (`UNIQUE(brand, event_name, event_id)`, additive queue migration `002_tracking_capi_queue.sql`, never auto-executed). Lead keeps a fresh UUIDv4 `request_key` instead (undeterminable pre-submit).
+
+- **Never fabricate `fbc`** (only from a real `fbclid` click param); `fbp` only from a real first-party `_fbp`. Any handshake/status endpoint returns `hashed_payload` (SHA-256 + prefix), never the raw cookie; `GET /capi-status` must not be publicly exposed on nginx.
+- **Casino-landing semantics:** PageView is client-only (server POST → 400); ViewContent restricted to canonical routes; FindLocation sends `destination_host` only (never full Maps URLs); the free ruleta uses custom `BonusGameInteraction`, never a fake `InitiateCheckout`; a free-bono Lead carries no `value`/`currency`. Valid event POST → **202**, browser-only Lead → **400**.
+- **Test code channel:** pass Test Events codes via `?facebookqg=<code>` on the staging URL (validated server-side), not env/config; after `vite build`, assert 0 occurrences of `connect.facebook.net` in `index.html`.
+- Details & e2e recipe: `references/event-contract.md` (companion to `references/consent-gate.md`).
+
+## Durable CAPI Queue & Worker (verified pattern, 70/70 test suites)
+
+When CAPI dispatch must survive worker crashes, retries and consent revocation, use a Postgres queue with **claim → CAS → revalidate → send**. Never send from the HTTP request path.
+
+- **Atomic claim:** `SELECT ... FOR UPDATE SKIP LOCKED` inside a transaction with `UPDATE ... SET status='PROCESSING', locked_by, locked_at WHERE id=...`; commit immediately. Two concurrent workers never see the same event.
+- **Lease with attempt-stable counters:** store `attempts` and `locked_at`; on lease expiry recovery, increment `attempts` once and continue — do NOT reset the backoff counter, or a crashing worker retries forever.
+- **Backoff:** 30 s → 120 s → 600 s; max 4 attempts then `FAILED`. Respect Meta `Retry-After` capped at 600 s. HTTP 200 with an `error` body, or 2xx without `events_received`, is NOT delivered: treat as failure (retry if transient, FAILED otherwise).
+- **Revocation race (CAS):** add `lock_generation` to the event row. Worker reads `lock_generation` at claim, closes with `UPDATE ... WHERE id=? AND lock_generation=<read> AND locked_by=<me>` (CAS). A consent revoke bumps `lock_generation`, so a stale worker's completion is silently discarded. **Revalidate consent BEFORE touching the network** — a revoked event must move to `CANCELLED` with 0 bytes sent.
+- **Retention:** events older than 48 h → `EXPIRED`, never sent (stale user_data degrades EMQ and violates minimization).
+- **No invented PII:** the worker sends only what the router captured; never fabricate `user_data` fields at send time. Do not route `value`/`currency` for free-bono leads.
+- **Worker opt-in (fail-closed):** start the interval worker only when `META_TRACKING_WORKER === 'on'` AND pixel+token are present; otherwise log `[CAPI-WORKER] Desactivado` and send nothing. Interval loop with a `running` overlap guard and `.unref()` so it never blocks process shutdown.
+- **In-memory queue parity:** the memory queue (dev-only) must accept the same injected `clock` + `store` so lease/backoff/revocation logic is testable without Postgres.
+- Full schema, SQL and test matrix: `references/capi-queue.md`.
+
+## Three-Mode Tracking Matrix (OFF / MOCK / LIVE) — verified in real browser, 82/82 ×2 repos
+
+Implement the mode flag (`META_TRACKING_MODE`) as a THREE-way matrix, not a boolean on/off. Each mode has distinct UI + pixel + network guarantees:
+
+| Mode | Consent banner | Pixel | Requests to facebook.com | Consent state |
+|---|---|---|---|---|
+| **OFF** | never rendered | `fbq` undefined | **0** | stays UNKNOWN, never asked |
+| **MOCK** | rendered | local `fbq` **stub** (no network) | **0** (0 scripts too) | GRANTED recorded, `tracking_eligible:false` by design |
+| **LIVE** | rendered | `fbevents.js` only after GRANTED | pixel's own only | GRANTED → `tracking_eligible:true` |
+
+- **Pitfall (bit us):** gating the banner AND the stub pixel on `tracking_eligible` (a LIVE-derived flag) makes MOCK useless — the banner never appears and the stub never installs. Gate conditions must be per-mode: banner on `mode === 'LIVE' || mode === 'MOCK'`; pixel install on `consent GRANTED` (real pixel in LIVE, stub in MOCK), NOT on the eligibility flag.
+- **MOCK mode exists for e2e/QA with zero external traffic:** a stub `fbq` records `track()` calls in memory so browser tests assert event emission without a single byte to Meta. Assert `window.__fbqMock === true`.
+- **Banner layering pitfall:** the consent banner must sit ABOVE the legal +18 bar (it uses high z-index, e.g. 99999 vs 2000) but must not cover its own buttons — measure the legal bar's reserved height dynamically instead of hardcoding offsets.
+
+## Consent Handshake Protocol (client)
+
+- **Revalidate before each navigation-tracked event** (PageView, ViewContent) via `GET /api/tracking/status` with a **15 s freshness window**: at most one in-flight request, shared across concurrent triggers; cached result reused within the window. Click events (Lead) reuse the polled state without their own handshake.
+- **Poll every 15 s, only while `document.visibilityState === 'visible'`**; stop polling and stop emitting events when the backend is unreachable — no re-emit until reload.
+- **Immediate reaction on acceptance:** listen for a custom `tracking:consent-changed` event so the pixel installs the instant the user clicks Accept, without waiting for the next poll tick.
+- **Config via env vars on the API** (`META_TRACKING_MODE`, `META_TRACKING_STORE=memory|pg`, `META_TRACKING_SCHEMA_READY`, `TRACKING_ALLOWED_ORIGINS`) — same module, both client repos, 82/82 tests each; assert after `vite build` that `index.html` still contains 0 occurrences of `connect.facebook.net`.
+
+## Browser e2e Verification (zero-network assertions)
+
+Verify all three modes in a real Chromium before declaring done — details in `references/mode-matrix-e2e.md`:
+1. Instrument the network via CDP (`Network.enable` + `Network.responseReceived`) and collect every request; assert **0 URLs match `facebook.com`** in OFF and MOCK, and that only `fbevents.js`/pixel calls appear in LIVE after consent.
+2. Serve the built landing on a local static port and the API on another port with CORS pointed at it (`CORS_ORIGINS` / `TRACKING_ALLOWED_ORIGINS` = the static origin).
+3. Per mode assert the matrix above: banner presence, `typeof fbq`, facebook request count, and that the consent endpoint recorded GRANTED (or stayed UNKNOWN in OFF — clicking is a no-op because the banner never rendered).
+
 ## References
 
 - [Meta Conversions API Documentation](https://developers.facebook.com/docs/marketing-api/conversions-api)

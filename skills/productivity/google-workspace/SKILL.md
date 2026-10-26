@@ -18,6 +18,14 @@ metadata:
     related_skills: [himalaya]
 ---
 
+> [!IMPORTANT]
+> **REGLA DE PROTOCOLO CANÓNICO ACTIVA**: El acceso a Google Workspace (Gmail, Drive, Docs, Sheets, Calendar)
+> está centralizado en el servidor MCP  () usando los tokens
+> en  y el mapa en  (gestionados por ActivePieces).
+>  y  están revocados/deprecados. Usa siempre el MCP .
+
+
+
 # Google Workspace
 
 Gmail, Calendar, Drive, Contacts, Sheets, and Docs — through Hermes-managed OAuth and a thin CLI wrapper. When `gws` is installed, the skill uses it as the execution backend for broader Google Workspace coverage; otherwise it falls back to the bundled Python client implementation.

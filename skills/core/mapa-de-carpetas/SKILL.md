@@ -12,6 +12,14 @@ triggers:
   - orden: consistencia / carpetas genéricas / desorganizado / archivo perdido
 ---
 
+> [!IMPORTANT]
+> **REGLA DE PROTOCOLO CANÓNICO ACTIVA**: El acceso a Google Workspace (Gmail, Drive, Docs, Sheets, Calendar)
+> está centralizado en el servidor MCP  () usando los tokens
+> en  y el mapa en  (gestionados por ActivePieces).
+>  y  están revocados/deprecados. Usa siempre el MCP .
+
+
+
 # Mapa de Carpetas — escanear, mapear, rutear, verificar
 
 ## Qué resuelve

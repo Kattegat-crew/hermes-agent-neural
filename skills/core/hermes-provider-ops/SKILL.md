@@ -103,6 +103,14 @@ Al rotar `${OPENCODE_GO_API_KEY}` en `/opt/data/.env`:
   contenedor): comprobar que el proceso arrancó DESPUÉS del mtime del `.env`
   (`s6-svstat` vs `stat -c %y /opt/data/.env`) + llamada real HTTP 200 a un modelo.
 
+## Fuga de tool-call DSL como texto plano (fallo de proveedor)
+
+Familia DeepSeek V4 puede emitir su DSL interno de tool-calls (bloques `｜｜DSML｜｜ ...`)
+como texto plano en `content` en vez de `tool_calls` — el turno muere sin ejecutar nada.
+Ver el procedimiento completo del guard de 3 capas (recuperación en intake a 0 tokens
+extra, re-prompt acotado, cortafuegos anti-markup) en
+`references/dsml-toolcall-leak-guard.md`.
+
 ## Gotchas y Errores Críticos con Proveedores
 
 1. **Reinicio de procesos**: Modificar `config.yaml` no surte efecto inmediato si el daemon de Hermes ya está corriendo en memoria. Si el cambio es para un cron o servicio persistente, reiniciar el servicio o proceso afectado.

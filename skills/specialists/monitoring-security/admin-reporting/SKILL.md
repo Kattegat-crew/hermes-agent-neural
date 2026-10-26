@@ -23,6 +23,8 @@ Reglas para reportar al Admin (Jonathan) en crons, informes de estado, y cualqui
    - **Vespertino (8pm)** → actividad real del día (daily_session_report.py) + pendientes mañana. Formato: 🌆 ✅ 📌 ⚠️
    - Solo incluir alertas si algo está roto (disco >80%, gateway caído, MCP offline). Sin alertas → omitir la línea.
 
+5. **No catalogar el estado de la flota desde memoria: verificar contra los artefactos de planificación.** Cuando el Admin pregunta "¿ya tenemos X?" o corrige con "revisa lo que hicimos ayer", la respuesta se arma leyendo en vivo: `~/planes/*.md` (planes con sección de estado de ejecución), `/opt/data/kanban.db` (tabla `tasks`, no `cards`; abrir en modo ro) y `/opt/data/cron/jobs.json` (schedule como objeto `{kind, expr|minutes}`). Corrección del 24/10/2026: respondí que los crons eran polling por categorías de memoria y el Admin me señaló que el plan crons-evento (23-oct) ya tenía buzon-bob y leads en webhooks de evento con sus tarjetas Kanban en `done`. Nunca describir capacidades por categorías mentales: citar plan + evidencia viva.
+
 ## Reglas de envío multi-remitente (WhatsApp, 27-28/08)
 - El puente WhatsApp es UN solo remitente para todos los perfiles ruteados: SIEMPRE etiquetar quién firma ("— Ragnar" / "— Roshi") en informes proactivos, o enviar al grupo oficial DE. Chucho reclamó un informe "de Roshi" que era de Ragnar (27/08).
 - Informe diario del equipo: cron `informe-diario-equipo` (57dd5580b592, 07:00, deliver local) → el agente corre `/opt/data/scripts/informe_diario_equipo.py --yesterday --send` → grupo DE + Jonathan + Chucho con etiqueta de remitente. Fuentes: state.db dev+prod, opencode.db (snapshot vía docker run -v), VPS Brain, Diario wiki.

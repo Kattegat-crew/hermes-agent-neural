@@ -92,6 +92,10 @@ Esta skill contiene herramientas operativas listas en su subcarpeta `scripts/`:
 
 ---
 
+## Migrar de polling a evento
+
+Antes de convertir cualquier cron a webhook, leer `references/migrar-polling-a-evento.md`: cubre cobertura de caminos, flags que nadie activa, permisos del secreto, degradación gradual y cómo probar cobertura en vez de solo transporte.
+
 ## Gotchas y Errores Críticos Detectados en Producción
 
 1. **Archivos creados por root**: Si ejecutas pruebas manuales como `root` que escriben en `/opt/data`, dejas trampas de sólo lectura para `uid 10000`. Siempre haz `chown -R 10000:10000` en los archivos creados.

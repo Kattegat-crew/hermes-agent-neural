@@ -12,6 +12,14 @@ metadata:
     related_skills: [google-workspace]
 ---
 
+> [!IMPORTANT]
+> **REGLA DE PROTOCOLO CANÓNICO ACTIVA**: El acceso a Google Workspace (Gmail, Drive, Docs, Sheets, Calendar)
+> está centralizado en el servidor MCP  () usando los tokens
+> en  y el mapa en  (gestionados por ActivePieces).
+>  y  están revocados/deprecados. Usa siempre el MCP .
+
+
+
 # Google Workspace Shared Access (multi-profile host)
 
 The bundled `google-workspace` skill ships the scripts, but on this host the OAuth

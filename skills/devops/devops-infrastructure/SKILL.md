@@ -39,6 +39,12 @@ Use when configuring, auditing, or maintaining server-side services, containers,
 - **Orphaned locks hygiene:** any manually launched (and killed/aborted) restic run leaves stale locks in the repo — run `restic unlock` after manual tests and before the next scheduled backup, or the cron run fails on lock errors.
 - **Never leak tokens:** restic/rclone verbose logs can print full OAuth tokens on connection errors — redact before pasting logs into chats or tickets.
 
+## Service Retirement Cleanup (validated 23/10/2026 PROD — Mautic)
+When a service is retired, three layers keep pointing at it — audit all three before declaring done:
+1. **NPM proxy hosts:** no `apk` in that container (Debian-based) — instead `docker cp nginx-proxy-manager:/data/database.sqlite /tmp/` and inspect with the HOST `sqlite3`. Soft-deleted rows stay with `is_deleted=1`; a teammate's claim of a "still-proxied" host may be stale — verify the table yourself.
+2. **uptime-kuma monitors (zombis):** monitors are held IN MEMORY — an `UPDATE monitor SET active=0` in `/app/data/kuma.db` does NOT take effect until the Kuma container restarts (`docker restart uptime-kuma`, then verify `healthy` + panel responds on its mapped IP; note its port maps to the Tailscale IP, `curl 127.0.0.1:<port>` gives 000 even when healthy).
+3. **Cloudflare DNS:** a proxied record keeps resolving to Cloudflare IPs with no origin behind it; cleanup needs the scoped API token (see memory: MCP token lacks DNS/WAF scopes). Agent sessions cannot read `/opt/vault` (`Permission denied`) — token extraction is human or Vaultwarden-side.
+
 ## Security-Exposure Triage (CVE / CA-compromise, validated 21/10/2026)
 When a new CVE or CA compromise breaks, map exposure FIRST (live, never from memory), then patch:
 
@@ -53,6 +59,11 @@ When a new CVE or CA compromise breaks, map exposure FIRST (live, never from mem
 - Per-container bundles: locate `/etc/ssl/certs/ca-certificates.crt` in the container and `grep -c <RootName>` it — NPM and Mautic (Debian 12) both had 0 emSign entries.
 - Python bundles are SEPARATE from the system store: get the bundle path from `python3 -c 'import certifi; print(certifi.where())'`, grep it for the root name, and check `certifi.__version__`. Upgrade with `uv pip install --python python3 --upgrade certifi` (2026.05.20 → 2026.10.19 here). After upgrading, re-grep and confirm the exact dangerous root is GONE — the fixed bundle keeps other roots of the same vendor (benign C1/C3/G1 remained; the compromised ECC Root CA - G3 and AAA Certificate Services were removed), so a vendor-name grep count greater than 0 is NOT proof of failure.
 - grep -c exits 1 on zero matches: append `|| true` or the `&&`/`||` chain prints both the 0 and a fallback message, confusing the output.
+
+## Cloudflare via MCP (tooling pitfall, validated 23/10/2026)
+- `mcp__cloudflare__execute` only accepts a **JavaScript async arrow function** as `code`: `async () => { ... }` (sandbox provides `headers` + `fetch`; return a value). Top-level statements (`const ...`, IIFE, `return ...`) all fail with `Unexpected token ...`.
+- After 3 rejected calls the MCP server pauses ~50s and refuses more — never loop retries; check the calling convention first (`mcp__cloudflare__search`'s schema says "JavaScript async arrow function").
+- `list_resources` only exposes skill docs (skill:// URIs), not zones/DNS resources.
 
 ## Automation & Cron Jobs
 - **Cron store ownership = whole-fleet kill switch (validated 19/10/2026 PROD):** `/opt/data/cron/jobs.json` must be `10000:10000 600`. Any root-run `cp`/`hermes cron` rewrites it `root:600`; the scheduler (uid 10000) then dies on `Permission denied` and EVERY enabled job freezes with `last_run: None` — silently, no visible error. Fix (D-I-V-E): backup → `chown 10000:10000` + `chmod 600` → verify one real tick (fresh `last_status` or a claimed job). Prevention: cheap check `stat -c '%U:%G %a'` + dead-man monitor (store unwritten > 2× interval = alert). Hard rule: NEVER run the Hermes CLI as root over `/opt/data`; use `docker exec -u 10000 hermes-agent ...`. When auditing, check `last_run` staleness before assuming the fleet is running.

@@ -62,6 +62,15 @@ Gateway → infra-postgres 100.73.30.29 (golden_game / paradise_casino) + Active
    Rollback manual de emergencia: `git checkout HEAD~1 -- webhook-server.js webhook-server-paradise.js && docker compose up -d --force-recreate`.
 5. Re-auditar: 12/12 OK y `webhook_404_6h|OK|0`.
 
+## Inspección read-only verificada (23-oct, diseño Pixel/CAPI)
+
+Datos reales confirmados por SSH a PROD (útiles para cualquier diseño/diagnóstico del gateway):
+- El contenedor de edge se llama `nginx-proxy-manager` (NO `npm`; ese nombre no existe).
+- `webhook-gateway` expone `10.0.1.1:3099` y `webhook-paradise` `10.0.1.1:3100`; AMBOS montan el mismo bind `/opt/docker/webhook-gateway → /app` (código compartido: un deploy afecta a las dos marcas).
+- Redes reales: `hermes_default` (10.0.5.x, gw 10.0.5.1) y `webhook-gateway_default` (10.0.6.x, gw 10.0.6.1). Los rangos 172.19/10.0.1 como pares Express NO están probados.
+- Landings en contenedores efímeros de Coolify en `0.0.0.0:9001/9002` (publicado en 0.0.0.0 ≠ accesible desde internet: no asumir).
+- Inspección sin exponer secretos: `docker inspect --format '{{.Name}} {{json .Mounts}} {{json .NetworkSettings.Networks}}' <cont>` — NUNCA inspect completo ni `docker exec env` (el .env del contenedor viaja en la salida). Conf de headers del edge: leer archivos `/data/nginx/...` con filtro por directivas (`proxy_set_header`, `real_ip`), redactando auth.
+
 ## Pitfalls
 
 - No editar NPM, Cloudflare, Coolify ni los landings para "arreglar" `/webhook/*`.
