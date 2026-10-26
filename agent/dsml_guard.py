@@ -99,11 +99,14 @@ class DsmlGuardResult:
 
 
 _CODE_FENCE_RE = re.compile(r"```|~~~")
+_INLINE_CODE_RE = re.compile(r"`[^`\n]+`")
 
 
 def _code_fence_spans(text: str) -> list[tuple[int, int]]:
-    """Spans of fenced code blocks (``` or ~~~ pairs): a leak-shaped example inside a
-    fence is legitimate content (documenting this very bug) and must never trigger."""
+    """Spans of fenced code blocks (``` or ~~~ pairs) and inline code spans (`...`): a
+    leak-shaped example inside either is legitimate content (documenting this very bug)
+    and must never trigger. Observed live: an agent's own report mentioning the marker
+    in inline code was truncated by the strip before inline spans were excluded."""
     spans: list[tuple[int, int]] = []
     open_idx: Optional[int] = None
     fence: Optional[str] = None
@@ -116,6 +119,10 @@ def _code_fence_spans(text: str) -> list[tuple[int, int]]:
             open_idx, fence = None, None
     if open_idx is not None:
         spans.append((open_idx, len(text)))
+    fenced = list(spans)
+    for m in _INLINE_CODE_RE.finditer(text):
+        if not _in_spans(m.start(), fenced):
+            spans.append((m.start(), m.end()))
     return spans
 
 
