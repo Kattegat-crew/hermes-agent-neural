@@ -132,6 +132,20 @@ def test_reemit_call_arguments_are_json_roundtrip_safe():
     json.dumps(g.reemit_call["arguments"])  # must not raise
 
 
+def test_leak_marker_in_inline_code_is_legitimate_prose():
+    # Live false positive (2026-10-26): an agent's report quoting the marker inside
+    # inline code was detected as a leak and truncated to EOS. Inline code is prose.
+    text = (
+        "El opener real es el marcador DSML seguido de la keyword calls — "
+        "el texto `<｜｜DSML｜｜ calls>` del corpus de Bob lo confirma, "
+        "y el invoke vacío `<｜｜DSML｜｜ invoke name=\"x\">` también es legítimo aquí."
+    )
+    g = apply_dsml_guard(text, VALID_TOOLS)
+    assert g.leak_found is False
+    assert g.response == text
+    assert g.reemit_call is None
+
+
 def test_leak_inside_code_fence_is_legitimate_content():
     # Documenting this very bug in an answer must not strip the example nor execute it.
     text = (
