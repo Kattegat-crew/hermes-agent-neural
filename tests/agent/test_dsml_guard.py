@@ -313,3 +313,132 @@ def test_intake_noop_on_clean_text():
     assert recover_leaked_tool_calls(agent, msg) is False
     assert msg.content == text
     assert msg.finish_reason == "stop"
+
+
+# ---------------------------------------------------------------------------
+# Real-production grammar (Bob's 47-case state.db export, 2026-10-26): the opener
+# keyword is `calls` (not `tool_calls`) with a SPACE after the pipe token; parameters
+# are NOT closed (the value ends at the next opener / invoke close / degraded empty
+# close); an invoke may be EMPTY (arguments {}); string="false" values are JSON
+# scalars. 43/47 real cases have more <parameter openers than closes — a parser that
+# demands </parameter> drops the arguments entirely.
+# ---------------------------------------------------------------------------
+
+R36_EMPTY_INVOKE = (
+    "<｜｜DSML｜｜ calls>\n"
+    '<｜｜DSML｜｜ invoke name="web_search">\n'
+    "</｜｜DSML｜｜ invoke>\n"
+    "</｜｜DSML｜｜ calls>"
+)
+
+
+def test_real_grammar_empty_invoke_reemits_empty_arguments():
+    # R36 (110 B real): invoke with NO parameters must execute with arguments {},
+    # not be treated as truncated/unparseable.
+    g = apply_dsml_guard(R36_EMPTY_INVOKE, VALID_TOOLS)
+    assert g.leak_found is True
+    assert g.reemit_calls == [{"name": "web_search", "arguments": {}}]
+    assert g.reemit_call == {"name": "web_search", "arguments": {}}
+    assert "DSML" not in g.response
+
+
+REAL_UNCLOSED_PARAMS = (
+    '<｜｜DSML｜｜ invoke name="terminal">\n'
+    '<｜｜DSML｜｜ parameter name="query" string="true">estado de nginx</｜｜DSML｜｜'
+    ' parameter name="limit" string="false">10</｜｜DSML｜｜>\n'
+    "</｜｜DSML｜｜ invoke>\n"
+    '<｜｜DSML｜｜ invoke name="web_search">\n'
+    '<｜｜DSML｜｜ parameter name="query" string="true">dsml leak deepseek</｜｜DSML｜｜>\n'
+    "</｜｜DSML｜｜ invoke>\n"
+    "</｜｜DSML｜｜ calls>"
+)
+
+
+def test_real_grammar_unclosed_params_two_invokes_fully_recovered():
+    # R37 shape: NO </parameter> closes — the value of `query` is cut by the NEXT
+    # opener, `limit` ends at the degraded empty close, and the block carries TWO
+    # invokes that must BOTH come back as reconstructable calls.
+    g = apply_dsml_guard(REAL_UNCLOSED_PARAMS, VALID_TOOLS)
+    assert g.leak_found is True
+    assert g.reemit_calls == [
+        {"name": "terminal", "arguments": {"query": "estado de nginx", "limit": 10}},
+        {"name": "web_search", "arguments": {"query": "dsml leak deepseek"}},
+    ]
+    assert g.reemit_call == g.reemit_calls[0]
+    assert "DSML" not in g.response
+
+
+def test_real_grammar_string_false_scalar_coercion():
+    # string="false" carries JSON scalars ('10', 'true') — coerce with json.loads,
+    # fallback to str (Bob's point 7).
+    text = (
+        '<｜｜DSML｜｜ invoke name="terminal">\n'
+        '<｜｜DSML｜｜ parameter name="limit" string="false">true</｜｜DSML｜｜>\n'
+        "</｜｜DSML｜｜ invoke>"
+    )
+    g = apply_dsml_guard(text, VALID_TOOLS)
+    assert g.reemit_call is not None
+    assert g.reemit_call["arguments"] == {"limit": True}
+
+
+def test_real_grammar_string_false_broken_json_object_still_rejected():
+    # Anti-ghost guard survives: a JSON-looking object value that fails to parse must
+    # never be re-emitted, even under the relaxed scalar coercion.
+    text = (
+        '<｜｜DSML｜｜ invoke name="web_search">\n'
+        '<｜｜DSML｜｜ parameter name="query" string="false">{broken json</｜｜DSML｜｜>\n'
+        "</｜｜DSML｜｜ invoke>"
+    )
+    g = apply_dsml_guard(text, VALID_TOOLS)
+    assert g.leak_found is True
+    assert g.reemit_call is None
+    assert g.reemit_calls == []
+
+
+def test_real_grammar_four_invoke_block_recovers_all_four():
+    # Distribution 21× 4 invokes: every invoke in a closed block is recovered.
+    text = "<｜｜DSML｜｜ calls>\n"
+    for i, name in enumerate(("terminal", "web_search", "web_extract", "terminal")):
+        text += (
+            f'<｜｜DSML｜｜ invoke name="{name}">\n'
+            f'<｜｜DSML｜｜ parameter name="command" string="true">cmd {i}</｜｜DSML｜｜>\n'
+            "</｜｜DSML｜｜ invoke>\n"
+        )
+    text += "</｜｜DSML｜｜ calls>"
+    g = apply_dsml_guard(text, VALID_TOOLS)
+    assert g.leak_found is True
+    assert [c["name"] for c in g.reemit_calls] == [
+        "terminal", "web_search", "web_extract", "terminal",
+    ]
+    assert g.reemit_calls[2]["arguments"] == {"command": "cmd 2"}
+
+
+def test_real_grammar_prose_before_block_survives_byte_for_byte():
+    # Bob's point 8: several leaks carry prose BEFORE the block ("Buena pregunta, dejame
+    # confirmarlo con datos actuales...") — the prose survives as content.
+    text = (
+        "Buena pregunta, dejame confirmarlo con datos actuales...\n"
+        '<｜｜DSML｜｜ invoke name="web_search">\n'
+        '<｜｜DSML｜｜ parameter name="query" string="true">pico y placa hoy</｜｜DSML｜｜>\n'
+        "</｜｜DSML｜｜ invoke>\n"
+        "</｜｜DSML｜｜ calls>"
+    )
+    g = apply_dsml_guard(text, VALID_TOOLS)
+    assert g.leak_found is True
+    assert g.reemit_calls == [
+        {"name": "web_search", "arguments": {"query": "pico y placa hoy"}}
+    ]
+    assert g.response.strip() == "Buena pregunta, dejame confirmarlo con datos actuales..."
+
+
+def test_intake_recovers_all_invokes_from_real_grammar_block():
+    agent = _fake_agent()
+    msg = _fake_message(REAL_UNCLOSED_PARAMS)
+    assert recover_leaked_tool_calls(agent, msg) is True
+    assert len(msg.tool_calls) == 2
+    assert [tc.function.name for tc in msg.tool_calls] == ["terminal", "web_search"]
+    assert json.loads(msg.tool_calls[0].function.arguments) == {
+        "query": "estado de nginx", "limit": 10,
+    }
+    assert json.loads(msg.tool_calls[1].function.arguments) == {"query": "dsml leak deepseek"}
+    assert msg.finish_reason == "tool_calls"
