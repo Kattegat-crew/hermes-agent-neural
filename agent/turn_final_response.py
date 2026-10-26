@@ -326,7 +326,8 @@ def finish_text_response(
                 "HERMES-DSML-GUARD: DSML tool-call markup leaked into final text "
                 "(model=%s provider=%s) — re-prompting (%d/2%s)",
                 agent.model, agent.provider, _dsml_retries + 1,
-                f", recovered call {_dsml.reemit_call['name']}" if _dsml.reemit_call else "",
+                f", recovered {len(_dsml.reemit_calls)} call(s): "
+                f"{', '.join(c['name'] for c in _dsml.reemit_calls)}" if _dsml.reemit_calls else "",
             )
             agent._emit_diagnostic_status(
                 f"↻ Tool-call markup leaked as text — recovering ({_dsml_retries + 1}/2)"

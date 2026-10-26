@@ -20,13 +20,13 @@ A leak is only detected when a marker is followed by an invocation shape (``invo
 
 from __future__ import annotations
 
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 import json
 import logging
 import re
 from types import SimpleNamespace
 import time
-from typing import Any, Iterable, Optional
+from typing import Any, Iterable, List, Optional
 
 logger = logging.getLogger("agent.conversation_loop")
 
@@ -57,17 +57,26 @@ _LEAK_BLOCK_CLOSE_RE = re.compile(
     r"<\s*/\s*[｜|]{1,2}\s*DSML\s*[｜|]{1,2}\s*(?:invok\w*|tool_?calls|calls)\s*>"
     r"|<\s*/\s*toolcalls\s*>"
 )
-_DSML_PARAM_RE = re.compile(
-    r'<\s*[｜|]{1,2}\s*DSML\s*[｜|]{1,2}\s*parameter\s+name="(?P<name>[^"]+)"[^>]*>'
-    r"(?P<val>.*?)"
-    r"<\s*/\s*[｜|]{1,2}\s*DSML\s*[｜|]{1,2}\s*parameter\s*>",
-    re.S,
+# Parameter openers (DSML-degraded and XML styles) — attrs captured to read the
+# string="false" JSON-scalar flag. Real 47-case corpus (state.db, 14→25 oct): 43/47
+# leaks have parameter openers with NO matching close, and the close of parameter N is
+# FUSED with the open of N+1 as a hybrid '</…parameter name="k" …>' tag — the leading
+# '/' is accepted so the hybrid opens the next parameter (it is also a value boundary
+# via the nameless close alternative below). Values are parsed STRUCTURALLY, never by
+# demanding </parameter>.
+_DSML_PARAM_OPEN_RE = re.compile(
+    r'<\s*/?\s*[｜|]{1,2}\s*DSML\s*[｜|]{1,2}\s*parameter\s+name="(?P<name>[^"]+)"(?P<attrs>[^>]*)>'
 )
-_XML_PARAM_RE = re.compile(
-    r'<\s*parameter\s+name="(?P<name>[^"]+)"[^>]*>'
-    r"(?P<val>.*?)"
-    r"<\s*/\s*parameter\s*>",
-    re.S,
+_XML_PARAM_OPEN_RE = re.compile(
+    r'<\s*/?\s*parameter\s+name="(?P<name>[^"]+)"(?P<attrs>[^>]*)>'
+)
+# Where an unclosed parameter's value ends: any close tag (invoke, calls, parameter —
+# including the hybrid '</…parameter name="k" …>' shape and the degraded empty
+# '</…DSML…>' with NO keyword, real case R37), or the marker prefix of the next
+# opener/wrapper.
+_PARAM_VALUE_BOUNDARY_RE = re.compile(
+    r"<\s*/\s*(?:[｜|]{1,2}\s*DSML\s*[｜|]{1,2}\s*)?(?:(?:invok\w*|tool_?calls|calls|parameter)[^>]*)?>"
+    r"|<\s*[｜|]{1,2}\s*DSML\s*[｜|]{1,2}\s*(?:invok\w*|tool_?calls|calls)"
 )
 
 # Re-prompt nudges: the model re-issues the call through the structured tool-call
@@ -90,12 +99,15 @@ DSML_GENERIC_REEMIT_NUDGE = (
 class DsmlGuardResult:
     """``response``: text with every leaked block removed (byte-identical when clean);
     ``leak_found``: whether any invocation-shaped DSML markup was present;
-    ``reemit_call``: ``{"name", "arguments"}`` when a call was safely reconstructable
-    (anti-ghost guards passed), else ``None``."""
+    ``reemit_call``: ``{"name", "arguments"}`` of the first safely reconstructable call
+    (anti-ghost guards passed), else ``None``;
+    ``reemit_calls``: ALL reconstructable calls in block order (a real closed block can
+    carry 2–4 invokes; empty when none)."""
 
     response: str
     leak_found: bool
     reemit_call: Optional[dict]
+    reemit_calls: list = field(default_factory=list)
 
 
 _CODE_FENCE_RE = re.compile(r"```|~~~")
@@ -159,21 +171,37 @@ def _leak_spans(text: str) -> list[tuple[int, int, bool]]:
     return spans
 
 
-def _parse_params(block: str) -> Optional[dict]:
-    """Parameter dict from a leaked block (DSML style first, XML style fallback), or
-    ``None`` when any JSON-looking value fails to parse (anti-ghost guard)."""
-    pairs = _DSML_PARAM_RE.findall(block) or _XML_PARAM_RE.findall(block)
-    if not pairs:
-        return None
+def _parse_invoke_args(region: str) -> Optional[dict]:
+    """Arguments for ONE invoke from its value region (text between the invoke opener
+    and the next invoke opener / block end). Structural parsing per the real 47-case
+    production corpus: parameters are usually NOT closed, so each value is bounded by
+    the next opener or any close tag — never by a required ``</parameter>``. An invoke
+    with no parameters is a legal call (arguments ``{}``). Returns ``None`` when a
+    JSON-looking object/array value fails to parse (anti-ghost guard)."""
+    openers = list(_DSML_PARAM_OPEN_RE.finditer(region))
+    if not openers:
+        openers = list(_XML_PARAM_OPEN_RE.finditer(region))
+    if not openers:
+        return {}  # empty invoke (real case R36): execute with empty arguments
     args: dict = {}
-    for name, val in pairs:
-        if val.lstrip().startswith(("{", "[")):
+    for i, m in enumerate(openers):
+        start = m.end()
+        limit = openers[i + 1].start() if i + 1 < len(openers) else len(region)
+        bm = _PARAM_VALUE_BOUNDARY_RE.search(region, start, limit)
+        val = region[start:bm.start()] if bm else region[start:limit]
+        stripped = val.lstrip()
+        if stripped.startswith(("{", "[")):
             try:
-                args[name] = json.loads(val)
+                args[m.group("name")] = json.loads(val)
             except (ValueError, TypeError):
-                return None
+                return None  # broken JSON object/array: never invent a call
+        elif 'string="false"' in (m.group("attrs") or ""):
+            try:  # JSON scalar coercion ('10' → 10, 'true' → true); fallback str
+                args[m.group("name")] = json.loads(val)
+            except (ValueError, TypeError):
+                args[m.group("name")] = val
         else:
-            args[name] = val
+            args[m.group("name")] = val
     return args
 
 
@@ -189,21 +217,21 @@ def apply_dsml_guard(response: str, valid_tool_names: Iterable[str]) -> DsmlGuar
         return DsmlGuardResult(response=text, leak_found=False, reemit_call=None)
 
     allowed = set(valid_tool_names or ())
-    reemit: Optional[dict] = None
+    reemit_calls: list = []
     for start, end, closed in spans:
         if not closed:
             continue  # anti-ghost guard #1: truncated block → layer 2 re-prompt, never execute
         block = text[start:end]
-        inv = _INVOKE_RE.search(block)
-        if inv is None:
-            continue
-        args = _parse_params(block)
-        if args is None:
-            continue  # unparseable args: never invent a call (anti-ghost guard)
-        if inv.group("name") not in allowed:
-            continue  # undeclared tool: never re-emit (anti-ghost guard)
-        reemit = {"name": inv.group("name"), "arguments": args}
-        break
+        invs = list(_INVOKE_RE.finditer(block))
+        for j, inv in enumerate(invs):
+            region_end = invs[j + 1].start() if j + 1 < len(invs) else len(block)
+            args = _parse_invoke_args(block[inv.end():region_end])
+            if args is None:
+                continue  # unparseable JSON-looking args: never invent a call (anti-ghost)
+            if inv.group("name") not in allowed:
+                continue  # undeclared tool: never re-emit (anti-ghost guard)
+            reemit_calls.append({"name": inv.group("name"), "arguments": args})
+    reemit = reemit_calls[0] if reemit_calls else None
 
     parts: list[str] = []
     cursor = 0
@@ -219,7 +247,7 @@ def apply_dsml_guard(response: str, valid_tool_names: Iterable[str]) -> DsmlGuar
         if i == len(spans) - 1:
             parts.append(text[cursor:])
     out = "".join(parts)
-    return DsmlGuardResult(response=out, leak_found=True, reemit_call=reemit)
+    return DsmlGuardResult(response=out, leak_found=True, reemit_call=reemit, reemit_calls=reemit_calls)
 
 
 def build_reemit_nudge(reemit_call: Optional[dict]) -> str:
@@ -248,24 +276,28 @@ def recover_leaked_tool_calls(agent: Any, assistant_message: Any) -> bool:
         return False
     allowed = set(getattr(agent, "valid_tool_names", None) or ())
     guard = apply_dsml_guard(content, allowed)
-    if not guard.leak_found or not guard.reemit_call:
+    calls: List[dict] = guard.reemit_calls or ([guard.reemit_call] if guard.reemit_call else [])
+    if not calls:
         return False  # unrecoverable → the final-response layer re-prompts + strips
+    now = int(time.time() * 1000)
     assistant_message.tool_calls = [
         SimpleNamespace(
-            id=f"call_dsml_{int(time.time() * 1000)}",
+            id=f"call_dsml_{now}_{i}",
             type="function",
             function=SimpleNamespace(
-                name=guard.reemit_call["name"],
-                arguments=json.dumps(guard.reemit_call["arguments"], ensure_ascii=False),
+                name=call["name"],
+                arguments=json.dumps(call["arguments"], ensure_ascii=False),
             ),
         )
+        for i, call in enumerate(calls)
     ]
     assistant_message.content = guard.response or None
     assistant_message.finish_reason = "tool_calls"
     agent._dsml_guard_recovered = getattr(agent, "_dsml_guard_recovered", 0) + 1
     logger.warning(
-        "HERMES-DSML-GUARD: DSML tool-call markup leaked into content — recovered call "
-        "'%s' from text, executing in-turn (model=%s provider=%s, total recoveries=%d)",
-        guard.reemit_call["name"], agent.model, agent.provider, agent._dsml_guard_recovered,
+        "HERMES-DSML-GUARD: DSML tool-call markup leaked into content — recovered %d "
+        "call(s) '%s' from text, executing in-turn (model=%s provider=%s, total recoveries=%d)",
+        len(calls), ", ".join(call["name"] for call in calls),
+        agent.model, agent.provider, agent._dsml_guard_recovered,
     )
     return True
