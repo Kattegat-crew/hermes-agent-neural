@@ -35,13 +35,13 @@ logger = logging.getLogger("agent.conversation_loop")
 # malformed toolcalls wrapper. A bare marker in prose (no invoke/calls shape) is NOT
 # a leak.
 _LEAK_START_RE = re.compile(
-    r"<\s*[｜|]{1,2}\s*DSML[｜|]{1,2}\s*(?:inv(?:ok\w*)?|calls)"
+    r"<\s*[｜|]{1,2}\s*DSML\s*[｜|]{1,2}\s*(?:inv(?:ok\w*)?|tool_?calls|calls)"
     r"|<\s*toolcalls\s*>"
 )
 # Any DSML/toolcalls closing tag (invoke, calls, parameter — the block may end on the
 # outermost one, so the caller takes the LAST close before the next block or EOS).
 _LEAK_CLOSE_RE = re.compile(
-    r"<\s*/\s*[｜|]{1,2}\s*DSML[｜|]{1,2}\s*\w+\s*>"
+    r"<\s*/\s*[｜|]{1,2}\s*DSML\s*[｜|]{1,2}\s*\w+\s*>"
     r"|<\s*/\s*toolcalls\s*>"
 )
 _INVOKE_RE = re.compile(r'invoke\s+name="(?P<name>[^"]+)"')
@@ -49,17 +49,17 @@ _INVOKE_RE = re.compile(r'invoke\s+name="(?P<name>[^"]+)"')
 # only when no wrapper is present (the common truncated leak) — it must never bound the
 # block it belongs to.
 _WRAP_START_RE = re.compile(
-    r"<\s*[｜|]{1,2}\s*DSML[｜|]{1,2}\s*calls"
+    r"<\s*[｜|]{1,2}\s*DSML\s*[｜|]{1,2}\s*(?:tool_?calls|calls)"
     r"|<\s*toolcalls\s*>"
 )
 _LEAK_BLOCK_CLOSE_RE = re.compile(
-    r"<\s*/\s*[｜|]{1,2}\s*DSML[｜|]{1,2}\s*(?:invok\w*|calls)\s*>"
+    r"<\s*/\s*[｜|]{1,2}\s*DSML\s*[｜|]{1,2}\s*(?:invok\w*|tool_?calls|calls)\s*>"
     r"|<\s*/\s*toolcalls\s*>"
 )
 _DSML_PARAM_RE = re.compile(
-    r'<\s*[｜|]{1,2}\s*DSML[｜|]{1,2}\s*parameter\s+name="(?P<name>[^"]+)"[^>]*>'
+    r'<\s*[｜|]{1,2}\s*DSML\s*[｜|]{1,2}\s*parameter\s+name="(?P<name>[^"]+)"[^>]*>'
     r"(?P<val>.*?)"
-    r"<\s*/\s*[｜|]{1,2}\s*DSML[｜|]{1,2}\s*parameter\s*>",
+    r"<\s*/\s*[｜|]{1,2}\s*DSML\s*[｜|]{1,2}\s*parameter\s*>",
     re.S,
 )
 _XML_PARAM_RE = re.compile(
