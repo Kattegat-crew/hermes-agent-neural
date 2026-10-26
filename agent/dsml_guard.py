@@ -42,6 +42,7 @@ _LEAK_START_RE = re.compile(
 # outermost one, so the caller takes the LAST close before the next block or EOS).
 _LEAK_CLOSE_RE = re.compile(
     r"<\s*/\s*[｜|]{1,2}\s*DSML\s*[｜|]{1,2}\s*\w+\s*>"
+    r"|<\s*/\s*[｜|]{1,2}\s*DSML\s*[｜|]{1,2}\s*/?\s*>"  # degraded streaming close (empty tag)
     r"|<\s*/\s*toolcalls\s*>"
 )
 _INVOKE_RE = re.compile(r'invoke\s+name="(?P<name>[^"]+)"')
