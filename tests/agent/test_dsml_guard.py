@@ -226,6 +226,26 @@ def test_truncated_value_dragging_close_tags_is_never_reemitted():
     assert "Hola." in g.response
 
 
+def test_degraded_streaming_close_strips_but_never_executes():
+    # Bob's real corpus (47 fugas): streaming chunk loss degrades the close to an empty
+    # tag '</｜｜DSML｜｜>'. It bounds the strip (trailing prose survives) but must NOT
+    # count as a structural close — the call inside never executes.
+    text = (
+        "Antes.\n"
+        '<｜｜DSML｜｜ calls>\n'
+        '<｜｜DSML｜｜ invoke name="terminal">\n'
+        '<｜｜DSML｜｜ parameter name="command" string="true">uptime\n'
+        "</｜｜DSML｜｜>\n"
+        "Después."
+    )
+    g = apply_dsml_guard(text, VALID_TOOLS)
+    assert g.leak_found is True
+    assert g.reemit_call is None
+    assert "Antes." in g.response
+    assert "Después." in g.response
+    assert "DSML" not in g.response
+
+
 # --- Layer 1 (intake): recover_leaked_tool_calls ---
 
 
