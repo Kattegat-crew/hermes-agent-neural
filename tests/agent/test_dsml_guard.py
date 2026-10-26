@@ -431,6 +431,50 @@ def test_real_grammar_prose_before_block_survives_byte_for_byte():
     assert g.response.strip() == "Buena pregunta, dejame confirmarlo con datos actuales..."
 
 
+def test_real_corpus_r40_streaming_cut_json_array_structurally_repaired():
+    # R40 (corpus real 14→25-oct): `tool_call` wrapper whose `calls` param carries a
+    # JSON array cut by the streaming boundary — the item object's closing `}` was
+    # lost before `]`. Quotes are balanced, so a deterministic stack repair closes
+    # the structure; dropping the call would lose a REAL production invoke.
+    text = (
+        '<｜｜DSML｜｜ calls>\n'
+        '<｜｜DSML｜｜ invoke name="tool_call">\n'
+        '<｜｜DSML｜｜ parameter name="calls" string="false">'
+        '[{"arguments": {"query": "UNAD entregas", "name": "web_search"}]'
+        '</｜｜DSML｜｜ parameter>\n'
+        '</｜｜DSML｜｜ invoke>\n'
+        '</｜｜DSML｜｜ calls>'
+    )
+    g = apply_dsml_guard(text, {"tool_call"})
+    assert g.leak_found is True
+    assert g.reemit_calls == [
+        {
+            "name": "tool_call",
+            "arguments": {
+                "calls": [{"arguments": {"query": "UNAD entregas", "name": "web_search"}}]
+            },
+        }
+    ]
+
+
+def test_real_corpus_prose_blank_lines_survive_byte_for_byte():
+    # R01 (corpus real): prose ends with '\n\n' before the block. Bob's acceptance
+    # criterion: the prose survives BYTE FOR BYTE — no rstrip, no blank-line re-flow.
+    prose = "Voy a ver qué pasó de verdad con el saludo de Alejandro:\n\n"
+    text = (
+        prose
+        + '<｜｜DSML｜｜ calls>\n'
+        + '<｜｜DSML｜｜ invoke name="execute_code">\n'
+        + '<｜｜DSML｜｜ parameter name="code" string="true">print(1)</｜｜DSML｜｜>\n'
+        + '</｜｜DSML｜｜ invoke>\n'
+        + '</｜｜DSML｜｜ calls>'
+    )
+    g = apply_dsml_guard(text, {"execute_code"})
+    assert g.leak_found is True
+    assert g.reemit_calls == [{"name": "execute_code", "arguments": {"code": "print(1)"}}]
+    assert g.response == prose
+
+
 def test_intake_recovers_all_invokes_from_real_grammar_block():
     agent = _fake_agent()
     msg = _fake_message(REAL_UNCLOSED_PARAMS)
