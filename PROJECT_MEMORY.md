@@ -362,3 +362,13 @@
 - [x] Agent × Repository Acceptance Matrix documented.
 - [ ] Maintain the single Engram database policy at `/root/.engram/engram.db`.
 - [ ] Evaluate PR/push of `feat/memoria-dev` upon explicit user review and approval (no automated push allowed).
+
+
+## Hermes Safe Update Controller Handover (2026-10-28)
+- Phase 1 and Phase 2 were explicitly approved (“Aprobado”); authorized implementation is limited to the monitoring/reporting checklist. Real Discord sends, scheduler cutover, remote/PROD access, deployment changes, and protected update/recovery operations remain out of scope.
+- Work is isolated in `/opt/hermes-agent-worktrees/hermes-update-watch` on `feat/hermes-update-watch`; live checkout code and HEAD remain untouched at `cd397afc64c91e759d49c1db6418e4b7ab107d12`.
+- T01 release discovery/identity verification is implemented and functionally verified: focused guarded runner selection passed 17 tests; full feature file passed 32 tests, independently repeated by verifier and parent. Corrections cover republishes, redirect prevention, malformed JSON/date inputs, and exact tag-ref identity. All HTTP redirects are rejected before follow-up; validated pagination links are independent fixed-host requests.
+- User selected `feature-branch-chain` (“Sí”, 2026-10-28). T01 is slice 1 with planned commit `feat(ops): verify official Hermes release identities` (actual SHA pending parent); T02–T04 remain later reviewable slices. No commit, PR, or push has occurred. T01’s 1,478 authored source/test lines form a cohesive bounded client and regression-test unit; do not split artificially or remove tests to meet the approximate 400-line heuristic.
+- Native review preflight failed before mutation because Git authority ownership was UID 10000 versus root; no receipt or native PASS exists. No ownership, file modes, or review-mode settings were changed.
+- Read-only hook check found `core.hooksPath` unset and no active `.git/hooks/pre-commit` at `/opt/hermes-agent/.git/hooks/pre-commit`; no hook was executed.
+- Next: parent records T01’s commit and SHA, then starts T02. `ARCHITECTURE.md` awaits completion of T04 and registration of the operational CLI topology.
