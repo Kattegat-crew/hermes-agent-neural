@@ -368,7 +368,17 @@
 - Phase 1 and Phase 2 were explicitly approved (“Aprobado”); authorized implementation is limited to the monitoring/reporting checklist. Real Discord sends, scheduler cutover, remote/PROD access, deployment changes, and protected update/recovery operations remain out of scope.
 - Work is isolated in `/opt/hermes-agent-worktrees/hermes-update-watch` on `feat/hermes-update-watch`; live checkout code and HEAD remain untouched at `cd397afc64c91e759d49c1db6418e4b7ab107d12`.
 - T01 release discovery/identity verification is implemented and functionally verified: focused guarded runner selection passed 17 tests; full feature file passed 32 tests, independently repeated by verifier and parent. Corrections cover republishes, redirect prevention, malformed JSON/date inputs, and exact tag-ref identity. All HTTP redirects are rejected before follow-up; validated pagination links are independent fixed-host requests.
-- User selected `feature-branch-chain` (“Sí”, 2026-10-28). T01 is slice 1 with planned commit `feat(ops): verify official Hermes release identities` (actual SHA pending parent); T02–T04 remain later reviewable slices. No commit, PR, or push has occurred. T01’s 1,478 authored source/test lines form a cohesive bounded client and regression-test unit; do not split artificially or remove tests to meet the approximate 400-line heuristic.
+- User selected `feature-branch-chain` (“Sí”, 2026-10-28). T01 is committed as `874a1d1b61961124e91e9430a86a3b17efc8befe`; T02–T04 remain later reviewable slices. No PR or push has occurred. T01’s 1,478 authored source/test lines form a cohesive bounded client and regression-test unit; do not split artificially or remove tests to meet the approximate 400-line heuristic.
 - Native review preflight failed before mutation because Git authority ownership was UID 10000 versus root; no receipt or native PASS exists. No ownership, file modes, or review-mode settings were changed.
 - Read-only hook check found `core.hooksPath` unset and no active `.git/hooks/pre-commit` at `/opt/hermes-agent/.git/hooks/pre-commit`; no hook was executed.
-- Next: parent records T01’s commit and SHA, then starts T02. `ARCHITECTURE.md` awaits completion of T04 and registration of the operational CLI topology.
+- Next: independently verify and commit T02 before starting T03. `ARCHITECTURE.md` awaits completion of T04 and registration of the operational CLI topology.
+
+
+## Hermes Update Watch T02 Handover (2026-10-28)
+- T01 is committed on the isolated branch as `874a1d1b61961124e91e9430a86a3b17efc8befe`; live checkout remains unchanged.
+- T02 adds bounded shell-free process execution, fixed DEV Git evidence collection, explicit DEV/PROD unknown evidence, strict secret-free v1 report validation/digest, fixed read-only prompt and bounded alert rendering. No real Git operation, network, secret, Discord, or deployment action occurred.
+- T02 test-first evidence: guarded report suite RED 8 failures for missing APIs; report GREEN 13 passed after correction; combined T01/T02 run 45 passed, 0 failed.
+- New test layout is per task: release `test_hermes_update_watch.py`, report `test_hermes_update_watch_report.py`, future state and CLI suites separate. `process.py` is a small shared bounded subprocess primitive, not a general execution framework.
+- T02 awaits independent verification of two bounded corrections and parent-owned commit; planned commit message is `feat(ops): generate bounded Hermes release reports`. T03 remains next only after T02 closure.
+
+- T02 review correction: valid recomputed digests no longer permit `published_at > created_at`; UTC year-9999 expiry overflow is converted to stable `invalid_timestamp`. Two focused regression tests observed RED then GREEN; final report/full regression counts are 13/13 and 45/45.

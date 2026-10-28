@@ -4,8 +4,8 @@ from __future__ import annotations
 
 import re
 from dataclasses import dataclass
-from datetime import datetime
-from typing import Literal
+from datetime import datetime, timedelta
+from typing import Literal, TypedDict
 
 REPOSITORY = "NousResearch/hermes-agent"
 API_ROOT = "https://api.github.com"
@@ -93,3 +93,47 @@ class DiscoveryResult:
     pending_release_ids: tuple[int, ...]
     republished_release_ids: tuple[int, ...]
     state: DiscoveryState
+
+# T02 report/evidence schema constants. These allowlists are intentionally closed.
+REPORT_SCHEMA = "hermes.update-watch-report/v1"
+PROMPT_TEMPLATE_VERSION = "1"
+REPORT_MAX_BYTES = 65_536
+ALERT_MAX_UTF16_UNITS = 1_900
+REPORT_LIFETIME = timedelta(hours=24)
+ENVIRONMENT_NAMES = ("dev", "prod")
+ENVIRONMENT_CATEGORIES = (
+    "source_checkout",
+    "runtime_image",
+    "effective_config",
+    "customizations_mounts_profiles_data_sessions_plugins_skills_integrations",
+    "backup_restore",
+)
+DEV_UNKNOWN_REASONS = frozenset(
+    {
+        "git_timeout",
+        "git_output_limit",
+        "git_process_unavailable",
+        "git_command_failed",
+        "git_output_invalid",
+    }
+)
+
+
+class EvidenceField(TypedDict, total=False):
+    """One allowlisted category in an environment evidence record."""
+
+    status: str
+    reason: str
+    sha: str
+    dirty: bool
+    dirty_count: int
+
+
+class EnvironmentEvidence(TypedDict):
+    """Closed set of target environment categories used in reports."""
+
+    source_checkout: EvidenceField
+    runtime_image: EvidenceField
+    effective_config: EvidenceField
+    customizations_mounts_profiles_data_sessions_plugins_skills_integrations: EvidenceField
+    backup_restore: EvidenceField
