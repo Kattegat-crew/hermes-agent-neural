@@ -439,6 +439,28 @@ class StateTransaction:
         record["reason_code"] = reason_code
         self._persist()
 
+    def abort_send_before_invocation(
+        self,
+        identity: model.ReleaseIdentity,
+        destination_id: str,
+        attempt_id: str,
+        reason_code: str,
+    ) -> None:
+        """Close a persisted attempt only when transport proves no child started."""
+        record = self._find_outbox(_identity_record(identity), destination_id)
+        if (
+            record["state"] != "sending"
+            or record["attempt_id"] != attempt_id
+            or reason_code not in _FAILED_NO_SEND_REASONS
+        ):
+            raise StateError("invalid_delivery_transition")
+        record["state"] = "failed_no_send"
+        record["attempt_id"] = None
+        record["message_sha256"] = None
+        record["receipt_id"] = None
+        record["reason_code"] = reason_code
+        self._persist()
+
     def _find_outbox(self, identity: dict[str, Any], destination_id: str) -> dict[str, Any]:
         if not _valid_destination(destination_id):
             raise StateError("destination_invalid")

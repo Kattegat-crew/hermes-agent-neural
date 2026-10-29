@@ -54,6 +54,9 @@ Profile display settings are not inherited automatically from the root config. E
 
 Before writing any new class, helper, or utility, inspect and reuse these battle-tested modules:
 
+### Monitoring and Update-Report Components (feature branch; not installed or enabled)
+* `scripts/hermes_update_watch/releases.py`, `report.py`, `state.py`, `cli.py`, and `transport.py` provide an isolated official-release monitor, bounded evidence/report generation, local atomic outbox, and explicit notification adapter. `scripts/hermes-update-watch.py` is its thin command-line entrypoint. This is not an active service or scheduler and does not update Hermes. `watch` never sends; `deliver` requires an existing report, explicit destination/profile, and per-operation confirmation. Discord posting delegates only to the existing `ncl-discord` CLI, validates a typed receipt, and treats uncertain outcomes as ambiguous without retry. Operational state-root approval, installation, scheduling, real-send authorization, and all update/recovery actions remain separate decisions.
+
 ### State, Persistence & Sessions
 * [`hermes_state.py`](file:///opt/hermes-agent/hermes_state.py): Unified agent state, session management, and persistence layer.
 * [`hermes_state_search.py`](file:///opt/hermes-agent/hermes_state_search.py): Vector & keyword indexing over conversation history and sessions.

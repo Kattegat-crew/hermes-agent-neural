@@ -19,6 +19,7 @@ class BoundedProcessResult:
     stdout: bytes
     stderr: bytes
     reason_code: str | None = None
+    started: bool = False
 
 
 def run_bounded_process(
@@ -28,6 +29,7 @@ def run_bounded_process(
     timeout_seconds: float,
     stdout_limit: int,
     stderr_limit: int,
+    pass_fds: Sequence[int] = (),
 ) -> BoundedProcessResult:
     """Run a process with bounded pipe reads, no shell, and an absolute deadline."""
     if (
@@ -52,6 +54,9 @@ def run_bounded_process(
         or type(stderr_limit) is not int
         or stdout_limit < 0
         or stderr_limit < 0
+        or not isinstance(pass_fds, (tuple, list))
+        or any(type(fd) is not int or fd < 0 for fd in pass_fds)
+        or len(set(pass_fds)) != len(pass_fds)
     ):
         return BoundedProcessResult(None, b"", b"", "invalid_process_request")
 
@@ -63,6 +68,7 @@ def run_bounded_process(
             stderr=subprocess.PIPE,
             shell=False,
             close_fds=True,
+            pass_fds=tuple(pass_fds),
             env=dict(env),
             bufsize=0,
         )
@@ -113,22 +119,23 @@ def run_bounded_process(
 
         if failure is not None:
             _terminate_and_reap(child)
-            return BoundedProcessResult(None, b"", b"", failure)
+            return BoundedProcessResult(None, b"", b"", failure, started=True)
 
         remaining = deadline - time.monotonic()
         if remaining <= 0:
             _terminate_and_reap(child)
-            return BoundedProcessResult(None, b"", b"", "timeout")
+            return BoundedProcessResult(None, b"", b"", "timeout", started=True)
         try:
             returncode = child.wait(timeout=remaining)
         except subprocess.TimeoutExpired:
             _terminate_and_reap(child)
-            return BoundedProcessResult(None, b"", b"", "timeout")
+            return BoundedProcessResult(None, b"", b"", "timeout", started=True)
         return BoundedProcessResult(
             returncode,
             bytes(streams[child.stdout.fileno()][1]),
             bytes(streams[child.stderr.fileno()][1]),
             None,
+            started=True,
         )
     finally:
         selector.close()
