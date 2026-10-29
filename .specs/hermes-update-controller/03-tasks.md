@@ -1,6 +1,6 @@
 # Hermes Safe Update Controller — Phase 3 Tasks
 
-**Status:** Monitoring implementation T01–T04 functionally verified; T04 ready for local slice commit. Operational activation and protected update/recovery stages remain out of scope.
+**Status:** Monitoring implementation T01–T04 functionally verified; T04 committed as `baa231035bf7ef33376eff40628c2c8990e4b45b`. Operational activation and protected update/recovery stages remain out of scope.
 **Parent design:** [02-design.md](02-design.md), approved by the user with “Aprobado” on 2026-10-28.
 **Scope:** Monitoring/reporting only. Do not implement scheduler changes or protected prepare, backup, rehearse, activate, update, restart, or recovery operations.
 
@@ -187,3 +187,5 @@ Writer, independent targeted verifier, and parent guarded full feature check all
 ## Final monitoring verification
 
 T04 independent counterexamples are resolved: pending renewal preserves discovery budgets, stale UUID delivery leaves current outbox unchanged, and upstream exit classification matches actual codes. Writer, independent verifier and parent guarded four-file runner each passed 98 tests, zero failures. This final status supersedes historical pending notes above. T01–T04 are functionally complete; native review remains unavailable, not approved. No installation, scheduling, real GitHub/Discord smoke, PROD access, push or update/recovery operation occurred.
+
+**Slice 4 commit:** `baa231035bf7ef33376eff40628c2c8990e4b45b` — `feat(ops): expose safe release watch and gated delivery CLI`; 1,502 additions / 14 deletions. Committed-only assessment returned high risk; its exact returned STATUS failed before mutation because of Git common-directory authority ownership (UID 10000 versus current root). Native review is unavailable, not approved; no authority changes were attempted. The monitored implementation is complete locally, not operationally activated. The next stage is separately authorized installation, destination/profile selection and weekly scheduling; update/recovery execution remains a future stage.
