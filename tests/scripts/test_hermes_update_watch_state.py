@@ -214,6 +214,24 @@ def test_incomplete_discovery_cannot_advance_state_or_write_reports(tmp_path: Pa
     assert list((tmp_path / "watch" / "reports").iterdir()) == []
 
 
+def test_discovery_rejects_duplicate_pending_release_ids(tmp_path: Path) -> None:
+    store = _store(tmp_path / "watch")
+    store.initialize()
+    candidate = _identity()
+    pending = _identity(20, "v1.2.4", "c" * 40, "d" * 40)
+    result = _discovery(
+        (candidate, pending),
+        candidates=(candidate,),
+        pending=(pending.release_id, pending.release_id),
+    )
+
+    with pytest.raises(_state_module().StateError) as error:
+        _commit_discovery(store, result, [])
+
+    assert error.value.reason_code == "state_corrupt"
+    assert store.read_state()["last_complete_scan"] is None
+
+
 def test_complete_discovery_persists_report_before_cursor_and_keeps_seen_distinct(tmp_path: Path) -> None:
     store = _store(tmp_path / "watch")
     store.initialize()

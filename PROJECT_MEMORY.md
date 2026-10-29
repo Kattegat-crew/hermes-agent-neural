@@ -401,3 +401,9 @@
 - Final monitoring milestone: T04 independently revalidated and parent spot check passed 98/98 tests. All original integration findings resolved. Historical pending T04 notes above are superseded. Code is ready for local slice commit only; activation and native approval are not claimed.
 
 - Monitoring slice 4 committed as `baa231035bf7ef33376eff40628c2c8990e4b45b`. Native committed assessment was high; exact STATUS failed before mutation on authority ownership. No native receipt, no deployment or scheduler activation. Operator guide: `docs/operations/hermes-update-watch.md`.
+
+## Hermes Update Watch T05 Handover (2026-10-28)
+- Added a lock-scoped `pending_report_ids` query and fixed-target weekly driver for the explicitly authorized Monday 09:00 America/Bogota DM notification to destination `1493432785245962250` via profile `roshi`.
+- The driver completes `watch` before enumerating up to five unattempted pending IDs, then routes through the existing confirmed `deliver` workflow. Interrupted `sending` becomes ambiguous; failed, ambiguous, confirmed, and attempted records are not retried. No cron edit, install, state-root provisioning, or real message occurred.
+- Test-first weekly regressions first observed 7 expected failures against absent weekly behavior. Focused weekly suite passed 11 tests; the guarded five-file feature runner passed 109 tests (release 32, report 13, state 27, CLI 26, weekly 11), 0 failed. `git diff --check` and AST parsing were clean.
+- Parent retains immutable installation, private state-root validation/provisioning, and replacement of the legacy cron sender. Keep T05 pending independent review/parent commit; native review is not claimed.

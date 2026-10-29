@@ -213,6 +213,27 @@ These are operational/integration facts to establish in Phase 3 planning or a se
 - Discord's [Sending Messages documentation](https://support.discord.com/hc/en-us/articles/360034632292-Sending-Messages) states a 2,000-character per-message cap; the design's ≤1,900 UTF-16-unit bound stays below it and below the local CLI's 1,950-character split threshold.
 - `scripts/run_tests.sh` source documents positional single-file paths and may re-exec `run-in-hermes-env` for a stale environment. The proposed test command is verified from source but was not run.
 - `/usr/bin/python3 --version` reports 3.12.3. The controller must still verify the intended operational interpreter at installation time; it must not auto-install one.
+
+## 10. User-authorized weekly orchestration addendum (2026-10-28)
+
+The user authorized weekly stable-release notification to Discord DM `1493432785245962250` through profile `roshi`, preserving Monday 09:00 America/Bogota. This narrow addendum supersedes the earlier unresolved-target/profile gate for this notification only; it does not authorize any Hermes update, PROD/SSH, or recovery operation. The existing legacy weekly cron entry is not changed by this implementation worker; the parent owns immutable installation and deliberate replacement after verification, and must ensure only one weekly sender is enabled.
+
+Add `scripts/hermes-update-watch-weekly.py` as a thin driver over the approved CLI/store APIs. Its required flags are `--state-root`, `--target`, and `--profile`; it accepts only the explicitly authorized destination and profile. It performs no arbitrary subprocess construction: call the existing CLI orchestration in-process, with a fixed sequence of `watch` followed, only on exit 0, by a bounded pending drain. `watch`'s `available` and `no_change` outcomes are complete; any partial/blocked/nonzero result ends the run before pending enumeration or delivery.
+
+Add one narrow `StateStore.pending_report_ids(destination_id, limit=MAX_CANDIDATES) -> tuple[str, ...]` API. It enumerates, under the existing state transaction lock, only outbox rows for the exact destination with `state=pending` and `attempt_id=null`; the batch limit is five, reusing T01's `MAX_CANDIDATES`. It returns report UUIDs only, in the store's deterministic order. T03's transaction-entry stale-send handling remains authoritative: interrupted `sending` records become `ambiguous` and are never returned. `failed_no_send`, `ambiguous`, and `confirmed` records are never retried or reset.
+
+For each returned ID in order, the weekly driver invokes the existing `deliver` CLI once and constructs its exact confirmation from the fixed target/profile and validated UUID. Stop immediately on any nonzero result, preserving later pending IDs for the next weekly invocation. A crash after `watch` but before or during delivery leaves not-yet-attempted entries pending; the next invocation first rechecks upstream and then re-enumerates those pending entries, so an unchanged release can be delivered without creating a duplicate report. Delivery holds T03's lock through send intent and receipt, and an uncertain result remains ambiguous without a retry. Expired pending reports are refreshed only by the existing bounded watch revalidation; failed or incomplete revalidation stops before delivery.
+
+The ready-to-install invocation is:
+
+```sh
+/usr/bin/python3 /opt/hermes-update-watch/releases/<immutable-commit>/scripts/hermes-update-watch-weekly.py \
+  --state-root /var/lib/hermes-update-watch \
+  --target 1493432785245962250 \
+  --profile roshi
+```
+
+The installation path, owner/mode of `/var/lib/hermes-update-watch`, and cron replacement remain parent-controlled; this command is a driver contract, not evidence that installation, schedule cutover, state-root provisioning, or a real send has occurred. Preserve Monday 09:00 America/Bogota at cutover. First activation uses T01 cold-start behavior and can notify the latest currently verified stable release; the operator must be aware of that bounded first-run behavior before enabling the job.
 - CodeGraph status reports an older/truncated index; no re-index was run. Structural source inspection fell back to the bounded script and cron evidence above.
 - GitHub primary documentation: [REST release endpoints](https://docs.github.com/en/rest/releases/releases) (published release listing omits ordinary tags, supports pagination; “latest” uses creation date), [REST Git references](https://docs.github.com/en/rest/git/refs) (refs can be rewritten), and [REST Git tags](https://docs.github.com/en/rest/git/tags) (tag-object endpoint supports annotated tags and exposes the target object). These support the discovery/identity approach, not any release safety claim.
 

@@ -180,6 +180,18 @@ class StateStore:
         finally:
             os.close(root_fd)
 
+    def pending_report_ids(
+        self,
+        destination_id: str,
+        *,
+        now: datetime | None = None,
+        limit: int = model.MAX_CANDIDATES,
+    ) -> tuple[str, ...]:
+        """List a bounded batch of unexpired, never-attempted reports under lock."""
+        _validate_pending_request(destination_id, limit)
+        with self.transaction() as transaction:
+            return transaction.pending_report_ids(destination_id, now=now, limit=limit)
+
     @contextmanager
     def transaction(self) -> Iterator["StateTransaction"]:
         """Hold a nonblocking process lock through all mutations and any send."""
@@ -226,6 +238,25 @@ class StateTransaction:
     def state(self) -> dict[str, Any]:
         """Return a detached snapshot so callers cannot bypass validated mutators."""
         return copy.deepcopy(self._state)
+
+    def pending_report_ids(
+        self,
+        destination_id: str,
+        *,
+        now: datetime | None = None,
+        limit: int = model.MAX_CANDIDATES,
+    ) -> tuple[str, ...]:
+        """Read unexpired pending report UUIDs for one destination under lock."""
+        _validate_pending_request(destination_id, limit)
+        now_text = _format_timestamp(now if now is not None else datetime.now(timezone.utc))
+        return tuple(
+            record["report_id"]
+            for record in self._state["outbox"]
+            if record["destination_id"] == destination_id
+            and record["state"] == "pending"
+            and record["attempt_id"] is None
+            and record["expires_at"] > now_text
+        )[:limit]
 
     def commit_discovery(
         self,
@@ -335,7 +366,7 @@ class StateTransaction:
                 {"repository": model.REPOSITORY, "tag": tag, "commit_sha": commit_sha}
                 for tag, commit_sha in sorted(new_tags.items())
             ],
-            "pending_release_ids": sorted(set(result.state.pending_release_ids)),
+            "pending_release_ids": list(result.state.pending_release_ids),
             "outbox": sorted(outbox, key=_record_sort_key),
         }
         _validate_state(next_state, self._reports_fd)
@@ -1016,11 +1047,20 @@ def _id_list(value: Any) -> list[int]:
         raise StateError("state_corrupt")
     if any(type(item) is not int or item <= 0 for item in value):
         raise StateError("state_corrupt")
-    return sorted(set(value))
+    if len(set(value)) != len(value):
+        raise StateError("state_corrupt")
+    return list(value)
 
 
 def _valid_destination(value: Any) -> bool:
     return type(value) is str and _DESTINATION_RE.fullmatch(value) is not None
+
+
+def _validate_pending_request(destination_id: str, limit: int) -> None:
+    if not _valid_destination(destination_id):
+        raise StateError("destination_invalid")
+    if type(limit) is not int or not 1 <= limit <= model.MAX_CANDIDATES:
+        raise StateError("invalid_pending_limit")
 
 
 def _valid_numeric_id(value: Any) -> bool:

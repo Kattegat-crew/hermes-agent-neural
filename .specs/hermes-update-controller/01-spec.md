@@ -153,3 +153,11 @@ Specification-only validation: this document states the user problem and outcome
 ## 12. Phase 2 Approval and Implementation Authorization
 
 The user explicitly approved the Phase 2 technical design with **“Aprobado”** on 2026-10-28 and authorized test-first implementation of the approved monitoring/reporting scope under `03-tasks.md`. This does not authorize scheduler cutover, a real Discord post, remote/PROD access, dependencies, or deployment operations.
+
+## 13. User-Authorized Weekly Delivery Addendum (2026-10-28)
+
+The user explicitly requested a weekly release notification to Jesus's Discord direct message, numeric destination `1493432785245962250`, using the `roshi` sender profile, while preserving the existing **Monday at 09:00 America/Bogota** cadence. This addendum authorizes implementation of a bounded weekly orchestration driver and safe recovery of pending delivery intents so an interrupted watch-to-send run can resume on the next scheduled invocation.
+
+The weekly driver must run a complete `watch` first and only then drain up to five never-attempted pending report IDs for that exact destination. It sends only through the existing receipt-validating `ncl-discord` CLI and the explicitly authorized `roshi` profile. It must not retry `sending`, `ambiguous`, `confirmed`, or `failed_no_send` records, reset state, continue after an incomplete scan or a delivery failure, accept arbitrary destinations/profiles, or invoke any deployment/update/recovery action. Crash recovery is limited to pending, never-attempted reports.
+
+This implementation task does not itself edit cron, install the immutable release, create/change the operational state root, perform an actual Discord send, access PROD/SSH, or mutate a deployment. The parent owns separately controlled installation and replacement of the existing weekly legacy job after verification; both senders must not remain enabled together.
