@@ -2,16 +2,21 @@
 
 This CLI observes verified official stable releases and manages local report/outbox state. It is a monitoring and notification component only: it does not install or update Hermes, access production, run SSH, create backups, restart services, or authorize a deployment.
 
+## Current operational status
+
+The weekly driver is installed at `/opt/hermes-update-watch/releases/18cc4899bdd98c0d95ae76b17b9f92e2598be641/scripts/hermes-update-watch-weekly.py`. The root-owned private state store is initialized at `/var/lib/hermes-update-watch` with mode `0700`. `/etc/cron.d/hermes-sync` is active and runs the fixed weekly sender at Monday 09:00 America/Bogota for the authorized DM `1493432785245962250` using profile `roshi`.
+
+The first scheduled run is Monday 2026-11-02 at 09:00 America/Bogota. Installation hashes, ownership/modes, cron configuration, active cron service, timezone, and offline help were checked. **No scan or real Discord message has yet been run; end-to-end delivery is unverified.** The legacy cron contents are backed up at `/var/lib/hermes-update-watch/legacy-hermes-sync.cron.bak` (mode `0600`).
+
 ## Before use
 
-- Run from the immutable watcher release selected during the separately handled installation/cutover. This implementation adds the driver but does not install or schedule it.
-- Use the explicitly approved private state root `/var/lib/hermes-update-watch` only after the parent confirms its owner and permissions; this task does not create it. `StateStore` fails closed on unsafe ownership, permissions, symlinks, and checkout paths; it does not repair them.
+- Run from the installed immutable watcher release listed above. `StateStore` fails closed on unsafe ownership, permissions, symlinks, and checkout paths; it does not repair them.
 - The user authorized the weekly sender for Discord DM `1493432785245962250` with profile `roshi`. This authorization is specific to the weekly driver and does not establish a general destination default for manual `deliver` commands.
 - The only post adapter is the existing `/usr/local/bin/ncl-discord` CLI. The watcher does not read credentials; credential resolution remains owned by that CLI.
-- Use the explicit Python entrypoint; no package installation or scheduler setup is performed:
+- Use the installed explicit Python entrypoint; no package installation is needed:
 
 ```sh
-python3 scripts/hermes-update-watch.py --help
+/usr/bin/python3 -B /opt/hermes-update-watch/releases/18cc4899bdd98c0d95ae76b17b9f92e2598be641/scripts/hermes-update-watch-weekly.py --help
 ```
 
 ## Inspect and watch
@@ -59,8 +64,8 @@ The intended invocation for the immutable release is:
   --profile roshi
 ```
 
-Preserve the existing **Monday at 09:00 America/Bogota** cadence when the parent replaces the legacy cron entry after verification. Do not run both the legacy sender and this driver concurrently. On first activation, cold-start behavior can notify the latest currently verified stable release; review that expected first notification before cutover. This writer did not edit cron, install the immutable release, provision state, or send a message.
+The active cron entry preserves the existing **Monday at 09:00 America/Bogota** cadence and replaces the legacy sender; do not run both concurrently. On first activation, cold-start behavior can notify the latest currently verified stable release. No scan or message has yet been run, so review the expected first notification before the scheduled run if needed.
 
 ## Not enabled by this implementation
 
-No real Discord send, state-root creation/ownership change, scheduler/cron/service change, code installation, PROD inspection/SSH, deployment checkout access, update, backup, restart, rollback, or recovery is performed by this writer. The user-authorized weekly target/profile and cadence are recorded above; installation, private state-root verification, immutable release selection, and cron replacement remain parent-controlled.
+No real Discord send, scan, PROD inspection/SSH, deployment checkout access, update, backup of Hermes, restart, rollback, or recovery has been performed. The local watcher release, state store, and weekly cron entry are installed as described above; all protected Hermes update operations remain separately gated.

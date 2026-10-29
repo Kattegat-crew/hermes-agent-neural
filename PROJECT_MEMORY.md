@@ -402,8 +402,15 @@
 
 - Monitoring slice 4 committed as `baa231035bf7ef33376eff40628c2c8990e4b45b`. Native committed assessment was high; exact STATUS failed before mutation on authority ownership. No native receipt, no deployment or scheduler activation. Operator guide: `docs/operations/hermes-update-watch.md`.
 
-## Hermes Update Watch T05 Handover (2026-10-28)
+## Hermes Update Watch T05 Implementation Handover — Pre-Install (2026-10-28; superseded by operational closure below)
 - Added a lock-scoped `pending_report_ids` query and fixed-target weekly driver for the explicitly authorized Monday 09:00 America/Bogota DM notification to destination `1493432785245962250` via profile `roshi`.
 - The driver completes `watch` before enumerating up to five unattempted pending IDs, then routes through the existing confirmed `deliver` workflow. Interrupted `sending` becomes ambiguous; failed, ambiguous, confirmed, and attempted records are not retried. No cron edit, install, state-root provisioning, or real message occurred.
 - Test-first weekly regressions first observed 7 expected failures against absent weekly behavior. Focused weekly suite passed 11 tests; the guarded five-file feature runner passed 109 tests (release 32, report 13, state 27, CLI 26, weekly 11), 0 failed. `git diff --check` and AST parsing were clean.
 - Parent retains immutable installation, private state-root validation/provisioning, and replacement of the legacy cron sender. Keep T05 pending independent review/parent commit; native review is not claimed.
+
+## Hermes Update Watch T05 Operational Closure (2026-10-28)
+- This update supersedes the earlier T05 handover's pre-install statements. Parent committed T05 as `18cc4899bdd98c0d95ae76b17b9f92e2598be641` and installed the immutable release at `/opt/hermes-update-watch/releases/18cc4899bdd98c0d95ae76b17b9f92e2598be641`.
+- The empty private state store is initialized at `/var/lib/hermes-update-watch` (root:root `0700`, state/lock files `0600`). The prior cron contents are backed up in `/var/lib/hermes-update-watch/legacy-hermes-sync.cron.bak` (`0600`).
+- `/etc/cron.d/hermes-sync` now runs exactly one authorized Monday 09:00 America/Bogota weekly sender to DM `1493432785245962250` via `roshi`; the legacy `sync-upstream.sh --check` sender is absent. Cron is active and host timezone is America/Bogota.
+- The first run is scheduled for 2026-11-02 09:00 America/Bogota. Installation file hashes, permissions, store initialization, cron line, service, timezone, and offline `--help` were verified. All 112 functional tests are fake-seam tests; no live scan or Discord send has run, so end-to-end delivery is unverified.
+- Native assessment was high but native STATUS was unavailable because of Git common-directory ownership. No receipt, approval, authority mutation, or ownership repair is claimed.
