@@ -14,3 +14,10 @@ Vigente para las próximas piezas de Lucky, en toda la marca y todas las tempora
 - **Excepción aceptada:** la boleta semanal actual (frente V4 / reverso V3) se conserva tal como está por instrucción del usuario, pese a la ambigüedad de un guante. No corregirla ni copiar ese defecto en las próximas piezas.
 - No se crean ni modifican imágenes de base por esta aclaración. Las hojas existentes conservan su versión y sus hashes; su estado aprobado no certifica por sí solo una anatomía de manos ya verificada. Aplicar esta regla textual junto con las referencias vigentes hasta una futura revisión visual expresamente solicitada.
 
+
+## Lateralidad y actuación facial — 30-oct-2026
+
+Corrección del usuario tras revisar el volante V1: comprobar no solo el número de dedos, sino que exista una mano derecha y una izquierda con pulgares y palmas orientados de forma coherente con la pose. Prohibido duplicar una mano mediante espejo incorrecto. Brazos y guantes no pueden estirar, sustituir ni deformar las dos hojas inferiores; los cuatro lóbulos conservan la silueta de la identidad vigente.
+
+Variar la expresión facial entre piezas según su intención: sonrisa cerrada o abierta, cejas y mirada pueden actuar manteniendo el diseño de ojos, nariz, mejillas y proporciones. Identidad bloqueada no significa repetir siempre la misma expresión. No exigir poses que deformen el cuerpo. El volante V2 de sonrisa cerrada y gesto de bienvenida está aprobado visualmente por el usuario. La preparación de imprenta y su definición se evalúan aparte antes del tiraje.
+
