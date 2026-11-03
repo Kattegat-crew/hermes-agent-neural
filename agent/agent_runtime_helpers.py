@@ -557,8 +557,11 @@ def _merge_consecutive_assistants(messages: list[dict]) -> tuple[list[dict], int
             and isinstance(msg, dict) and msg.get("role") == "assistant"
             and not _is_codex_interim(msg) and not _is_codex_interim(prev)
         ):
-            # A provisional verification candidate is superseded, not unioned.
-            if prev.get("finish_reason") in {"verification_required", "verify_hook_continue"}:
+            # A provisional verification candidate is superseded, not unioned. A capability-claim
+            # repair candidate is provisional in the same way: the corrected answer replaces it.
+            if prev.get("finish_reason") in {
+                "verification_required", "verify_hook_continue", "capability_claim_repair",
+            }:
                 _count_unnamed_row(msg, prev)
                 _remember_absorbed_row(msg, prev, folded=False)
                 collapsed[-1] = msg
