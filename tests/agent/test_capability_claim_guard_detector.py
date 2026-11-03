@@ -124,6 +124,69 @@ class TestDeferredContradictions:
         assert verdict.kind == "contradiction_deferred"
 
 
+# ── Demonstrative objects (T10 canary finding E2) ────────────────────────
+
+
+class TestDemonstrativeObjectIsGenericDenial:
+    """A demonstrative after the preposition points back at the turn, not at an
+    unresolvable domain object.
+
+    Regression for the T10 canary (finding E2): ``tools for that`` /
+    ``herramientas para eso`` matched the object marker, so the fail-open branch
+    read the demonstrative as an unknown domain and published the denial raw.
+    Against a non-empty snapshot these are generic denials and contradict it.
+    """
+
+    @pytest.mark.parametrize(
+        "text",
+        [
+            "I don't have any tools for that.",
+            "I don't have the tools for this.",
+            "I don't have tools for those.",
+            "I don't have any tools to do that.",
+            "No tengo herramientas para eso.",
+            "No tengo herramientas para hacer eso.",
+            "No tengo herramientas para esto.",
+            "No dispongo de herramientas de eso.",
+            "No cuento con herramientas para esos.",
+        ],
+    )
+    def test_demonstrative_object_contradicts(self, evidence, text):
+        verdict = scan_published_text(evidence, text)
+        assert verdict.kind == "contradiction_direct", (
+            f"demonstrative object must not read as an unknown domain: {text!r} "
+            f"-> {verdict.kind}"
+        )
+        _assert_contradiction(verdict, text)
+
+
+class TestUnresolvableDomainObjectStaysFailOpen:
+    """A named object the lexicon cannot resolve still fails open.
+
+    The E2 fix must not turn every unresolvable subject into a contradiction:
+    only a demonstrative erases the domain object.
+    """
+
+    @pytest.mark.parametrize(
+        "text",
+        [
+            "No tengo herramientas para pilotar un dron.",
+            "I don't have tools for knitting.",
+            "No tengo herramientas para hacer pan.",
+            "I don't have tools to do knitting.",
+            "No tengo herramientas de astrofísica cuántica.",
+            "No existe una herramienta que traduzca al klingon.",
+            "There is no tool for translating to Klingon.",
+        ],
+    )
+    def test_named_domain_object_stays_allowed_absent(self, evidence, text):
+        verdict = scan_published_text(evidence, text)
+        assert not verdict.intervene, (
+            f"unresolvable domain object must stay fail-open: {text!r} -> {verdict.kind}"
+        )
+        assert verdict.kind == "allowed_absent"
+
+
 # ── Allowed: capability genuinely absent ─────────────────────────────────
 
 

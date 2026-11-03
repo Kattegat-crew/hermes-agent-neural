@@ -541,6 +541,12 @@ def apply_llm_output_transform(
     recorded = getattr(agent, "_llm_output_transform", None)
     if isinstance(recorded, tuple) and len(recorded) == 3 and recorded[0] == turn_id:
         _, transformed, pre_transform = recorded
+        # The hook memo is per TURN; the seal is per TEXT. A repair nudge or a second text
+        # step inside the same turn arrives with text this memo never saw, and it must not
+        # be published unsealed just because an earlier text in the turn was handled.
+        _sealed = _ccg_seal(agent, final_response)
+        if _sealed != final_response:
+            return _sealed, True, final_response
         return final_response, transformed, pre_transform
     if not final_response:
         return final_response, False, None

@@ -155,3 +155,26 @@ def test_seal_never_invents_unavailable_tools():
     text, _, _ = apply_llm_output_transform(agent, DENIAL, turn_id="turn-1")
     assert "trello" not in text.lower()
     assert "jira" not in text.lower()
+
+
+def test_seal_survives_a_second_text_in_the_same_turn():
+    """The hook memo is per TURN, the seal is per TEXT.
+
+    A repair retry (or any second text step) re-enters the transform with text the
+    per-turn memo has never seen; taking the recorded outcome verbatim would publish
+    that text unsealed.
+    """
+    agent = _FinalAgent(_evidence("send_message"), repairs=2)
+    apply_llm_output_transform(agent, DENIAL, turn_id="turn-1")  # records the memo
+    retry, transformed, pre = apply_llm_output_transform(agent, DENIAL, turn_id="turn-1")
+    assert transformed is True
+    assert pre == DENIAL
+    assert retry.startswith(DENIAL)
+    assert "Verificación" in retry
+
+
+def test_seal_is_idempotent_on_the_memo_path():
+    agent = _FinalAgent(_evidence("send_message"), repairs=2)
+    sealed, _, _ = apply_llm_output_transform(agent, DENIAL, turn_id="turn-1")
+    again, _, _ = apply_llm_output_transform(agent, sealed, turn_id="turn-1")
+    assert again == sealed  # already sealed: no second clause
