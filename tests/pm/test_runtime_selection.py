@@ -219,3 +219,18 @@ def test_invalid_selected_environment_never_silently_falls_back(tmp_path, monkey
     }))
     with pytest.raises(RuntimeError, match="environment"):
         runtime_paths.selected_venv(root)
+
+
+def test_unreadable_facts_json_retries_and_falls_back_gracefully(tmp_path, monkeypatch):
+    from pm import environments as runtime_paths
+
+    monkeypatch.setenv("HERMES_HOME", str(tmp_path / "home"))
+    root = tmp_path / "repo"
+    (root / "venv").mkdir(parents=True)
+    state = runtime_paths.install_state_dir(root)
+    state.mkdir(parents=True)
+    facts_file = state / "facts.json"
+    facts_file.write_text("corrupted { incomplete json", encoding="utf-8")
+    assert runtime_paths.committed_venv(root) is None
+    assert runtime_paths.selected_venv(root) == root / "venv"
+

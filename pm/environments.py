@@ -12,6 +12,7 @@ import json
 import os
 import re
 import shlex
+import time
 from pathlib import Path
 
 from hermes_constants import get_default_hermes_root, project_venv_dir
@@ -296,12 +297,20 @@ def committed_venv(project_root: Path) -> Path | None:
 
 def _recorded_venv(project_root: Path) -> Path | None:
     path = runtime_facts_path(project_root)
-    try:
-        data = json.loads(path.read_text(encoding="utf-8-sig"))
-    except FileNotFoundError:
+    data = None
+    for attempt in range(3):
+        try:
+            data = json.loads(path.read_text(encoding="utf-8-sig"))
+            break
+        except FileNotFoundError:
+            return None
+        except (OSError, ValueError):
+            if attempt < 2:
+                time.sleep(0.5)
+            else:
+                return None
+    if data is None:
         return None
-    except (OSError, ValueError) as exc:
-        raise RuntimeError(f"cannot read dependency environment: {path}") from exc
     try:
         fact = data.get("packages", {}).get("venv", {})
         value = fact.get("environment")
