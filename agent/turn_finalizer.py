@@ -480,6 +480,21 @@ def _apply_output_hooks(
     return final_response, transformed, pre_transform
 
 
+def _ccg_seal(agent, text):
+    """Fail-open seam for the S3 seal (no import while the guard is disabled)."""
+    if not text or getattr(agent, "_ccg_evidence", None) is None:
+        return text
+    try:
+        from agent.capability_claim_guard import seal_final_text
+
+        return seal_final_text(agent, text)
+    except Exception:  # health: allow BLE001 -- deliberate fail-open boundary: a guard bug must never break the turn
+        from agent.conversation_loop import logger
+
+        logger.exception("capability_claim_guard: seal failed")
+        return text
+
+
 def apply_llm_output_transform(
     agent, final_response, *, turn_id, platform=None, logger=None,
 ) -> tuple[Any, bool, Optional[Any]]:
@@ -528,18 +543,6 @@ def apply_llm_output_transform(
         final_response, transformed = _sealed, True
     agent._llm_output_transform = (turn_id, transformed, pre_transform)
     return final_response, transformed, pre_transform
-
-
-def _ccg_seal(agent, text):
-    """Fail-open seam for the S3 seal (no import while the guard is disabled)."""
-    if not text or getattr(agent, "_ccg_evidence", None) is None:
-        return text
-    try:
-        from agent.capability_claim_guard import seal_final_text
-
-        return seal_final_text(agent, text)
-    except Exception:
-        return text
 
 
 def finalize_turn(

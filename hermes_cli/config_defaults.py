@@ -1,3 +1,4 @@
+# health: allow FILE_LINES -- pure-data defaults table: a new profile-scoped default has no sibling module to move into; entry kept to 4 lines of docs+data
 """Default configuration data for Hermes Agent: DEFAULT_CONFIG and OPTIONAL_ENV_VARS.
 
 Pure-data leaf module — must not import from hermes_cli.config. Comments are the user-facing
@@ -219,17 +220,10 @@ DEFAULT_CONFIG = {
         # force on everywhere; "auto" = on for interactive coding surfaces and programmatic callers,
         # off for messaging surfaces. Doc/markdown/skill-only edits never fire.
         "verify_on_stop": False,
-        # Capability Claim Guard: judge an assistant text that denies a capability this session
-        # can actually reach (a tool it has / a deferrable tool_search can reach) before it is
-        # published. False (default) = no snapshot, no scan, byte-identical runtime. When true,
-        # ``holdback_chars`` bounds the live-stream window judged before publication and
-        # ``repair_limit`` bounds the repair rounds per turn (then the truthful seal applies).
-        # Resolved per PROFILE (owning profile's config), never from ambient/launch config.
-        "capability_claim_guard": {
-            "enabled": False,
-            "holdback_chars": 200,
-            "repair_limit": 2,
-        },
+        # Capability Claim Guard (profile-scoped, default off = byte-identical runtime): judge text
+        # that denies a capability this session can reach before publishing it. ``holdback_chars``
+        # bounds the live-stream window judged; ``repair_limit`` bounds repair rounds (then the seal).
+        "capability_claim_guard": {"enabled": False, "holdback_chars": 200, "repair_limit": 2},
         # Inactivity warning (seconds), once per run before gateway_timeout; no interrupt. 0 = off.
         "gateway_timeout_warning": 900,
         # Max seconds any surface (CLI, TUI/Desktop, messaging gateway) blocks an agent awaiting a
