@@ -27,45 +27,47 @@
 
 ## 2. Goals & Non-Goals
 ### Goals
-- [x] Enforce **Zero-Default-Load** on Turn 1 for both Skills (`skills.on_demand: true`) and `MEMORY.md` (`memory.on_demand: true`, `memory.index_char_limit: 0`), gating memory and skill retrieval strictly on preliminary turn triage.
-- [x] Preserve provider KV-cache prefixes across multi-turn sessions by preventing mid-session `tools_for_api = []` mutations in `should_decouple_tools_for_turn`.
+- [x] Enforce **Zero-Default-Load** on Turn 1 for both Skills (`skills.on_demand: true`) and `MEMORY.md` (`memory.on_demand: true`, `memory.index_char_limit: 0`), letting the primary LLM read, reason over the message, and autonomously invoke `memory(action="search", ...)` or `skill_route(query, context)` without hardcoded keyword/regex classifiers.
+- [x] Preserve provider KV-cache prefixes 100% across all turns by keeping `tools_for_api = agent.tools` constant (`should_decouple_tools_for_turn` disabled) and keeping the model constant per session without per-turn L1/L2/L3 model swapping.
 - [x] Fix Jev (`typesafe-skill-router`) profile resolution (`get_hermes_home()`), add `"default"` to `agent_tier1_skills.json`, pass contextual `recent_context`, fix the Stage-2 `fits_margin` false-negative bug, and skip `GATE_QUESTIONS` when `enforce_gate=False`.
-- [x] Configure domain-optimal primary models per specialist on `NaN-Builders` and dynamic L1/L2/L3 complexity routing for `default` (Ragnar) and `roshi`, while preserving and normalizing the `NaN-Builders` -> `OpenCode-Go` (`mimo-v2.6-flash`) fallback chain.
+- [x] Configure domain-optimal primary models per specialist on `NaN-Builders` (`deepseek-v4-flash` with `reasoning_effort: medium` for `default` and `roshi`), while preserving and normalizing the `NaN-Builders` -> `OpenCode-Go` (`mimo-v2.6-flash`) fallback chain.
+- [x] Fold `vigia` into the central multiplexer (`hermes-agent.service`) for cron execution while adding an external post-crash/post-restart recovery auditor (`hermes-post-recovery-audit.py`) that reports downtime, root cause, and missed jobs to Discord.
 - [x] Prune all 12 `USER.md` files into dense, role-scoped operational maps that retain 100% of execution paths (`vw`, `ssh dev`/`ssh prod`, Google Workspace, ActivePieces, `skill_route`, `tool_search`) and explicitly list each profile's deferred MCP servers.
 - [x] Implement `Config Shield` (`fleet_model_policy.json`, session-scoped Desktop model switches unless explicitly unlocked, and `pre_tool_call` guardrail blocking chat-driven mutations of `config.yaml`).
 
 ### Non-Goals (Out of Scope)
-- Output-side runtime regex/retry wrappers (such as the discarded `capability-claim-guard` worktree); capability hallucinations are eradicated at the input/context layer.
+- Hardcoded keyword/regex/length classifiers (`classify_turn_intent`, `classify_turn_complexity`, `_L3_COMPLEXITY_PATTERNS`, `check_runtime_execution_guardrails`) or output-side runtime regex/retry wrappers (`capability-claim-guard`). All routing and escalation are driven by semantic reasoning of the LLM.
 - Modifying WhatsApp session state (`/opt/hermes-agent-data/whatsapp/session/`).
 
 ---
 
 ## 3. User Stories & Functional Requirements
-* **US-1 (Zero-Default-Load & Fast Conversational Turn)**: As an operator messaging any agent, I want pure conversational turns to execute with Zero-Default-Load without loading `MEMORY.md` or skills by default, while keeping the session KV-cache intact (reducing prompt tokens by >90% to prevent prefill latency spikes).
+* **US-1 (Zero-Default-Load & Native Semantic Reasoning without Keyword Classifiers)**: As an operator messaging any agent, I want turns to execute with Zero-Default-Load without loading `MEMORY.md` or skills by default, while keeping the session KV-cache 100% intact and allowing the model to reason over the message without regex word lists blocking tools.
   * **Requirement 1.1**: `MemoryStore` (`tools/memory_tool_store.py`) must allow `index_char_limit: 0` when `on_demand: true`, rendering only a 4-line on-demand pointer in the System Prompt with zero `MEMORY.md` entries preloaded.
-  * **Requirement 1.2**: `_memory_turn_start_and_prefetch` (`agent/turn_context.py`) must skip external memory prefetch when `is_conversational_turn(query)` is `True`.
-  * **Requirement 1.3**: `should_decouple_tools_for_turn` (`agent/tool_guardrails.py`) must only return `True` on Turn 1 of a fresh session (`len(messages) <= 2` and `tool_turns == 0`) for unambiguous short greetings/acks (<60 chars, no question marks or capability verbs), keeping `tools_for_api = agent.tools` on all subsequent turns so the provider KV-cache prefix never invalidates.
+  * **Requirement 1.2**: `_memory_turn_start_and_prefetch` (`agent/turn_context.py`) must only skip external memory prefetch when `is_trivial_prompt(query)` is `True` (single-word acks/greetings), without regex intent classifiers.
+  * **Requirement 1.3**: `should_decouple_tools_for_turn` (`agent/tool_guardrails.py`) must always return `False`, keeping `tools_for_api = agent.tools` constant on every turn so the provider KV-cache prefix never invalidates and tools are never stripped by keyword heuristics.
 
 * **US-2 (Contextual Skill Routing via Jev)**: As an agent facing a specialized task, I want to query `skill_route(query, context)` by contextual intent so Jev returns and auto-loads the matching `SKILL.md` in one step at minimal cost.
   * **Requirement 2.1**: `typesafe-skill-router` must resolve active profiles via `hermes_constants.get_hermes_home()` and route `"default"` (Ragnar) through Tier 1 (`agent_tier1_skills.json`) before falling back to Tier 2.
   * **Requirement 2.2**: When `winner_fits >= fits_threshold` (0.40) and `best_fits - winner_fits < fits_margin` (0.15), `suggest()` in `typesafe_router/router.py` must return `(winner, best_name)` instead of `()`.
   * **Requirement 2.3**: When `enforce_gate=False` (explicit `skill_route` tool call), `rank_wide()` must omit the 3 `GATE_QUESTIONS` from the TypeSafe payload.
 
-* **US-3 (Per-Agent Model Specialization, Dynamic Tiering & OpenCode-Go Failover)**: As the system architect, I want each agent to run its domain-optimal model and Ragnar/Roshi to scale model and `reasoning_effort` (L1/L2/L3) by task complexity, without breaking the `OpenCode-Go` (`mimo-v2.6-flash`) backup when `NaN-Builders` fails.
+* **US-3 (Per-Agent Model Specialization, KV-Cache Stability & OpenCode-Go Failover)**: As the system architect, I want each agent to run its domain-optimal model (`deepseek-v4-flash` at `medium` effort for `default` and `roshi`) without per-turn model swapping that breaks KV-cache, while preserving the `OpenCode-Go` (`mimo-v2.6-flash`) backup when `NaN-Builders` fails.
   * **Requirement 3.1**: Every profile's `config.yaml` must declare both `fallback_providers` and `fallback_model` with explicit `provider` and `model` keys: Step 1 = secondary model on `NaN-Builders` (distinct from `model.default`), Step 2 = `{"provider": "OpenCode-Go", "model": "mimo-v2.6-flash"}`.
-  * **Requirement 3.2**: `TaskComplexityRouter` in `agent/turn_request_assembly.py` must classify turns for `default` and `roshi` into L1 (`glm5.3-flash`, `low`), L2 (`deepseek-v4-flash`, `medium`), or L3 (`gpt-6.1-sol` / `deepseek-v4-flash`, `high`), and must respect active failover (`agent._fallback_activated` or `agent.provider == "OpenCode-Go"`) by keeping routes on `OpenCode-Go` during a `NaN-Builders` outage.
+  * **Requirement 3.2**: `apply_dynamic_turn_tiering` in `agent/tool_guardrails.py` must not swap models per turn using regex/length rules; it must only ensure that if active failover (`agent._fallback_activated` or `agent.provider == "OpenCode-Go"`) is engaged, the model stays pinned to `mimo-v2.6-flash` on `OpenCode-Go`.
 
-* **US-4 (`USER.md` Pruning & Config Shield)**: As an operator, I want `USER.md` to contain all canonical paths and deferred MCP servers concisely, and I want manual GUI/chat model changes to never corrupt `config.yaml`.
+* **US-4 (`USER.md` Pruning, Config Shield & Vigía Multiplex Consolidation)**: As an operator, I want `USER.md` to contain all canonical paths and deferred MCP servers concisely, `config.yaml` shielded from chat/GUI overwrites, and `vigia` folded into the central multiplexer with external post-restart recovery auditing.
   * **Requirement 4.1**: All 12 `USER.md` files must be rewritten into telegraphic role-scoped documents (<2,200 chars for Ragnar/Roshi, <1,300 chars for specialists) listing all active `lazy: true` MCP servers and canonical execution paths.
-  * **Requirement 4.2**: `Config Shield` must block agent-initiated mutations to `config.yaml` model keys via a `pre_tool_call` hook and scope Desktop UI model switches to the active session when `model.lock_default_in_config: true`.
+  * **Requirement 4.2**: `Config Shield` must block agent-initiated mutations to `config.yaml` model keys via a `pre_tool_call` hook (including Python/Node/Ruby inline interpreters and shell redirections) and scope Desktop UI model switches to the active session when `model.lock_default_in_config: true`.
+  * **Requirement 4.3**: `vigia` must run inside the central multiplexer (`hermes-agent.service` ticking `profiles/vigia/cron/jobs.json`), while `/usr/local/bin/hermes-post-recovery-audit.py` hooks into systemd `ExecStopPost`/`ExecStartPost` to audit and report service restarts, crash causes, permission repairs, and missed cron jobs to Discord.
 
 ---
 
 ## 4. Acceptance Criteria & Invariants
 * **Scenario 1: Conversational Turn Latency & KV-Cache Preservation**
   * **Given**: An active multi-turn session in `roshi` or `default`.
-  * **When**: The user sends `"Hola Roshi, ¿cómo estás?"`.
-  * **Then**: `_memory_turn_start_and_prefetch` is skipped, `tools_for_api` remains identical to the session's cached prefix, `TaskComplexityRouter` selects L1 (`glm5.3-flash`, `reasoning_effort="low"`), and prompt prefill executes with 0 preloaded memory entries (P50 total turn turnaround bounded only by remote provider `NaN-Builders` TTFT ~4-8s).
+  * **When**: The user sends `"Hola Roshi, ¿cómo estás?"` or an implicit request without imperative verbs.
+  * **Then**: `tools_for_api` and `agent.model` (`deepseek-v4-flash`) remain 100% identical to the session's cached prefix, no tools are blocked by regex guardrails, and prompt prefill executes with 0 preloaded memory entries (P50 total turn turnaround bounded only by remote provider `NaN-Builders` TTFT ~4-8s).
 * **Scenario 2: Close-Margin Stage-2 Skill Routing in Jev**
   * **Given**: Two skills in `typesafe-skill-router` both score `fits >= 0.40` (e.g., `0.82` and `0.78`, margin `0.04 < 0.15`).
   * **When**: The agent invokes `skill_route(query="...", context="...")`.

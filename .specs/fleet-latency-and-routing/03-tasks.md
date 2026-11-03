@@ -36,19 +36,21 @@
   - *Target Files*: `/opt/hermes-agent-data/plugins/typesafe-skill-router/__init__.py`, `/opt/hermes-agent-data/plugins/typesafe-skill-router/typesafe_router/router.py`, `/opt/hermes-agent-data/plugins/typesafe-skill-router/tests/test_router.py`
   - *Verification*: `/usr/local/bin/pytest /opt/hermes-agent-data/plugins/typesafe-skill-router/tests/ -v`
 
-### Phase 3: KV-Cache Preservation & Preliminary Turn Triage (`agent/tool_guardrails.py`)
-- [x] **Task 3.1**: Update `should_decouple_tools_for_turn` in `agent/tool_guardrails.py` so `tools_for_api = []` only fires on Turn 1 of a fresh session (`len(messages) <= 2`) for short unambiguous greetings/acks (<60 chars, no question marks or capability verbs), preserving `tools_for_api = agent.tools` on all active multi-turn sessions.
-  - *Target Files*: `agent/tool_guardrails.py`, `tests/agent/test_tool_guardrails.py`
+### Phase 3: 100% Removal of Keyword Classifiers & KV-Cache Preservation (`agent/tool_guardrails.py`)
+- [x] **Task 3.1**: Remove all regex/keyword/length classifiers (`classify_turn_intent`, `classify_turn_complexity`, `_L3_COMPLEXITY_PATTERNS`, `is_conversational_turn`, `check_runtime_execution_guardrails`) from `agent/tool_guardrails.py` and keep `tools_for_api = agent.tools` constant across all turns so the provider KV-cache prefix never mutates and tools are never blocked by keyword lists.
+  - *Target Files*: `agent/tool_guardrails.py`, `agent/turn_request_assembly.py`, `agent/turn_context.py`, `agent/agent_runtime_helpers.py`, `tests/agent/test_turn_intent_triage.py`
   - *Skill*: `.skills/code-review-and-quality/SKILL.md`
-  - *Verification*: `/usr/local/bin/pytest tests/agent/test_tool_guardrails.py -v`
+  - *Verification*: `sudo -u hermes scripts/run_tests.sh tests/agent/test_turn_intent_triage.py`
 
-### Phase 4: Per-Agent Model Specialization, `OpenCode-Go` Failover Normalization, Dynamic Tiering & Config Shield
-- [x] **Task 4.1**: Implement `apply_dynamic_turn_tiering` (`TaskComplexityRouter`) in `agent/turn_request_assembly.py` for `default` and `roshi` (L1 `glm5.3-flash` low / L2 `deepseek-v4-flash` medium / L3 `gpt-6.1-sol` or `deepseek-v4-flash` high), strictly respecting active failover (`agent._fallback_activated` or `agent.provider == "OpenCode-Go"`).
-  - *Target Files*: `agent/turn_request_assembly.py`, `agent/tool_guardrails.py`
+### Phase 4: Per-Agent Model Specialization, `OpenCode-Go` Failover Normalization, Config Shield & Vigía Multiplex Consolidation
+- [x] **Task 4.1**: Simplify `apply_dynamic_turn_tiering` in `agent/tool_guardrails.py` to remove per-turn model swapping (keeping `default` and `roshi` consistently on `deepseek-v4-flash` with a hot KV-cache) while preserving the `OpenCode-Go` (`mimo-v2.6-flash`) failover pin.
+  - *Target Files*: `agent/tool_guardrails.py`, `/opt/hermes-agent-data/config.yaml`, `/opt/hermes-agent-data/profiles/roshi/config.yaml`
 - [x] **Task 4.2**: Configure specialist primary models and normalize `fallback_providers` + `fallback_model` (Step 1: alternate `NaN-Builders` model; Step 2: `OpenCode-Go` / `mimo-v2.6-flash`) across all 12 profiles, fixing `vigia` `custom_providers`.
   - *Target Files*: `/opt/hermes-agent-data/config.yaml`, `/opt/hermes-agent-data/profiles/*/config.yaml`, `/opt/hermes-agent-data/config/fleet_model_policy.json`
 - [x] **Task 4.3**: Implement `Config Shield` (`scripts/hooks/guard_config_model_mutation.py` + `model.lock_default_in_config` guard in `hermes_cli/web_server_config.py`).
-  - *Target Files*: `scripts/hooks/guard_config_model_mutation.py`, `hermes_cli/web_server_config.py`
+  - *Target Files*: `scripts/hooks/guard_config_model_mutation.py`, `hermes_cli/web_server_config.py`, `tests/agent/test_guard_config_model_mutation.py`
+- [x] **Task 4.4**: Fold `vigia` into the central multiplexer (`hermes-agent.service`), disable `hermes-agent-vigia.service`, and deploy `/usr/local/bin/hermes-post-recovery-audit.py` + systemd hooks to report post-crash/post-restart recovery diagnostics to Discord.
+  - *Target Files*: `/opt/hermes-agent-data/profiles/vigia/config.yaml`, `/usr/local/bin/hermes-post-recovery-audit.py`, `/usr/local/bin/hermes-service-notify.sh`, `/usr/local/bin/hermes_fleet_watchdog.sh`
 
 ### Phase 5: Final Verification & Live Service Check
 - [x] **Task 5.1**: Run unit test suites for memory, tool guardrails, fallback config, and Jev router, verify service health, and mark `.specs/README.md` status as `Completed`.

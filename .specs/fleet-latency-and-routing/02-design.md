@@ -11,13 +11,13 @@
 
 ```mermaid
 flowchart TD
-    UserMsg["Inbound User Message"] --> Triage["Preliminary Turn Triage\n(agent/tool_guardrails.py)"]
-    Triage -- "Conversational" --> FastPath["Ruta A: Fast Turn\n- Skip Memory Prefetch\n- Keep KV-Cache Prefix Intact\n- Tier L1 (glm5.3-flash, low)"]
-    Triage -- "Action / Domain Task" --> ActionPath["Ruta B: Operational / Complex Turn\n- Tier L2 (deepseek-v4-flash, medium) or L3 (gpt-6.1-sol, high)\n- On-Demand Memory (memory search)\n- On-Demand Skill Routing via Jev (skill_route)"]
-    ActionPath --> Jev["Jev (typesafe-skill-router)\n- Profile-scoped Tier 1 (1 chunk)\n- Tier 2 Fallback (3 chunks)\n- Auto-loads SKILL.md in 1 step"]
-    FastPath --> ProviderRouter["Provider & Failover Router"]
-    Jev --> ProviderRouter
-    ProviderRouter -- "Primary OK" --> NaN["NaN-Builders / OpenAI Codex"]
+    UserMsg["Inbound User Message"] --> CachePrefix["100% Stable KV-Cache Prefix\n- tools_for_api = agent.tools (Constant)\n- Fixed Session Model (deepseek-v4-flash)\n- Zero-Default-Load System Prompt"]
+    CachePrefix --> ModelReasoning["Native LLM Reading & Reasoning\n(Zero Regex/Keyword Classifiers)"]
+    ModelReasoning -- "Conversational" --> DirectReply["Direct Answer\n(Fast Cached Prefill)"]
+    ModelReasoning -- "Needs Context / Skill / Action" --> OnDemand["On-Demand Tool Execution\n- memory(action='search')\n- skill_route(query, context) -> Jev\n- delegate_task / terminal"]
+    DirectReply --> ProviderRouter["Provider & Failover Router"]
+    OnDemand --> ProviderRouter
+    ProviderRouter -- "Primary OK" --> NaN["NaN-Builders"]
     ProviderRouter -- "NaN Outage" --> GoFallback["OpenCode-Go (mimo-v2.6-flash)"]
 ```
 
@@ -65,16 +65,15 @@ class MemoryStore:
         ...
 ```
 
-### 2.2 KV-Cache-Safe Turn Triage (`agent/tool_guardrails.py` & `agent/turn_context.py`)
+### 2.2 100% Stable KV-Cache Prefix & Removal of Keyword Classifiers (`agent/tool_guardrails.py` & `agent/turn_context.py`)
 1. In `agent/turn_context.py:_memory_turn_start_and_prefetch`:
    ```python
-   from agent.tool_guardrails import is_conversational_turn
-   if not is_trivial_prompt(_query) and not is_conversational_turn(_query):
+   if not is_trivial_prompt(_query):
        ext_prefetch_cache = agent._memory_manager.prefetch_all(_query, session_id=agent.session_id) or ""
    ```
 2. In `agent/tool_guardrails.py:should_decouple_tools_for_turn`:
-   - Never decouple (`return False`) when `len(messages) > 2` (i.e., any multi-turn session where `agent.tools` is already part of the provider's cached prefix).
-   - On Turn 1 (`len(messages) <= 2`), only decouple when the message is a short unambiguous greeting/ack (<60 chars, no `?`/`¿`, no capability/meta queries).
+   - Always returns `False` so `tools_for_api = agent.tools` remains byte-identical across all turns and no tools are stripped by regex/keyword lists.
+3. All keyword/regex classifiers (`classify_turn_intent`, `classify_turn_complexity`, `_L3_COMPLEXITY_PATTERNS`, `is_conversational_turn`, `check_runtime_execution_guardrails`) are removed so the LLM reads, reasons, and invokes `skill_route` or `memory` natively.
 
 ### 2.3 Jev (`typesafe-skill-router`) Contextual Routing & Stage-2 Margin Fix
 1. **Profile Home Resolution (`__init__.py`)**:
@@ -85,15 +84,13 @@ class MemoryStore:
      - If `winner_fits >= fits_threshold`, keep `winner` as primary and include `best_name` as secondary (`names = (winner, best_name)`) instead of discarding both (`names = ()`).
      - If `winner is None` and `not enforce_gate` (explicit `skill_route` tool call) and `best_fits >= fits_threshold`, select `(best_name,)`.
 
-### 2.4 Dynamic Complexity Tiering & `OpenCode-Go` Failover Preservation (`agent/turn_request_assembly.py`)
+### 2.4 Session-Stable Model & `OpenCode-Go` Failover Preservation (`agent/tool_guardrails.py`)
 ```python
 def apply_dynamic_turn_tiering(agent: Any, messages: list[Any], tool_turns: int = 0) -> None:
-    """Adjust per-turn model and reasoning_effort for profiles with dynamic_tiering enabled (default, roshi).
-    Never overrides an active provider failover (e.g. OpenCode-Go) or explicit session model override.
-    """
+    """Ensure active OpenCode-Go failover stays pinned without mutating the primary model mid-session."""
 ```
-- **Failover Invariant**: If `getattr(agent, "_fallback_activated", False)` is `True` or `str(getattr(agent, "provider", "")).lower() in {"opencode-go", "opencode", "zen"}`, `apply_dynamic_turn_tiering` keeps the provider on `OpenCode-Go` (`mimo-v2.6-flash` for L1/L2, `deepseek-v4-flash` on `OpenCode-Go` for L3).
-- **Session Override Invariant**: If the session has an explicit `/model` session override (`getattr(agent, "_session_model_pinned", False)`), dynamic tiering respects the session pin.
+- **KV-Cache Stability**: Never swaps `agent.model` between turns on `NaN-Builders` (`default` and `roshi` stay consistently on `deepseek-v4-flash` with `reasoning_effort: medium`).
+- **Failover Invariant**: If `getattr(agent, "_fallback_activated", False)` is `True` or `str(getattr(agent, "provider", "")).lower() in {"opencode-go", "opencode", "zen"}`, `apply_dynamic_turn_tiering` keeps the model pinned to `mimo-v2.6-flash` on `OpenCode-Go`.
 
 ### 2.5 Config Shield (`hermes_cli/web_server_config.py` & `scripts/hooks/guard_config_model_mutation.py`)
 1. `scripts/hooks/guard_config_model_mutation.py`: Pre-tool-call hook registered across profiles that blocks `terminal`, `execute_code`, `write_file`, and `patch` calls attempting to run `hermes config set model...` or edit `model:` in `config.yaml`, instructing the agent to recommend `/model <name>` (session-scoped).

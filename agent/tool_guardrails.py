@@ -663,166 +663,8 @@ def _sha256(value: str) -> str:
 
 
 # ---------------------------------------------------------------------------
-# Progressive Evaluation & Multi-Level Authorization Guardrails (Req 1, 3, 6, 14)
+# Model-Driven Routing & KV-Cache Stability (Option 2: Native Self-Escalation)
 # ---------------------------------------------------------------------------
-
-_GREETING_WORDS = frozenset({
-    "hola", "buenos dias", "buenos días", "buenas tardes", "buenas noches",
-    "hey", "hi", "hello", "que tal", "qué tal", "como estas", "cómo estás",
-    "saludos", "buenas", "que mas", "qué más"
-})
-
-_GREETING_PATTERN = re.compile(
-    r"\b(?:" + "|".join(re.escape(g) for g in sorted(_GREETING_WORDS, key=len, reverse=True)) + r")\b",
-    re.IGNORECASE
-)
-
-_ACK_WORDS = frozenset({
-    "gracias", "muchas gracias", "ok", "okay", "vale", "entendido", "perfecto",
-    "buenísimo", "buenisimo", "de acuerdo", "excelente", "dale", "listo"
-})
-
-_SPEED_OR_PING_PATTERN = re.compile(
-    r"\b(?:prueba|test|testear|probar)\s+(?:de\s+|tu\s+|su\s+|la\s+|el\s+)?(?:velocidad|latencia|respuesta|tiempo)|"
-    r"(?:medir|mide)\s+(?:el\s+)?tiempo|\bping\b|\bpong\b",
-    re.IGNORECASE
-)
-
-_FUTURE_INTENTION_PATTERN = re.compile(
-    r"\b(?:mañana|luego|después|despues|más tarde|mas tarde|la próxima semana|proxima semana)\s+"
-    r"(?:quiero|vamos|hacemos|trabajamos|revisamos|veremos|vemos)\b",
-    re.IGNORECASE
-)
-
-_FILE_OR_URL_PATTERN = re.compile(
-    r"https?://|\b[\w\-\./]+\.(?:py|sh|json|yaml|yml|md|txt|csv|pdf|docx|xlsx|png|jpg|jpeg|mp3|mp4|log|ts|js|html|css)\b|"
-    r"(?:^|\s)(?:/[a-zA-Z0-9_\-\.]+)+",
-    re.IGNORECASE
-)
-
-_ACTION_DIRECTIVES = re.compile(
-    r"\b(?:crea|crear|haz|hacer|modifica|modificar|edita|editar|actualiza|actualizar|"
-    r"borra|borrar|elimina|eliminar|ejecuta|ejecutar|instala|instalar|configura|configurar|"
-    r"busca|buscar|encuentra|analiza|analizar|revisa|revisar|lee|leer|escribe|escribir|"
-    r"redacta|redactar|traduce|traducir|optimiza|optimizar|audita|auditar|diseña|diseñar|"
-    r"planifica|planificar|estructura|estructurar|genera|generar|explícame|explicame|explica|explicar|"
-    r"ayúdame|ayudame|ayuda|propuesta|campaña|guion|copy|contrato|sorteo|coljuegos|arquitectura|protocolo|skill|"
-    r"recuerda|recuerdas|acuerda|acuerdas|recuerde|recuerden|"
-    r"despliega|deploy|repara|arregla|corrige|reinicia|reiniciar|"
-    r"procede|proceder|continua|continúa|continuar|sigue|seguir|adelante|"
-    r"proceso|procesos|tarea|tareas|avance|avances|progreso|estado|status|reporte|reportes|medir|mide|cuéntame|cuenta|novedad|novedades)\b",
-    re.IGNORECASE
-)
-
-_SYSTEM_METADATA_WRAPPER_PATTERN = re.compile(
-    r"\[System:.*?\]",
-    re.DOTALL | re.IGNORECASE
-)
-
-_CONFIRMATION_PATTERNS = re.compile(
-    r"\b(?:si|sí|dale|adelante|procede|proceder|confirmo|confirmado|hazlo|ejecuta|ejecútalo|"
-    r"yes|ok|okay|proceed|go ahead|aplica|aplicalo|aplícalo|de acuerdo|perfecto procede)\b",
-    re.IGNORECASE
-)
-
-_MUTATING_OR_DESTRUCTIVE_COMMANDS = re.compile(
-    r"""(?:^|\s|&&|\|\||;|`)(?:
-        rm\s|rmdir\s|mv\s|cp\s|install\s|sed\s+-i|truncate\s|dd\s|shred\s|
-        git\s+(?:commit|push|reset|clean|checkout|rebase|merge)\s|
-        docker\s+(?:rm|kill|stop|restart|build|run|compose\s+(?:down|up))\s|
-        systemctl\s|service\s|kill\s|pkill\s|shutdown\s|reboot\s|
-        pip\s+install|npm\s+(?:install|run\s+build)|apt-get|apt\s
-    )""",
-    re.VERBOSE | re.IGNORECASE
-)
-
-_IMPERATIVE_COMMANDS = re.compile(
-    r"\b(?:crea|escribe|modifica|edita|actualiza|borra|elimina|ejecuta|instala|despliega|agrega|cambia|aplica|haz)\b",
-    re.IGNORECASE
-)
-
-_CASUAL_INQUIRY_PATTERN = re.compile(
-    r"^(?:(?:hola|hey|buenas|buenos dias|buenas tardes|buenas noches)\b(?:\s+\w+)?\s*)?"
-    r"(?:"
-    r"qui[eé]n\s+(?:eres|sos)|"
-    r"c[oó]mo\s+(?:est[aá]s|andas|te\s+va)|"
-    r"c[oó]mo\s+va(?:\s+(?:todo|la\s+cosa))?\s*$|"
-    r"qu[eé]\s+(?:haces|tal|cuentas|hac[eé]s)|"
-    r"me\s+(?:escuchas|o[yí]es)|"
-    r"pod[eé]s\s+hablar|puedes\s+hablar"
-    r")\b",
-    re.IGNORECASE
-)
-
-
-def classify_turn_intent(message_text: str) -> str:
-    """Classify the user turn intent as 'conversational' or 'action'.
-
-    Tier 0 (Fast-path): File attachments, URLs, file paths, ping tests, explicit action directives.
-    Tier 1 (Semantic ONNX Triage): Evaluates message embedding on CPU.
-    Tier 2 (Heuristic Fallback): Safe heuristic rules if ONNX runtime is unavailable.
-    """
-    if not message_text or not isinstance(message_text, str):
-        return "action"
-
-    # Strip synthetic system injection wrappers before intent classification
-    stripped = _SYSTEM_METADATA_WRAPPER_PATTERN.sub("", message_text).strip()
-    if not stripped:
-        return "action"
-
-    text = stripped
-
-    # 1. Any file attachment, local path, or URL is an action turn
-    if _FILE_OR_URL_PATTERN.search(text):
-        return "action"
-
-    # 2. Response speed / latency / ping tests are strictly conversational
-    if _SPEED_OR_PING_PATTERN.search(text):
-        return "conversational"
-
-    # 3. Statements of future intention without immediate command -> conversational (Plan Req 3)
-    if _FUTURE_INTENTION_PATTERN.search(text):
-        return "conversational"
-
-    # 3b. Explicit action/editorial/domain directives must keep tools (including skill_route) available
-    has_action = bool(_ACTION_DIRECTIVES.search(text))
-    if has_action:
-        return "action"
-
-    # 4. Semantic ONNX Intent Triage (Fast CPU probe)
-    try:
-        from agent.semantic_triage import classify_semantic_intent
-        semantic_res = classify_semantic_intent(text)
-        if semantic_res is not None:
-            return semantic_res
-    except Exception as e:
-        logger.debug("Semantic intent triage unavailable or failed: %s; falling back to heuristics", e)
-
-    # 5. Clean string for keyword analysis fallback
-    clean = re.sub(r"[^\w\s]", " ", text).lower().strip()
-    words = clean.split()
-    if not words:
-        return "action"
-
-    # 7. Acknowledgements or greetings without actions -> conversational
-    has_greeting = bool(_GREETING_PATTERN.search(clean))
-    has_ack = any(clean == ack or clean.startswith(ack + " ") or clean.endswith(" " + ack) for ack in _ACK_WORDS)
-
-    if (has_greeting or has_ack) and not has_action:
-        return "conversational"
-
-    # 8. Casual questions without action verbs (e.g. "¿cómo estás?", "¿quién eres?")
-    is_casual_inquiry = bool(_CASUAL_INQUIRY_PATTERN.match(clean))
-    if is_casual_inquiry and not has_action:
-        return "conversational"
-
-    # Default to action if intent is ambiguous or complex
-    return "action"
-
-
-def is_conversational_turn(message_text: str) -> bool:
-    """Check if the user message is a pure greeting or casual chit-chat without an actionable task."""
-    return classify_turn_intent(message_text) == "conversational"
 
 
 def should_decouple_tools_for_turn(
@@ -830,256 +672,47 @@ def should_decouple_tools_for_turn(
     tool_turns: int = 0,
     agent: Any = None,
 ) -> bool:
-    """Determine whether tool schemas should be decoupled (tools_for_api = []) for this turn.
+    """Keep tool schemas constant across all turns so the provider KV-cache prefix never mutates.
 
-    Decoupling saves ~13,600 tokens and ~8-10 seconds of provider latency on Turn-1 conversational
-    greetings/pings. In multi-turn sessions (where an assistant response already exists in history),
-    returns False so the tool-schema prefix remains byte-identical and preserves the provider KV-cache.
+    With Zero-Default-Load (`memory.on_demand: true`, `skills.on_demand: true`), the model itself
+    reads and reasons over the user message to decide whether to answer directly or invoke
+    `skill_route` / `memory` without any static keyword or length pre-filters.
     """
-    # 1. Mid-turn tool responses MUST keep tools available (call count > 1)
-    if tool_turns > 1:
-        return False
-
-    if not messages:
-        return False
-
-    # 1b. Preserve provider KV-cache in multi-turn conversations: once the session has
-    # prior turns (>2 messages or any prior assistant response), keep tools_for_api stable.
-    if len(messages) > 2:
-        return False
-    for msg in messages[:-1]:
-        prev_role = getattr(msg, "role", None) if not isinstance(msg, dict) else msg.get("role")
-        if prev_role in ("assistant", "tool", "function"):
-            return False
-
-    # 2. Never decouple for cronjobs or autonomous subagents
-    if agent is not None:
-        if getattr(agent, "is_cron", False) or getattr(agent, "_delegate_depth", 0) > 0:
-            return False
-
-    # 3. Check the last message in history
-    last_msg = messages[-1]
-    last_role = getattr(last_msg, "role", None) if not isinstance(last_msg, dict) else last_msg.get("role")
-    if last_role in ("tool", "function"):
-        return False
-    if last_role == "assistant":
-        # If assistant just called a tool, we cannot decouple
-        if isinstance(last_msg, dict) and last_msg.get("tool_calls"):
-            return False
-        if hasattr(last_msg, "tool_calls") and last_msg.tool_calls:
-            return False
-
-    # 4. Extract last user text
-    last_user_text = ""
-    for msg in reversed(messages):
-        role = getattr(msg, "role", None) if not isinstance(msg, dict) else msg.get("role")
-        if role == "user":
-            content = getattr(msg, "content", None) if not isinstance(msg, dict) else msg.get("content")
-            if isinstance(content, str):
-                last_user_text = content
-            elif isinstance(content, list):
-                # Multipart content (e.g. image, document attachment) -> Keep tools!
-                for part in content:
-                    if isinstance(part, dict):
-                        if part.get("type") != "text":
-                            return False
-                        last_user_text += " " + part.get("text", "")
-            break
-
-    if not last_user_text or len(last_user_text.strip()) > 100:
-        return False
-
-    return classify_turn_intent(last_user_text) == "conversational"
-
-
-_L3_COMPLEXITY_PATTERNS = re.compile(
-    r"\b(?:"
-    r"arquitectura|architecture|sdd|spec-driven|plan\s+maestro|master\s+plan|"
-    r"refactor(?:izar|ización|ing)?|auditor[íi]a|audit|root\s+cause|causa\s+ra[íi]z|"
-    r"migraci[óo]n|migration|post-?mortem|forense|forensics|orchestr|orquestaci[óo]n|"
-    r"multi-?agente|multi-?agent|diagn[óo]stico\s+profundo|dise[ñn]o\s+de\s+sistema"
-    r")\b",
-    re.IGNORECASE,
-)
-
-
-def classify_turn_complexity(messages: list[Any], tool_turns: int = 0) -> str:
-    """Classify the turn into complexity tier 'l1', 'l2', or 'l3' for dynamic model/effort routing."""
-    last_user_text = ""
-    for msg in reversed(messages or []):
-        role = getattr(msg, "role", None) if not isinstance(msg, dict) else msg.get("role")
-        if role == "user":
-            content = getattr(msg, "content", None) if not isinstance(msg, dict) else msg.get("content")
-            if isinstance(content, str):
-                last_user_text = content
-            elif isinstance(content, list):
-                last_user_text = " ".join(
-                    p.get("text", "") for p in content if isinstance(p, dict) and p.get("type") == "text"
-                )
-            break
-
-    stripped = _SYSTEM_METADATA_WRAPPER_PATTERN.sub("", last_user_text or "").strip()
-    if not stripped:
-        return "l2"
-
-    # L1: Short conversational turn or speed test on initial API call of the turn
-    if tool_turns <= 1 and len(stripped) <= 90 and classify_turn_intent(stripped) == "conversational":
-        return "l1"
-
-    # L3: Deep architecture, SDD, root-cause forensics, or very large structured specification (>1200 chars)
-    if len(stripped) >= 1200 or _L3_COMPLEXITY_PATTERNS.search(stripped):
-        return "l3"
-
-    # L2: Standard operational / tool / coordination turn
-    return "l2"
+    return False
 
 
 def apply_dynamic_turn_tiering(agent: Any, messages: list[Any], tool_turns: int = 0) -> dict[str, str] | None:
-    """Dynamically select model and reasoning_effort per turn for coordinator profiles (Ragnar/Roshi).
+    """Maintain model stability for KV-cache preservation while enforcing cross-provider failover.
 
-    Respects:
-    - Session-pinned models (`agent._session_model_pinned`).
-    - Active provider failover (`agent._fallback_activated` or `OpenCode-Go` provider), routing to
-      `fallback_go_model` on `OpenCode-Go` instead of reverting to `NaN-Builders`.
+    Does NOT swap models per turn via keyword/length heuristics (Option 2: Native Self-Escalation).
+    If active provider failover (`agent._fallback_activated` or `OpenCode-Go` provider) is engaged,
+    pins the turn to `fallback_go_model` (`mimo-v2.6-flash`) so requests do not bounce back to
+    `NaN-Builders` during an outage.
     """
     if agent is None or getattr(agent, "_session_model_pinned", False):
         return None
     if getattr(agent, "is_cron", False) or getattr(agent, "_delegate_depth", 0) > 0:
         return None
 
-    tier_cfg = getattr(agent, "_dynamic_tiering_cfg", None)
-    if not isinstance(tier_cfg, dict) or not tier_cfg.get("enabled"):
-        return None
-
-    tier = classify_turn_complexity(messages, tool_turns=tool_turns)
     provider_lc = str(getattr(agent, "provider", "") or "").strip().lower()
     requested_lc = str(getattr(agent, "requested_provider", "") or "").strip().lower()
     in_failover = bool(getattr(agent, "_fallback_activated", False)) or (
         "opencode" in provider_lc or "opencode" in requested_lc
     )
+    if not in_failover:
+        return None
 
-    if tier == "l1":
-        target_model = str(tier_cfg.get("l1_conversational_model") or "glm5.3-flash")
-        target_effort = str(tier_cfg.get("l1_reasoning_effort") or "low")
-    elif tier == "l3":
-        target_model = str(tier_cfg.get("l3_architecture_model") or "deepseek-v4-flash")
-        target_effort = str(tier_cfg.get("l3_reasoning_effort") or "high")
-    else:
-        target_model = str(tier_cfg.get("l2_operational_model") or "deepseek-v4-flash")
-        target_effort = str(tier_cfg.get("l2_reasoning_effort") or "medium")
+    tier_cfg = getattr(agent, "_dynamic_tiering_cfg", None)
+    go_model = (
+        str(tier_cfg.get("fallback_go_model") or "mimo-v2.6-flash")
+        if isinstance(tier_cfg, dict)
+        else "mimo-v2.6-flash"
+    )
+    if go_model and getattr(agent, "model", None) != go_model:
+        agent.model = go_model
 
-    if in_failover:
-        go_model = str(tier_cfg.get("fallback_go_model") or "mimo-v2.6-flash")
-        target_model = go_model
+    rc = getattr(agent, "reasoning_config", None)
+    effort = str(rc.get("effort", "medium")) if isinstance(rc, dict) else "medium"
+    return {"tier": "native", "model": go_model, "reasoning_effort": effort, "failover": "True"}
 
-    if target_model and getattr(agent, "model", None) != target_model:
-        agent.model = target_model
-    if target_effort:
-        rc = getattr(agent, "reasoning_config", None)
-        if isinstance(rc, dict):
-            rc["effort"] = target_effort
-            rc["enabled"] = target_effort != "none"
-        else:
-            agent.reasoning_config = {"enabled": target_effort != "none", "effort": target_effort}
-
-    return {"tier": tier, "model": target_model, "reasoning_effort": target_effort, "failover": str(in_failover)}
-
-
-def has_user_confirmation(messages: list[Any]) -> bool:
-    """Check if recent user turns contain explicit confirmation or direct imperative command."""
-    if not messages:
-        return False
-    user_turns: list[str] = []
-    for msg in reversed(messages):
-        role = getattr(msg, "role", None) if not isinstance(msg, dict) else msg.get("role")
-        if role == "user":
-            content = getattr(msg, "content", None) if not isinstance(msg, dict) else msg.get("content")
-            if isinstance(content, str):
-                user_turns.append(content)
-            elif isinstance(content, list):
-                text_parts = [c.get("text", "") for c in content if isinstance(c, dict) and c.get("type") == "text"]
-                user_turns.append(" ".join(text_parts))
-            if len(user_turns) >= 3:
-                break
-
-    for turn in user_turns:
-        clean_turn = turn.strip().lower()
-        if _CONFIRMATION_PATTERNS.search(clean_turn):
-            return True
-        # If the turn is an open question or inquiry, it is NOT an authorization
-        is_question = "?" in turn or "¿" in turn or bool(
-            re.match(r"^(?:qué|que|cómo|como|cuál|cual|por qué|será|podríamos|podemos)\b", clean_turn)
-        )
-        if is_question:
-            continue
-        # Check for direct imperative action command
-        if _IMPERATIVE_COMMANDS.search(clean_turn) and len(clean_turn.split()) >= 3:
-            return True
-    return False
-
-
-def check_runtime_execution_guardrails(
-    agent: Any,
-    tool_name: str,
-    tool_args: Mapping[str, Any] | None,
-    messages: list[Any] | None = None,
-) -> tuple[bool, str | None]:
-    """Universal runtime interceptor enforcing 5-State Progressive Evaluation and Multi-Level Authorization.
-
-    Enforces:
-    - State 1: Suppresses tool executions on pure greetings/chit-chat for immediate conversational Fast Ack (<2s).
-    - State 4: Intercepts high-impact mutating actions (file/system edits) until explicit user confirmation is present.
-    """
-    # 1. Bypass guardrails for cronjobs and autonomous subagent execution
-    if getattr(agent, "is_cron", False) or getattr(agent, "_delegate_depth", 0) > 0:
-        return False, None
-
-    tool_args = tool_args or {}
-    messages = messages or getattr(agent, "messages", []) or []
-
-    # Extract the last user message text
-    last_user_text = ""
-    for msg in reversed(messages):
-        role = getattr(msg, "role", None) if not isinstance(msg, dict) else msg.get("role")
-        if role == "user":
-            content = getattr(msg, "content", None) if not isinstance(msg, dict) else msg.get("content")
-            if isinstance(content, str):
-                last_user_text = content
-            elif isinstance(content, list):
-                parts = [c.get("text", "") for c in content if isinstance(c, dict) and c.get("type") == "text"]
-                last_user_text = " ".join(parts)
-            break
-
-    # 2. State 1 Guardrail: Pure Conversation / Casual Greeting
-    if is_conversational_turn(last_user_text):
-        if tool_name in MUTATING_TOOL_NAMES or tool_name in ("memory", "search_files"):
-            reason = (
-                "INTERCEPTED (State 1: Pure Conversation): The user sent a casual greeting or conversational message. "
-                "Do NOT execute tools, modify files, or scan memory. Respond conversationally, warmly, and immediately."
-            )
-            return True, reason
-
-    # 3. State 4 Guardrail: Multi-Level Confirmation for High-Impact Actions
-    is_high_impact = False
-    if tool_name in ("write_file", "patch", "skill_manage", "cronjob_manage"):
-        is_high_impact = True
-    elif tool_name == "process_manage":
-        if str(tool_args.get("action", "")).lower() in ("kill", "terminate", "stop"):
-            is_high_impact = True
-    elif tool_name in ("terminal", "execute_code"):
-        cmd = str(tool_args.get("command") or tool_args.get("code") or "")
-        if _MUTATING_OR_DESTRUCTIVE_COMMANDS.search(cmd):
-            is_high_impact = True
-
-    if is_high_impact:
-        if not has_user_confirmation(messages):
-            reason = (
-                f"INTERCEPTED (State 4: High-Impact Action Requires Confirmation): "
-                f"Tool '{tool_name}' mutates files, code, or systems. "
-                f"You MUST first present your execution plan to the user with the proposed changes, "
-                f"explain the expected outcome, and ask for explicit authorization ('dale' / 'sí' / 'procede') before executing."
-            )
-            return True, reason
-
-    return False, None
 

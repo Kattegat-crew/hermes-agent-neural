@@ -2574,18 +2574,6 @@ def invoke_tool(agent, function_name: str, function_args: dict, effective_task_i
         block_message, function_args = _pre_tool_block_message(
             agent, function_name, function_args, effective_task_id, tool_call_id, _tool_middleware_trace
         )
-
-    # Check structural runtime execution guardrails (State 1 and State 4 confirmation)
-    if block_message is None:
-        try:
-            from agent.tool_guardrails import check_runtime_execution_guardrails
-            _blocked, _guard_reason = check_runtime_execution_guardrails(
-                agent, function_name, function_args, messages=messages
-            )
-            if _blocked:
-                block_message = _guard_reason
-        except Exception as _g_err:
-            logger.debug("Runtime execution guardrail check error: %s", _g_err)
     if block_message is not None:
         result = json.dumps({"error": block_message}, ensure_ascii=False)
         emit_terminal_post_tool_call(
