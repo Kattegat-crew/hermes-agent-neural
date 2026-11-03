@@ -102,6 +102,76 @@ def test_should_decouple_tools_for_turn_evaluates_conversation_state():
     messages = [{"role": "user", "content": "Hola Roshi!"}]
     assert should_decouple_tools_for_turn(messages, tool_turns=2) is False
 
+    # Multi-turn conversation with prior assistant reply MUST NOT decouple tools (preserves KV-cache prefix)
+    multi_turn_messages = [
+        {"role": "user", "content": "Revisa el estado del servidor"},
+        {"role": "assistant", "content": "El servidor está activo."},
+        {"role": "user", "content": "Perfecto, muchas gracias"},
+    ]
+    assert should_decouple_tools_for_turn(multi_turn_messages, tool_turns=0) is False
+    assert should_decouple_tools_for_turn(multi_turn_messages, tool_turns=1) is False
+
+
+def test_dynamic_turn_tiering_and_failover_awareness():
+    from types import SimpleNamespace
+    from agent.tool_guardrails import apply_dynamic_turn_tiering, classify_turn_complexity
+
+    assert classify_turn_complexity([{"role": "user", "content": "Hola Roshi!"}], tool_turns=0) == "l1"
+    assert classify_turn_complexity([{"role": "user", "content": "Revisa los logs de nginx"}], tool_turns=0) == "l2"
+    assert (
+        classify_turn_complexity(
+            [{"role": "user", "content": "Diseña la arquitectura SDD y plan maestro para la migración multi-agente"}],
+            tool_turns=0,
+        )
+        == "l3"
+    )
+
+    agent = SimpleNamespace(
+        model="deepseek-v4-flash",
+        provider="custom:nan-builders",
+        requested_provider="NaN-Builders",
+        reasoning_config={"enabled": True, "effort": "medium"},
+        _dynamic_tiering_cfg={
+            "enabled": True,
+            "l1_conversational_model": "glm5.3-flash",
+            "l1_reasoning_effort": "low",
+            "l2_operational_model": "deepseek-v4-flash",
+            "l2_reasoning_effort": "medium",
+            "l3_architecture_model": "deepseek-v4-flash",
+            "l3_reasoning_effort": "high",
+            "fallback_go_model": "mimo-v2.6-flash",
+        },
+        _fallback_activated=False,
+        _session_model_pinned=False,
+        is_cron=False,
+        _delegate_depth=0,
+    )
+
+    res_l1 = apply_dynamic_turn_tiering(agent, [{"role": "user", "content": "Hola!"}], tool_turns=0)
+    assert res_l1["tier"] == "l1"
+    assert agent.model == "glm5.3-flash"
+    assert agent.reasoning_config["effort"] == "low"
+
+    res_l3 = apply_dynamic_turn_tiering(
+        agent,
+        [{"role": "user", "content": "Realiza una auditoría de arquitectura y causa raíz del sistema"}],
+        tool_turns=0,
+    )
+    assert res_l3["tier"] == "l3"
+    assert agent.model == "deepseek-v4-flash"
+    assert agent.reasoning_config["effort"] == "high"
+
+    # Failover active -> keeps OpenCode-Go model (mimo-v2.6-flash)
+    agent._fallback_activated = True
+    agent.provider = "custom:opencode-go"
+    res_failover = apply_dynamic_turn_tiering(
+        agent,
+        [{"role": "user", "content": "Revisa el servicio docker"}],
+        tool_turns=0,
+    )
+    assert res_failover["model"] == "mimo-v2.6-flash"
+    assert agent.model == "mimo-v2.6-flash"
+
 
 def test_action_directives_include_continuation_and_confirmation():
     assert classify_turn_intent("listo procede") == "action"

@@ -201,7 +201,19 @@ def assemble_api_request(
 
     # Build the request-local cache sections LAST, after every transcript mutation;
     # the canonical tool registry stays undecorated. Marked ``content`` becomes text
-    from agent.tool_guardrails import should_decouple_tools_for_turn
+    from agent.tool_guardrails import apply_dynamic_turn_tiering, should_decouple_tools_for_turn
+
+    _tier_decision = apply_dynamic_turn_tiering(
+        agent, messages, tool_turns=getattr(agent, "api_call_count", 0)
+    )
+    if _tier_decision:
+        logger.debug(
+            "TaskComplexityRouter selected tier=%s model=%s effort=%s (failover=%s)",
+            _tier_decision["tier"],
+            _tier_decision["model"],
+            _tier_decision["reasoning_effort"],
+            _tier_decision["failover"],
+        )
     if should_decouple_tools_for_turn(messages, tool_turns=getattr(agent, "api_call_count", 0), agent=agent):
         tools_for_api = []
         logger.info("Turn intent triage: conversational turn detected; tools decoupled (~%d tokens saved)",
