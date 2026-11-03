@@ -1253,7 +1253,7 @@ def _init_memory(agent, _agent_cfg, skip_memory, platform, memory_manager=None):
                     memory_enabled=agent._memory_enabled,
                     user_profile_enabled=agent._user_profile_enabled,
                     on_demand=_mem_on_demand,
-                    index_char_limit=int(mem_config.get("index_char_limit", 6000)),
+                    index_char_limit=int(0 if mem_config.get("index_char_limit") is None else mem_config.get("index_char_limit")),
                 )
                 agent._memory_store.load_from_disk()
 
@@ -1294,6 +1294,7 @@ def _apply_agent_section(agent, _agent_cfg):
         agent._skill_nudge_interval = int(_agent_cfg.get("skills", {}).get("creation_nudge_interval", 10))
 
     _agent_section = _cfg_dict(_agent_cfg, "agent")
+    agent._dynamic_tiering_cfg = _cfg_dict(_agent_section, "dynamic_tiering")
     agent.budget_warning_ratio = normalize_budget_warning_ratio(
         _agent_section.get("budget_warning_ratio")
     )
