@@ -1,15 +1,17 @@
 # 05 — Evidencia de ejecución F2 (T1-T3)
 
 Run 82 (reintento tras timeout del run 79 en 5400 s). Worktree
-`/opt/hermes-agent-worktrees/capability-claim-guard`, branch
+`/opt/hermes-agent-data/fleet/worktrees/hermes-agent/capability-claim-guard`, branch
 `feat/capability-claim-guard`, HEAD `cd397afc64c91e759d49c1db6418e4b7ab107d12`.
 Sin commits: todo el entregable es fuente local (autorización de commit pendiente).
+Este documento es un **snapshot del estado F2 (T1–T3)**; el estado actual del guard
+está en `06-f3-evidence.md` (gates T4–T7) y `07-checkpoint.md`.
 
 ## Cambios
 
 | Archivo | Tipo | SHA-256 |
 |---|---|---|
-| `agent/capability_claim_guard.py` (NUEVO, 470 líneas) | módulo guard: CES (T1), detector determinista ES/EN (T2), `wire_turn` (T3) | `0ecdb3b9e6d2b9ab5e417c57869129ffb8445d69da56ef07c720df23f35eb026` |
+| `agent/capability_claim_guard.py` (NUEVO, 470 líneas — snapshot F2; ver `06-f3-evidence.md` para el estado actual: 941 líneas en HEAD `0a619a2544`) | módulo guard: CES (T1), detector determinista ES/EN (T2), `wire_turn` (T3) | `0ecdb3b9e6d2b9ab5e417c57869129ffb8445d69da56ef07c720df23f35eb026` |
 | `agent/conversation_loop.py` (+6 líneas) | call site único T3: `wire_turn(agent, s.turn_id)` al arrancar el turno, antes del branch codex | `84ae131ee6e01bb908fd0c8814e1bc1293e1cae5983618c1168200afde329913` |
 | `tests/agent/test_capability_claim_guard_evidence.py` (NUEVO, 328 líneas) | contrato T1 + wiring T3 (integración con AIAgent real, patrón de `test_run_agent`) | `90c87b1dce04532b2895284b4e5b85ea72e43077fbf640010b3abe1fc2d8ae6e` |
 | `tests/agent/test_capability_claim_guard_detector.py` (NUEVO, 215 líneas) | corpus §6: ES/EN, comillas, código, hipótesis, permisos/datos, deferred, aliases, error observado, absent, fail-open | `ec5a3e4ffa7c199de40b52f2ac2916d26ece7e639fbd0530958e7c3974dcb24d` |
@@ -66,8 +68,8 @@ vive en `agent._ccg_evidence` (instancia, scope del perfil servido).
 
 | AC | Estado |
 |---|---|
-| AC2 (negativa ES con kanban DIRECT) | `TestDirectContradictions` ✓ |
-| AC3 (negativa EN con messaging DIRECT) | ídem ✓ |
+| AC2 (negativa ES con kanban DIRECT) | `TestDirectContradictions` ✓ — **detector-level** (F2); publicación S1/S2/S3 en `06-f3-evidence.md` + `07-checkpoint.md` §6 |
+| AC3 (negativa EN con messaging DIRECT) | ídem ✓ — **detector-level** (F2); publicación S1/S2/S3 en `06-f3-evidence.md` + `07-checkpoint.md` §6 |
 | AC4 (ABSENT pasa) | `TestAllowedAbsent` ✓ |
 | AC5 (comillas/código/hipótesis pasan) | `TestExemptions` ✓ |
 | AC7 (snapshot ausente → fail-open) | `TestFailOpen` + `test_fail_open_on_broken_agent` + `test_capture_failure_is_fail_open` ✓ |
