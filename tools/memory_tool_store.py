@@ -185,13 +185,14 @@ class MemoryStore:
 
     def __init__(self, memory_char_limit: int = 2200, user_char_limit: int = 1375, *,
                  memory_enabled: bool = True, user_profile_enabled: bool = True,
-                 on_demand: bool = False, index_char_limit: int = 6000):
+                 on_demand: bool = False, index_char_limit: Optional[int] = 0):
         self.memory_entries: list[str] = []
         self.user_entries: list[str] = []
         self.memory_char_limit, self.user_char_limit = memory_char_limit, user_char_limit
         self.memory_enabled, self.user_profile_enabled = memory_enabled, user_profile_enabled
         self.on_demand = bool(on_demand)
-        self.index_char_limit = max(500, int(index_char_limit or 6000))
+        raw_idx_limit = 0 if index_char_limit is None else int(index_char_limit)
+        self.index_char_limit = 0 if raw_idx_limit <= 0 else max(500, raw_idx_limit)
         self._system_prompt_snapshot: dict[str, str] = {"memory": "", "user": ""}
         self._consolidation_failures = 0  # per turn; reset by reset_consolidation_failures()
 
@@ -664,13 +665,23 @@ class MemoryStore:
         return f"[#{idx}] {compact} ({len(entry)} chars)"
 
     def _render_compact_index(self, entries: list[str]) -> str:
-        """Render a compact Turn-1 index of MEMORY.md capped at ``self.index_char_limit``."""
+        """Render a compact Turn-1 index of MEMORY.md capped at ``self.index_char_limit`` (or zero-entry pointer when <= 0)."""
         if not entries:
             return ""
         full_content = ENTRY_DELIMITER.join(entries)
         sep = "═" * 46
         title = MEMORY_BLOCK_HEADERS["memory"]
         usage_str = self._usage_pct("memory", len(full_content))
+        if self.index_char_limit <= 0:
+            return (
+                f"{sep}\n"
+                f"{title} [ON-DEMAND STORE — {len(entries)} entries, full store {usage_str}]\n"
+                f"{sep}\n"
+                "On-Demand Memory Active: Zero memory entries are preloaded on Turn 1 to keep context minimal.\n"
+                "To read memory entries only when the task requires historical context:\n"
+                "- Search by keyword/topic: `memory(action=\"search\", target=\"memory\", content=\"<query>\")`\n"
+                "- Read specific entry or section: `memory(action=\"read\", target=\"memory\", content=\"#<index> or <topic>\")`"
+            )
         header = (
             f"{sep}\n"
             f"{title} [COMPACT INDEX — {len(entries)} entries, full store {usage_str}]\n"

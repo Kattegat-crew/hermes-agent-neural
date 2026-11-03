@@ -1070,3 +1070,28 @@ class TestOnDemandCompactMemoryIndex:
         assert read_res["entries"][0]["index"] == 3
         assert "Project Domain #3" in read_res["entries"][0]["content"]
 
+    def test_on_demand_zero_index_char_limit_preloads_zero_entries(self, tmp_dir):
+        store = MemoryStore(
+            memory_char_limit=100000,
+            user_char_limit=8000,
+            on_demand=True,
+            index_char_limit=0,
+        )
+        store.load_from_disk()
+        store.add("memory", "Secret operational runbook #1: should not appear in Turn-1 prompt.")
+        store.add("memory", "Secret operational runbook #2: should only load via search/read.")
+
+        reloaded = MemoryStore(
+            memory_char_limit=100000,
+            user_char_limit=8000,
+            on_demand=True,
+            index_char_limit=0,
+        )
+        reloaded.load_from_disk()
+        mem_prompt = reloaded.format_for_system_prompt("memory")
+        assert "ON-DEMAND STORE — 2 entries" in mem_prompt
+        assert "Zero memory entries are preloaded on Turn 1" in mem_prompt
+        assert "Secret operational runbook" not in mem_prompt
+        assert "INDEX OF STORED MEMORIES" not in mem_prompt
+
+

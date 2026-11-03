@@ -919,7 +919,8 @@ def _memory_turn_start_and_prefetch(
         )
     ext_prefetch_cache = ""
     with suppress(Exception):
-        if not is_trivial_prompt(_query):
+        from agent.tool_guardrails import is_conversational_turn
+        if not is_trivial_prompt(_query) and not is_conversational_turn(_query):
             ext_prefetch_cache = agent._memory_manager.prefetch_all(_query, session_id=agent.session_id) or ""
     # Deterministic recall indicator via _emit_status so the model can't silently
     # drop injected memory.
