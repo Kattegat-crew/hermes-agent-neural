@@ -1060,6 +1060,20 @@ def _emit_tool_complete_and_risk(agent, ref: _ToolCallRef, result, risk_metadata
         )
 
 
+def _ccg_record_outcome(agent, function_name, function_result, *, is_error: bool, blocked: bool) -> None:
+    """Feed the capability guard's per-turn evidence (no-op while it is disabled)."""
+    if getattr(agent, "_ccg_evidence", None) is None:
+        return
+    try:
+        from agent.capability_claim_guard import record_tool_outcome
+
+        record_tool_outcome(
+            agent, function_name, function_result, is_error=is_error, blocked=blocked,
+        )
+    except Exception:
+        logger.debug("capability-claim outcome record failed", exc_info=True)
+
+
 def _commit_tool_result(
     agent,
     messages: list,
@@ -1088,6 +1102,9 @@ def _commit_tool_result(
     from hermes_cli.observability.shared_metrics_harness import observe_tool_outcome
 
     observe_tool_outcome(agent, function_name, is_error)
+    # Capability Claim Guard: only a dispatcher-authenticated failure becomes "observed
+    # evidence" that a later denial may lean on (untrusted page/user text never does).
+    _ccg_record_outcome(agent, function_name, function_result, is_error=is_error, blocked=blocked)
     if not (blocked or is_error):
         function_result = observe_onboarding_result(agent, function_name, function_args, function_result)
     if observed:
