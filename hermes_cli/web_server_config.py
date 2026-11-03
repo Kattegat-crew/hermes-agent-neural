@@ -753,12 +753,17 @@ def _prepare_main_assignment(cfg: dict, provider: str, model: str, base_url: str
 
 
 def _apply_main_assignment_sync(cfg: dict, provider: str, model: str, base_url: str, api_key: str,
-                                prepared: "Optional[tuple[str, ModelSwitchResult]]" = None) -> dict:
+                                prepared: "Optional[tuple[str, ModelSwitchResult]]" = None,
+                                force_global: bool = False) -> dict:
     from hermes_cli.config import save_config
     from hermes_cli.free_tier_bootstrap import reconcile_record
     base_url, result = prepared or _prepare_main_assignment(cfg, provider, model, base_url, api_key)
     provider, model = result.target_provider, result.new_model
     provider_entry = _provider_entry(cfg, provider)
+    existing_model_cfg = cfg.get("model", {}) if isinstance(cfg.get("model"), dict) else {}
+    lock_default = bool(existing_model_cfg.get("lock_default_in_config", False)) and not force_global
+    locked_default_model = str(existing_model_cfg.get("default") or "").strip()
+    locked_default_provider = str(existing_model_cfg.get("provider") or "").strip()
     # Snapshot BEFORE the new assignment overwrites cfg["model"]: this is the state the user
     # (CLI setup, a prior dashboard save) already had on disk, and it decides whether the
     # endpoint is genuinely NEW (register a named custom_providers row) or already known
@@ -766,14 +771,22 @@ def _apply_main_assignment_sync(cfg: dict, provider: str, model: str, base_url: 
     provider_lc = provider.strip().lower()
     endpoint_already_known = (
         provider_lc in {"custom", "local"} and bool(base_url) and _endpoint_known_to_config(cfg, base_url))
-    model_cfg = _apply_main_model_assignment(cfg.get("model", {}), result, api_key)
+    model_cfg = _apply_main_model_assignment(dict(existing_model_cfg), result, api_key)
     _resolve_assignment_credentials(model_cfg, provider, provider_entry)
+    if lock_default and locked_default_model:
+        # Config Shield: preserve canonical model.default and model.provider on disk
+        # while allowing the live Desktop/Web session to switch to the selected model.
+        model_cfg["default"] = locked_default_model
+        if locked_default_provider:
+            model_cfg["provider"] = locked_default_provider
+        model_cfg["lock_default_in_config"] = True
     cfg["model"] = model_cfg
 
     new_provider = provider.strip().lower()
-    gateway_tools = _apply_nous_gateway_defaults(cfg) if new_provider == "nous" else []
-    save_config(cfg)
-    if new_provider in {"custom", "local"} and base_url and not endpoint_already_known:
+    gateway_tools = _apply_nous_gateway_defaults(cfg) if new_provider == "nous" and not lock_default else []
+    if not lock_default:
+        save_config(cfg)
+    if new_provider in {"custom", "local"} and base_url and not endpoint_already_known and not lock_default:
         _register_custom_endpoint(base_url, api_key, model)
     # The serve process's boot record may still say "nothing configured"; the chat gates on it.
     reconcile_record()
@@ -781,6 +794,7 @@ def _apply_main_assignment_sync(cfg: dict, provider: str, model: str, base_url: 
     return {
         "ok": True,
         "scope": "main",
+        "session_only": lock_default,
         "provider": provider,
         "model": model,
         "base_url": model_cfg.get("base_url", ""),
