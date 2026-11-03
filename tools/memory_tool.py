@@ -63,7 +63,7 @@ def load_on_disk_store() -> MemoryStore:
             memory_enabled=memory_enabled,
             user_profile_enabled=user_profile_enabled,
             on_demand=mem_on_demand,
-            index_char_limit=int(mem_cfg.get("index_char_limit", 6000)),
+            index_char_limit=int(0 if mem_cfg.get("index_char_limit") is None else mem_cfg.get("index_char_limit")),
         )
     except Exception:
         store = MemoryStore()  # config optional — fall back to defaults rather than break /memory
