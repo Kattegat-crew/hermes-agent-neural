@@ -96,6 +96,20 @@ class StreamDeliveryMixin:
             self._deliver_to_stream_callbacks(tail)
             self._record_streamed_assistant_text(tail)
 
+    def _ccg_route_suppressed_text(self, text: str) -> None:
+        """S1 for the tool-call turn route: the delta callback is a real publication path
+        (gateway/TUI render it), so it obeys the same holdback as a normal content delta."""
+        if not self.stream_delta_callback:
+            return
+        gated = self._ccg_stream_gate(text)
+        if not gated:
+            return
+        try:
+            self.stream_delta_callback(gated)
+            self._record_streamed_assistant_text(gated)
+        except Exception:  # a display callback must never break the turn
+            logger.debug("suppressed-text route failed", exc_info=True)
+
     def _ccg_interim_gate(self, text: str, *, already_streamed: bool) -> bool:
         """Capability Claim Guard S2: may this interim text reach its surface?"""
         if getattr(self, "_ccg_evidence", None) is None:

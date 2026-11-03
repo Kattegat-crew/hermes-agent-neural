@@ -2843,13 +2843,10 @@ class _StreamingCall(StreamingWaitMonitor):
         reasoning tags inside it must still reach the display: route through
         the delta callback for tag extraction (the CLI drops non-reasoning text
         once the stream box is closed)."""
-        if self.agent.stream_delta_callback and not getattr(self.agent, "_hold_stream", False):
-            # Capability Claim Guard S1: this is a real publication path (gateway/TUI render
-            # the delta), so it obeys the same holdback as a normal content delta.
-            gated = self.agent._ccg_stream_gate(text)
-            if not gated:
-                return
-            self._quiet(lambda: (self.agent.stream_delta_callback(gated), self.agent._record_streamed_assistant_text(gated)))
+        # A held turn's text must not reach the display early (base invariant), and the
+        # suppressed route is a real publication path for the guard (S1).
+        if not getattr(self.agent, "_hold_stream", False):
+            self.agent._ccg_route_suppressed_text(text)
 
     def _new_diag(self) -> dict:
         diag = self.agent._stream_diag_init()
@@ -3357,11 +3354,7 @@ class _StreamingCall(StreamingWaitMonitor):
         # releasing its text here would show the provider failure as assistant output.
         if not is_router_timeout_shim(response):
             flush_pending()
-            # Capability Claim Guard S1: the response is complete — release the holdback tail
-            # (no-op while the guard is disabled; a tainted turn releases nothing).
-            _ccg_flush = getattr(self.agent, "_ccg_stream_flush", None)
-            if _ccg_flush is not None:
-                _ccg_flush()
+            getattr(self.agent, "_ccg_stream_flush", lambda: None)()  # S1: release held tail
         return response
 
     # ── anthropic_messages wire ─────────────────────────────────────────
