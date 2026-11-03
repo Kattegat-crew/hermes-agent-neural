@@ -80,6 +80,25 @@ sistemático de un caso aislado.
 Un `.md` de **0 bytes** es la corrida silenciosa normal de un job que no tenía nada que
 reportar (no es un fallo); el silencio es el comportamiento esperado de los publicadores.
 
+### Pitfall D — el publicador falló y `last_status: ok` lo tapó
+Symptom: `jobs.json` con `last_status: ok` en un job `no_agent: true` (script .sh) mientras el
+`.md` de la corrida termina en `… post:401` o `post:-32001`. El wrapper imprimía el error del
+post pero salía 0 (el post no era el último comando / no se comprobaba `$?`), así que el
+scheduler marcó verde.
+Detección: leer el `cron/output/<jobid>/*.md` más reciente y grepear `post:`; agregar por
+resultado (`sort | uniq -c`) para separar fallo sistemático de caso aislado.
+Regla: `ncl-discord post` (o el curl) debe ser el ÚLTIMO comando del script y su exit code el
+del script; probarlo con un canal inválido y exigir `rc≠0`. Para saber si el canal sirve en el
+contexto del scheduler (otro uid/env que tu sesión), usar la sonda `env -i` de
+`notification-delivery-reliability`.
+
+### Cobertura — cada perfil tiene SU `jobs.json`
+`/opt/data/cron/jobs.json` lista solo los jobs del perfil `default`. Un job que vive en
+`/opt/hermes-agent-data/profiles/<perfil>/cron/jobs.json` (ej. vigía) es invisible para
+cualquier auditoría que lea solo la ruta raíz: recorrer `profiles/*/cron/jobs.json` siempre.
+Ese job tampoco ve `/etc/cron.d`: un `cron.d` + un job Hermes para la misma tarea = dos
+barridos y dos posts el mismo día (caso real: 08:30 root + 09:00 Hermes, lunes).
+
 ## Procedure (full diagnostic)
 1. `ps` to confirm which process serves the profile: multiplexed gateway vs
    `hermes --profile X serve --isolated`. This influences who the cron runner is — but

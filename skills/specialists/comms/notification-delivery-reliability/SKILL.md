@@ -68,6 +68,34 @@ La mitad de los casos "no llegó" se evita eligiendo bien el destino **antes** d
 
 Detalle operativo (auditoría de webhooks de Discord, IDs del servidor NeuralCrew, checklist de migración): `references/delivery-channel-migration.md`. Verificador reutilizable: `scripts/discord_verify_webhook.py`.
 
+## Verificación que vale: el contexto del scheduler, no tu sesión
+
+Un POST exitoso **desde la sesión del agente** no prueba que el automatismo vaya a entregar:
+el agente corre con otro uid y otro entorno (secretos hidratados en memoria, `DISCORD_*`
+inyectado). El job corre con un entorno limpio. Un "enviado, status 200" obtenido a mano no
+cubre el camino que correrá el lunes.
+
+1. **Sonda con entorno limpio** (mismo binario, uid del scheduler) — imprimir longitud y
+   prefijo, nunca el token:
+   ```bash
+   env -i PATH=/usr/local/bin:/usr/bin:/bin HOME=/root python3 -c "
+   import sys; sys.path.insert(0,'/opt/data/scripts'); import ncl_discord_mcp as m
+   for p in ('roshi','default'):
+       try: t=m.load_bot_token(p); print(p,'OK',len(t),t[:6]+'…')
+       except Exception as e: print(p,'FALLA',e)
+   "
+   ```
+   Falla típica por perfil: `-32001` (vault `/etc/hermes-vault` es `root:root 700`). Detalle y
+   workarounds en `hermes-secrets-v022x-ops`.
+2. **Entorno del proceso que de verdad ejecuta**, no el de tu shell:
+   `tr '\0' '\n' < /proc/<pid>/environ | grep -oE '^DISCORD[A-Z0-9_]*='`.
+3. **Propaga el exit code.** El `post`/`curl` debe ser el ÚLTIMO comando del wrapper (el status
+   de un `if` es el de su último comando) y el script debe salir ≠0 si el envío falla. Sin esto
+   el job queda `last_status: ok` con `post:401` impreso en el `.md`. Probar el fallo a
+   propósito con un canal inválido y exigir `rc=1`.
+4. **Un scheduler por alerta.** `grep -r` en `/etc/cron.d/` antes de crear un job Hermes para
+   la misma tarea: dos programaciones = dos barridos y dos mensajes el mismo día.
+
 ## Cómo responder al usuario
 
 - Di en una línea *qué* falló (el envío, no el canal ni el job) y *desde cuándo* (número de días/ocurrencias).
