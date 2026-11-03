@@ -843,7 +843,9 @@ def should_decouple_tools_for_turn(
 ) -> bool:
     """Determine whether tool schemas should be decoupled (tools_for_api = []) for this turn.
 
-    Decoupling saves ~13,600 tokens and ~8-10 seconds of provider latency on conversational turns.
+    Decoupling saves ~13,600 tokens and ~8-10 seconds of provider latency on Turn-1 conversational
+    greetings/pings. In multi-turn sessions (where an assistant response already exists in history),
+    returns False so the tool-schema prefix remains byte-identical and preserves the provider KV-cache.
     """
     # 1. Mid-turn tool responses MUST keep tools available (call count > 1)
     if tool_turns > 1:
@@ -851,6 +853,15 @@ def should_decouple_tools_for_turn(
 
     if not messages:
         return False
+
+    # 1b. Preserve provider KV-cache in multi-turn conversations: once the session has
+    # prior turns (>2 messages or any prior assistant response), keep tools_for_api stable.
+    if len(messages) > 2:
+        return False
+    for msg in messages[:-1]:
+        prev_role = getattr(msg, "role", None) if not isinstance(msg, dict) else msg.get("role")
+        if prev_role in ("assistant", "tool", "function"):
+            return False
 
     # 2. Never decouple for cronjobs or autonomous subagents
     if agent is not None:
@@ -886,10 +897,103 @@ def should_decouple_tools_for_turn(
                         last_user_text += " " + part.get("text", "")
             break
 
-    if not last_user_text:
+    if not last_user_text or len(last_user_text.strip()) > 100:
         return False
 
     return classify_turn_intent(last_user_text) == "conversational"
+
+
+_L3_COMPLEXITY_PATTERNS = re.compile(
+    r"\b(?:"
+    r"arquitectura|architecture|sdd|spec-driven|plan\s+maestro|master\s+plan|"
+    r"refactor(?:izar|ización|ing)?|auditor[íi]a|audit|root\s+cause|causa\s+ra[íi]z|"
+    r"migraci[óo]n|migration|post-?mortem|forense|forensics|orchestr|orquestaci[óo]n|"
+    r"multi-?agente|multi-?agent|diagn[óo]stico\s+profundo|dise[ñn]o\s+de\s+sistema"
+    r")\b",
+    re.IGNORECASE,
+)
+
+
+def classify_turn_complexity(messages: list[Any], tool_turns: int = 0) -> str:
+    """Classify the turn into complexity tier 'l1', 'l2', or 'l3' for dynamic model/effort routing."""
+    last_user_text = ""
+    for msg in reversed(messages or []):
+        role = getattr(msg, "role", None) if not isinstance(msg, dict) else msg.get("role")
+        if role == "user":
+            content = getattr(msg, "content", None) if not isinstance(msg, dict) else msg.get("content")
+            if isinstance(content, str):
+                last_user_text = content
+            elif isinstance(content, list):
+                last_user_text = " ".join(
+                    p.get("text", "") for p in content if isinstance(p, dict) and p.get("type") == "text"
+                )
+            break
+
+    stripped = _SYSTEM_METADATA_WRAPPER_PATTERN.sub("", last_user_text or "").strip()
+    if not stripped:
+        return "l2"
+
+    # L1: Short conversational turn or speed test on initial API call of the turn
+    if tool_turns <= 1 and len(stripped) <= 90 and classify_turn_intent(stripped) == "conversational":
+        return "l1"
+
+    # L3: Deep architecture, SDD, root-cause forensics, or very large structured specification (>1200 chars)
+    if len(stripped) >= 1200 or _L3_COMPLEXITY_PATTERNS.search(stripped):
+        return "l3"
+
+    # L2: Standard operational / tool / coordination turn
+    return "l2"
+
+
+def apply_dynamic_turn_tiering(agent: Any, messages: list[Any], tool_turns: int = 0) -> dict[str, str] | None:
+    """Dynamically select model and reasoning_effort per turn for coordinator profiles (Ragnar/Roshi).
+
+    Respects:
+    - Session-pinned models (`agent._session_model_pinned`).
+    - Active provider failover (`agent._fallback_activated` or `OpenCode-Go` provider), routing to
+      `fallback_go_model` on `OpenCode-Go` instead of reverting to `NaN-Builders`.
+    """
+    if agent is None or getattr(agent, "_session_model_pinned", False):
+        return None
+    if getattr(agent, "is_cron", False) or getattr(agent, "_delegate_depth", 0) > 0:
+        return None
+
+    tier_cfg = getattr(agent, "_dynamic_tiering_cfg", None)
+    if not isinstance(tier_cfg, dict) or not tier_cfg.get("enabled"):
+        return None
+
+    tier = classify_turn_complexity(messages, tool_turns=tool_turns)
+    provider_lc = str(getattr(agent, "provider", "") or "").strip().lower()
+    requested_lc = str(getattr(agent, "requested_provider", "") or "").strip().lower()
+    in_failover = bool(getattr(agent, "_fallback_activated", False)) or (
+        "opencode" in provider_lc or "opencode" in requested_lc
+    )
+
+    if tier == "l1":
+        target_model = str(tier_cfg.get("l1_conversational_model") or "glm5.3-flash")
+        target_effort = str(tier_cfg.get("l1_reasoning_effort") or "low")
+    elif tier == "l3":
+        target_model = str(tier_cfg.get("l3_architecture_model") or "deepseek-v4-flash")
+        target_effort = str(tier_cfg.get("l3_reasoning_effort") or "high")
+    else:
+        target_model = str(tier_cfg.get("l2_operational_model") or "deepseek-v4-flash")
+        target_effort = str(tier_cfg.get("l2_reasoning_effort") or "medium")
+
+    if in_failover:
+        go_model = str(tier_cfg.get("fallback_go_model") or "mimo-v2.6-flash")
+        target_model = go_model
+
+    if target_model and getattr(agent, "model", None) != target_model:
+        agent.model = target_model
+    if target_effort:
+        rc = getattr(agent, "reasoning_config", None)
+        if isinstance(rc, dict):
+            rc["effort"] = target_effort
+            rc["enabled"] = target_effort != "none"
+        else:
+            agent.reasoning_config = {"enabled": target_effort != "none", "effort": target_effort}
+
+    return {"tier": tier, "model": target_model, "reasoning_effort": target_effort, "failover": str(in_failover)}
 
 
 def has_user_confirmation(messages: list[Any]) -> bool:
