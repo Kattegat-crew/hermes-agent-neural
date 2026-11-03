@@ -1736,6 +1736,16 @@ def _run_conversation_turn(
         max_compression_attempts=getattr(agent, "max_compression_attempts", 3),
         **{f.name: getattr(_ctx, f.name.lstrip("_")) for f in fields(_LoopState) if f.name in _CTX_FIELDS},
     )
+    # Capability Claim Guard evidence (feature-flagged, fail-open): reset any
+    # stale snapshot and capture this turn's session capability. Spec:
+    # .specs/capability-claim-guard/ — a disabled turn must not inherit the
+    # previous turn's evidence.
+    from agent.capability_claim_guard import wire_turn
+    wire_turn(agent, s.turn_id)
+    # Opt-in runtime: api_mode == codex_app_server hands the whole turn to the codex
+    # app-server subprocess (see agent/transports/codex_app_server_session.py).
+    if agent.api_mode == "codex_app_server" and (codex_result := _codex_app_server_turn(agent, s)) is not None:
+        return codex_result
     if (early_result := _turn_without_loop(agent, s, _ctx.plugin_block_message)) is not None:
         return early_result
 

@@ -67,6 +67,43 @@ class StreamDeliveryMixin:
         results = [self._call_quietly(cb, text) for cb in (self.stream_delta_callback, self._stream_callback)]
         return any(results)
 
+    def _ccg_stream_gate(self, text: str) -> str:
+        """Capability Claim Guard S1: bounded holdback for content deltas.
+
+        Returns the prefix that may be published now (``""`` while the window is
+        filling). No snapshot (guard disabled) returns the text untouched, before
+        any import — AC1 keeps the disabled path byte-identical.
+        """
+        if getattr(self, "_ccg_evidence", None) is None:
+            return text
+        from agent.capability_claim_guard import stream_gate
+
+        return stream_gate(self, text)
+
+    def _ccg_stream_flush(self) -> None:
+        """Release whatever the S1 holdback still owns (no-op when disabled)."""
+        if getattr(self, "_ccg_evidence", None) is None:
+            return
+        from agent.capability_claim_guard import flush_stream_holdback
+
+        if self._stream_writer_superseded():
+            # A retry replaced this attempt: its held tail belongs to a response nobody will
+            # see. Publishing it into the new attempt would interleave two answers (#65991).
+            self._ccg_hold_parts = []
+            return
+        tail = flush_stream_holdback(self)
+        if tail:
+            self._deliver_to_stream_callbacks(tail)
+            self._record_streamed_assistant_text(tail)
+
+    def _ccg_interim_gate(self, text: str, *, already_streamed: bool) -> bool:
+        """Capability Claim Guard S2: may this interim text reach its surface?"""
+        if getattr(self, "_ccg_evidence", None) is None:
+            return True
+        from agent.capability_claim_guard import interim_gate
+
+        return interim_gate(self, text, already_streamed=already_streamed)
+
     def _enqueue_stream_hook(self, event: str, *, label: str | None = None, **fields: Any) -> None:
         """Best-effort plugin stream hook enqueue; never raises into the stream path."""
         try:
@@ -84,6 +121,9 @@ class StreamDeliveryMixin:
         """
         think_scrubber = getattr(self, "_stream_think_scrubber", None)
         ctx_scrubber = getattr(self, "_stream_context_scrubber", None)
+        # Capability Claim Guard: release the S1 holdback before the scrubber tails so live text
+        # keeps its original order (the held tail precedes the partial-tag tail).
+        self._ccg_stream_flush()
         # Inline <think> text is forwarded to the reasoning pane only while no native reasoning delta
         # arrived for this model response (#89647).
         self._native_reasoning_streamed = False
@@ -211,6 +251,11 @@ class StreamDeliveryMixin:
         Commentary is model text ``transform_llm_output`` never sees, so a held turn drops it."""
         cb = None if getattr(self, "_hold_stream", False) else getattr(self, "interim_assistant_callback", None)
         if cb is None:
+            return
+        # Capability Claim Guard S2: a contradiction that never reached a surface is suppressed
+        # here (the correction travels through the final seal); one already on screen is only
+        # registered, because published text cannot be retracted.
+        if not self._ccg_interim_gate(visible, already_streamed=already_streamed):
             return
         try:
             cb(visible, already_streamed=already_streamed)
@@ -358,8 +403,20 @@ class StreamDeliveryMixin:
             text = scrubber.feed(text) if scrubber is not None else sanitize_context(text)
             # Only strip leading newlines on the first delta — mid-stream "\n" is legitimate markdown.
             # Check the parts list, not the joined property (joining per token copies the whole reply).
-            if not prepended_break and not getattr(self, "_streamed_assistant_text_parts", None):
+            # Capability Claim Guard: held text counts as streamed — while the S1 holdback owns the
+            # head, the accumulator is still empty, and a later newline-only delta must not be eaten.
+            if (
+                not prepended_break
+                and not getattr(self, "_streamed_assistant_text_parts", None)
+                and not getattr(self, "_ccg_hold_parts", None)
+            ):
                 text = text.lstrip("\n")
+        if not text:
+            return
+        # Capability Claim Guard S1: judge before publishing — the released prefix is what the
+        # surface receives AND what the streamed-text accumulator records, so a held tail is
+        # never counted as already shown.
+        text = self._ccg_stream_gate(text)
         if not text:
             return
         delivered = self._deliver_to_stream_callbacks(text)
