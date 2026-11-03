@@ -269,7 +269,7 @@ def _agent_home(agent):
         from pathlib import Path
 
         return Path(str(db_path)).expanduser().resolve().parent
-    except Exception:
+    except (TypeError, ValueError, OSError):
         return None
 
 
