@@ -248,3 +248,40 @@ def test_disabled_path_never_calls_the_guard(monkeypatch):
     assert agent.published == BENIGN
     assert not hasattr(agent, "_ccg_tainted")
     assert not hasattr(agent, "_ccg_hold_parts")
+
+
+# ── S1 prefilter vs detector: the fast-path may not be narrower ──────────
+#
+# ``stream_gate`` skips the full scan when no cheap anchor appears in the window.
+# When that prefilter is narrower than ``_NEGATION_PATTERNS`` the denial is
+# published raw and only the final seal can still correct it — exactly the
+# pre-publication guarantee T4 forbids losing. These phrasings are the ones the
+# detector flags (verified) but a hand-maintained anchor list can miss.
+
+PREFILTER_DENIALS = [
+    "No me es posible enviar correos desde aquí.",
+    "No me es posible enviar el informe por esta vía.",
+    "We don't have tools for sending emails.",
+    "We do not have any tools for sending emails.",
+    "No existe una herramienta de correo en esta sesión.",
+    "No hay ninguna herramienta de correo disponible.",
+    "There are no tools for sending emails here.",
+    "No tools exist for sending emails.",
+]
+
+
+@pytest.mark.parametrize("denial", PREFILTER_DENIALS)
+def test_stream_prefilter_is_never_narrower_than_the_detector(denial):
+    from agent.capability_claim_guard import scan_published_text
+
+    evidence = _evidence("send_email", "send_message")
+    # Premise: the detector itself flags this phrasing on the same evidence.
+    assert scan_published_text(evidence, denial, surface="stream").intervene
+
+    agent = _StreamAgent(evidence)
+    raw = BENIGN * 6 + denial
+    for chunk in [raw[i:i + 19] for i in range(0, len(raw), 19)]:
+        agent._fire_stream_delta(chunk)
+    agent._ccg_stream_flush()
+    assert denial[:12] not in agent.published  # no fragment of the denial escaped
+    assert agent._ccg_tainted == "turn-1"  # and the turn is marked for the seal

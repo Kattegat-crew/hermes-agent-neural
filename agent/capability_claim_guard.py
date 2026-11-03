@@ -34,7 +34,6 @@ __all__ = [
     "flush_stream_holdback",
     "interim_gate",
     "is_enabled",
-    "record_observed_error",
     "record_tool_outcome",
     "repair_nudge",
     "scan_published_text",
@@ -425,12 +424,47 @@ _NEGATION_PATTERNS = tuple(
     )
 )
 
-# "…herramienta de/para/que X" / "…tool for/to/that X" — the negation has a
+# "…herramienta de/para/que X" / "…tool for/to/that X" — the negation names a
 # domain object; an object our lexicon cannot resolve is treated as absent
-# (fail-open) instead of a generic denial.
+# (fail-open) instead of a generic denial. The object has to be a NOUN: a
+# demonstrative only points back at the turn, names no domain, and leaves the
+# denial generic (T10 canary finding E2 — "I don't have any tools for that."
+# used to read as a real absence and get published raw).
+_DEMONSTRATIVES = frozenset({
+    "that", "this", "it", "those", "these", "them",
+    "eso", "esto", "esa", "ese", "esos", "esas",
+    "aquel", "aquella", "aquello", "aquellos", "aquellas", "ello",
+})
 _OBJECT_MARKER_RE = re.compile(
     r"herramientas?\s+(?:de|para|con|que)\b|\btools?\s+(?:for|to|that)\b"
 )
+_OBJECT_TOKEN_RE = re.compile(r"\w+")
+
+# Determiner-less light verbs: "tools to do that" / "herramientas para hacer eso"
+# name their real object one token later, so the object check skips them. Any
+# object they do introduce survives the skip ("para hacer pan" stays fail-open).
+_LIGHT_VERBS = frozenset({
+    "do", "does", "make", "makes", "use", "uses", "handle", "perform", "get",
+    "hacer", "hace", "hago", "usar", "usa", "manejar", "conseguir", "lograr",
+})
+
+
+def _names_domain_object(low: str) -> bool:
+    """Does a tool-availability denial name a domain object after its marker?
+
+    ``tools for knitting`` / ``herramientas para pilotar un dron`` name a domain
+    the lexicon may not resolve, so the denial is treated as a real absence
+    (fail-open). ``tools for that`` / ``herramientas para eso`` only point at the
+    turn: the demonstrative is not an object, so the denial stays generic.
+    """
+    for match in _OBJECT_MARKER_RE.finditer(low):
+        tokens = _OBJECT_TOKEN_RE.findall(low[match.end():])
+        while tokens and tokens[0] in _LIGHT_VERBS:
+            tokens.pop(0)
+        if tokens and tokens[0] not in _DEMONSTRATIVES:
+            return True
+    return False
+
 
 # Specific terms → tool-name substrings: a concrete noun beats its family.
 _SPECIFIC_TERMS = {
@@ -682,10 +716,10 @@ def _scan(evidence, text: str, surface: str) -> Verdict:
             )
         # Negation with no resolvable capability: a domain object we cannot
         # resolve is treated as genuinely absent (fail-open); a bare "I have
-        # no tools" against a non-empty session contradicts the snapshot, and
-        # the evidence is bounded so an unrelated tool can never be implied
-        # (review finding 4).
-        if _OBJECT_MARKER_RE.search(low) or had_terms or not direct:
+        # no tools" — or one that only points at "that"/"eso" — contradicts the
+        # snapshot, and the evidence is bounded so an unrelated tool can never
+        # be implied (review finding 4, T10 finding E2).
+        if _names_domain_object(low) or had_terms or not direct:
             return Verdict("allowed_absent", (), surface)
         return Verdict("contradiction_direct", tuple(sorted(direct)[:5]), surface)
 
@@ -696,11 +730,14 @@ def _scan(evidence, text: str, surface: str) -> Verdict:
 
 # Cheap prefilter so an enabled-but-quiet stream never pays for the full scan:
 # a window without any of these anchors cannot contain a capability negation.
+# CONTRACT: the prefilter must never reject a window ``_NEGATION_PATTERNS`` would
+# flag — a missing anchor publishes the denial raw and only S3 can repair it.
+# Every pattern's literal trigger below therefore has an anchor of its own.
 _STREAM_ANCHORS = (
     "no tengo", "no dispongo", "no cuento", "no puedo", "no hay", "no existe",
-    "no es posible", "ninguna herramienta", "ningún tool",
+    "no es posible", "no me es posible", "ninguna herramienta", "ningún tool",
     "i don't", "i do not", "i cannot", "i can't", "there is no", "there's no",
-    "no tools",
+    "no tools", "we don't", "we do not",
 )
 _PUBLISHED_TAIL_CHARS = 400
 

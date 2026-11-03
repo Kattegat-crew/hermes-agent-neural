@@ -1,7 +1,7 @@
 # 03 — Tareas: Capability Claim Guard (TDD, fases F2+)
 
 Reglas: TDD estricto (RED antes de GREEN), un solo worktree
-(`/opt/hermes-agent-worktrees/capability-claim-guard`, branch
+(`/opt/hermes-agent-data/fleet/worktrees/hermes-agent/capability-claim-guard`, branch
 `feat/capability-claim-guard`), runner oficial SIEMPRE
 (`env -u PYTHONPATH HERMES_RUNTIME_DIR=/opt/hermes-agent-data/tools scripts/run_tests.sh …`,
 jamás bare pytest), sin commits/push sin autorización, reviewer heimdall al cierre de
