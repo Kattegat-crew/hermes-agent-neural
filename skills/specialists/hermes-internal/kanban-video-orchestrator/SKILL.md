@@ -137,6 +137,22 @@ heartbeats. When a worker's output fails review, the standard interventions are:
 2. Create a re-run task with the original as parent
 3. Adjust the brief's scope and let the director re-decompose
 
+**Completion notification for humans.** A human stakeholder who is not watching
+the board can be auto-notified when the final task completes:
+
+```bash
+hermes kanban notify-subscribe <task_id> --platform telegram \
+  --chat-id <chat_id> --notifier-profile default \
+  --chat-type dm --delivery-mode notify
+```
+
+Verified working in the Golden Game Tunja reel production (26-oct-2026):
+`Subscribed telegram:8709909260 to t_9225c602`. Multiple chat subscriptions
+stack on the same task. Use this instead of promising the user a message via
+cron `deliver='origin'` — in a TUI session that channel does not deliver back.
+Subscribe the FINAL task of the graph (the one that fires when the whole
+pipeline lands), not the intermediate ones.
+
 For diagnostic patterns, intervention recipes, and the "task is stuck"
 playbook, see **[references/monitoring.md](references/monitoring.md)**.
 
@@ -187,6 +203,17 @@ task graphs. See **[references/examples.md](references/examples.md)**.
    image-to-video) need keys in `${HERMES_HOME:-~/.hermes}/.env` or the user's secret store.
    A worker that hits a missing-key error wastes a task slot. The setup
    script's `check_key` helper aborts cleanly if a required key is missing.
+
+9. **Separate production approval from spend approval.** For paid external
+   services (TTS like ElevenLabs, paid image/video gen), a user's "proceed with
+   the video" does NOT authorize API spend. Pattern (verified 26-oct-2026,
+   Golden Tunja reel): create the spend task with `initial_status="blocked"` and
+   a body stating the exact authorized scope; ask the user ONE clarifying
+   question for the cap (max USD + max generations/calls); record the approval
+   verbatim via `kanban_comment` on the blocked task (auditable, survives
+   restarts); then `kanban_unblock` the task. Make the mixing/export task a
+   CHILD of the spend task so the pipeline cannot proceed on unverified audio.
+   Never let a worker self-unblock or run retries beyond the authorized count.
 
 ## File map
 

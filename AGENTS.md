@@ -167,3 +167,7 @@ Every former god file is a **facade** (public entry points + the names other pac
 
 Long-form background: `website/docs/developer-guide/`. Workflow rules (PR/issue/review/salvage
 process) live in the `hermes-agent-dev` skill, not here.
+
+## Lucky brand artwork
+
+For Lucky / Paradise artwork, read `docs/skills/lucky-identity.md` and the canonical Marketing identity registry before generation. The explicit five-digit hand clarification dated 30 Oct 2026 overrides ambiguous older reference hands; preserve the accepted current weekly ticket. Documentation only: no changes to Hermes runtime.

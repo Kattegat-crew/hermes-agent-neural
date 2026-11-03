@@ -7,6 +7,7 @@ author: Ragnar
 triggers:
   - discord canales: crear canal / crear canales / canal por bot / servidor discord
   - discord admin: administrar servidor / listar canales / roles / token discord / 1010 / forbidden
+  - limpieza: limpiar canal / borrar mensajes / eliminar mensajes / purgar spam / deleting messages
   - ruteo: canal discord -> perfil / gateway profile_routes discord
 ---
 
@@ -54,6 +55,16 @@ El gateway de Hermes enruta por **canal** (`thread > chat_id > guild > default`)
 
 - `scripts/discord_list_channels.py` — lista guilds/canales con token+UA correctos.
 - `scripts/discord_create_channels.py` — crea N canales de texto bajo una categoría; devuelve IDs.
+
+## Limpieza masiva de mensajes (borrado retroactivo, verificado 26/10/2026)
+
+Para pedidos tipo "limpia los mensajes de X en este canal":
+
+1. **Localizar el objetivo en AMBOS lugares:** el mensaje disparador suele estar en un canal padre (#general) y el ruido acumulado allí. Traer `fetch_messages` del canal padre con `limit` alto (100+) y filtrar por contenido/autor en Python; verificar con paginación que no haya más hacia atrás antes de declarar el total.
+2. **Vía de borrado:** usar el plugin nativo `discord_admin` con acción `delete_message` (canal + message_id). **Es 1 mensaje por invocación** — no existe bulk-delete en el tool. El conector Composio `discordbot` permite lotes pero puede no estar conectado; no depender de él.
+3. **Borrado en lotes paralelos:** `tool_call` con ~8-10 invocaciones por lote. Los 429 (rate-limit, `retry_after` < 1s) NO son fallo: reencolar esos message_id en un lote siguiente y reintentar hasta 0 pendientes. Llevar contador exacto borrados/pendientes.
+4. **Verificación final obligatoria:** refetch del canal completo y confirmar 0 coincidencias restantes antes de reportar "limpio". Contar y clasificar (autor, rango de fechas) en el reporte.
+5. Mensajes >14 días no son borrables vía API (Discord lo impone) — verificar fechas antes de prometer limpieza total.
 
 ## Pitfalls
 

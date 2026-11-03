@@ -66,6 +66,24 @@ En Seedance r2v se referencian con @Image1/@Image2/@Audio1.
 4. QA del clip: mouth shapes vs sílabas, identidad preservada, sin morphing;
    comparar contra `reference_audio` nativo si STTS.
 
+## QA de movimiento en video animado: no juzgar la boca con frames sueltos
+
+Un clip puede parecer «boca congelada» y estar articulando. Falso negativo real (28/10/2026):
+una hoja de contactos a 10 fps con `crop` ajustado al rostro concluyó «sin visemas»; el usuario,
+viéndolo en reproducción, dijo lo contrario y tenía razón.
+
+**Método correcto (coste 0, determinista):**
+
+1. Extraer a gris pequeño (`scale=270:480,format=gray`) con `ffmpeg -f rawvideo` (~120 frames).
+2. `std` por píxel sobre el eje temporal → mapa de movimiento; guardar normalizado como PNG y mirarlo
+   con visión: se distingue la zona de boca de la de ojos y del idle del cuerpo.
+3. Comparar celdas (std medio por celda 30×30) para localizar dónde hay movimiento propio.
+4. Para encuadre e identidad, comparar **frame del clip vs keyframe aprobado** en una hoja 2×N;
+   un `crop` estrecho sobre un blanco pequeño pierde detalle y produce conclusiones falsas.
+
+Regla: una afirmación sobre articulación o parpadeo se sostiene con `std` temporal por región, no con
+la impresión de una tira de frames.
+
 ## Pitfalls
 - ⚠️ **Seedance NO preserva tu pista de voz** (ni full ni mini, ni r2v con
   audio_urls): RE-FONIZA con su propia voz (v4-mini Scribe: "el Trepu de la

@@ -14,6 +14,19 @@ El puente sale con UN número para TODOS los perfiles ruteados. Los envíos proa
 - Todo informe/envío proactivo debe **etiquetar al remitente** en el texto ("— Ragnar" / "— Roshi") o ir al grupo oficial del equipo.
 - Chucho ya reclamó recibir un informe "de Roshi" que era de Ragnar (27/08). Cron `informe-diario-equipo` (57dd5580b592, 07:00) aplica etiqueta.
 
+### EXCEPCIÓN verificada (PROD, 28-oct-2026): flota multi-sesión de marcas
+La regla anterior aplica al DEV/central. En PROD existen **3 sesiones WhatsApp independientes**, cada una con su propio bridge hijo del gateway del perfil:
+
+| Perfil | Número | Nombre visible | Bridge |
+|---|---|---|---|
+| `default` (Ragnar) | 573242417438 | Neuralcew Agent | :3000 |
+| `golden-game` | 573043561269 | Golden Game Casinos | :3001 |
+| `lucky-club` | 573114925556 | They Grand Paradise Club Casino | :3002 |
+
+- Sesiones de marca en `/opt/data/profiles/<perfil>/whatsapp/session/`; procesos visibles con `ps -eo pid,args | grep bridge.js` (cada uno con su `--port` y `--session`).
+- Los perfiles ruteados (`helmer`, `jacqueline`, `yulieth`, `prospectos`) **NO tienen número propio**: comparten el central :3000 vía `profile_routes`. "Un WhatsApp por bot" es falso salvo para los 2 perfiles de marca.
+- Para campañas por marca (ej. recordatorio de sorteo): enviar desde el número de la marca a SUS inscritos (selección por `marca_plantilla` → `bridges` en `config.json` del emisor, ver `references/broadcast-campanas.md`).
+
 ## Re-pairing (v0.20.6, 28/08)
 Runbook completo en `references/re-pairing-runbook.md`. Tres pitfalls nuevos verificados:
 1. **Bug `pair-code.js`**: `fetchLatestBaileysVersion()` devuelve `{version,isLatest}` — pasar objeto crudo a Baileys muere silencioso en `version.join()`. Corregido 28/08 (backup `.bak-20260828`). Código de 8 dígitos expira ~60 s; **mejor usar `pair-qr.js`** (QR PNG rotativo ~50 s × 8 intentos).
@@ -47,6 +60,9 @@ El bot PUEDE iniciar conversación aunque el contacto nunca haya escrito:
 - **Regla dura: no enviar nunca sin orden explícita del usuario** (riesgo de spam / mala primera impresión con el cliente).
 - **PITFALL crítico (verificado 19-oct, PROD):** desde el HOST de PROD el bridge NO es alcanzable aunque `ss` muestre `LISTEN 100.73.30.29:3000 (docker-proxy)` — `curl` a `127.0.0.1:3000` ni a la IP de Tailscale responde (exit 7 / 000, probable firewall local). La ÚNICA vía que funciona desde el host es **dentro del contenedor**: `docker exec hermes-agent curl -s -X POST http://127.0.0.1:3000/send-media -H "Content-Type: application/json" -d '{"chatId":"...","filePath":"...","caption":"..."}'`. El `filePath` debe ser visible DENTRO del contenedor (`/opt/data/...`, montado) con dueño `hermes` (10000:10000); `/send` usa `message`, `/send-media` usa `filePath`+`caption`.
 - **PITFALL verificación de envíos (22/09/2026):** `GET /messages` NO sirve para verificar un envío — hace `splice()` de `messageQueue` y CONSUME los mensajes entrantes que el bot aún no procesó (el agente los perdería). Además `messageStore` es solo en memoria: no hay log persistente de lo enviado (ni en bridge.log, ni en los state.db de los perfiles de PROD — verificado). Verificación correcta de un `POST /send`: (1) HTTP 200 con `{"success":true}`; (2) `messageId` con prefijo `3EB0...` devuelto = ID emitido tras ACK del servidor WhatsApp → confirma entrega AL SERVIDOR, no lectura ✓✓ (eso solo lo ve el destinatario); (3) `GET /health` → `connected` y `queueLength:0` tras el envío. No intentar confirmaciones de lectura vía API: Baileys no las expone.
+
+## Envío por tandas a una base (campañas)
+Para difusión a una base de contactos (recordatorios de eventos, promos) NO enviar a mano con `/send`: usar el emisor por tandas con cola persistente y dry-run por defecto en `/opt/data/scripts/sorteo/` (reutilizable para cualquier campaña). Receta completa, consolidación de base (leads PG + Sheets + Twenty), pacing anti-ban y pitfalls en `references/broadcast-campanas.md`. Reglas duras: dry-run + preview con teléfono enmascarado + aprobación del Admin del texto ANTES de `--enviar`; filtrar fichas DEMO de seed en Twenty (`^3[0-9]{9}$`); excluir `consent=false` (Ley 1581).
 
 ## Grupos de WhatsApp — política por defecto RECHAZA todo
 

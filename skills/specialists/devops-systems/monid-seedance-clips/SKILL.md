@@ -145,6 +145,17 @@ STYLE: High-quality 3D animated film render, vibrant but natural colors, cinemat
 - **Sync de Drive puede pisar archivos de producción a mitad de una tanda (real, Golden 19-oct-26):** el cron `sync_all.sh` (cada 30 min en DEV) hace drive_pull Drive→repo y REVIRTIÓ prompts/lote/guion editados localmente; el clip se pagó con el diálogo viejo («boleta del día» en vez de «boleta diaria»). Detección: la STT-QA de la pista nativa mostró la línea vieja. Reglas: (1) antes de una tanda, pausar el sync (`/etc/cron.d/reels-sync-all`) o correr un push y confirmar que no hay pull pendiente; (2) si un clip sale con diálogo revertido, NO regenerar la tanda: corregir prompt/lote/guion y re-lanzar SOLO la escena afectada (los batch scripts aceptan la escena como argumento posicional, p.ej. `batch_*.py S03A`) con su propio authorize/close del gate; (3) el costo del re-run cuenta como gasto real del reel aunque el manifest lo fusione (reportar suma, no el merge).
 - **El audio nativo del clip SOLO sirve como guía de timing labial, NUNCA como "ambiente" de una mezcla** — arrastra bleed de la voz nativa y suena doble (error real S1-mix.mp4, Goldie 30/08; Jonathan: "se escucha la voz de Seedance al fondo"). La voz final se calibra con `scripts/fit_voice.py` (ver skill `reel-voice-lipsync`).
 
+## r2v con audio de referencia en fal directo (verificado 28-oct-2026, Lucky final)
+
+Además de Monid, el endpoint fal `bytedance/seedance-2.0/mini/reference-to-video` acepta `image_urls` (referencia visual) + `audio_urls` (guía de voz) + `generate_audio: true`:
+- `audio_urls` exige al menos una imagen/video de referencia; admite hasta 3 archivos con máximo 15 s combinados. Los WAV ElevenLabs deben estar en URL pública (los data URLs no).
+- `duration` admite enum 4–15 s aunque el audio dure menos (1,44 s de voz → clip de 4 s).
+- El keyframe entra SOLO como `image_urls`; NO combinar `first_frame` + referencia (HTTP 400 sin cobro, ya documentado en Monid).
+- Regla de entrega: el WAV de marca es guía de labial Y pista final; el audio nativo del clip se descarta en montaje (coherente con el pitfall del bleed doble). Alineación por palabra con `align_video.py`.
+- Precio verificado con `get_pricing` del MCP fal: $0.007/1.000 tokens → ~$0.60 por clip de 4 s @720p (~$0.15/s); 5 clips de un reel ≈ $3.45.
+- **Moderación anti-rostros**: el motor rechaza rostros humanos fotorrealistas en la referencia. Con mascota 3D no aplica; con keyframes que incluyan invitados/personas reales puede rechazar el clip: prever ruta alternativa audio-driven (ver skill `ai-video-model-costing`, tabla de precios fal 28-oct-2026).
+- Prompts por escena con este esquema (guion técnico E1–E5): `planning/calendario-oct2026/reel-final-lucky/PROMPTS-VIDEO-E1-E5-CON-AUDIO.md` en el repo m-c-g.
+
 ## Verificación post-clip
 ```bash
 ffprobe -v quiet -show_entries stream=codec_name,width,height -show_entries format=duration -of default=noprint_wrappers=1 <clip>.mp4

@@ -58,6 +58,36 @@ fit_voice da pads falsos o atempo <0.7, NO usar los WAV fitados. Receta:
 
 Resultado verificado: 5 líneas STT en 0.27/2.91/6.17/10.67/12.77s, −15.1 LUFS, sincronía aceptable sin atempo artificial.
 
+## Montaje multi-escena desde clips con voz embebida (validado 28/10/2026, reel Lucky 19,75 s)
+
+Cuando los clips ya traen la locución TTS dentro (MiniMax lip-sync con `audio_url`, correlación 1.000
+contra el WAV original), **no hay que remezclar voz**: se recorta y se concatena. Receta verificada
+(−13,99 LUFS, TP −1,25 dBTP, cero palabras cortadas):
+
+1. **Cortes en onsets reales de la música**, no en duraciones redondas. Detectar onsets con flujo
+   espectral (numpy + FFT, sin librosa): picos por encima del percentil 88, separación mínima 0,18 s;
+   BPM por autocorrelación del flujo. Elegir para cada segmento el onset más cercano a
+   `fin_de_voz + cola (0,4-0,9 s)`.
+2. **Onset/fin de voz por clip** con envolvente RMS a 20 ms y umbral `max*0.05` (silencedetect a
+   −32 dB falla si el clip trae aire o ruido de codificación).
+3. **`asplit` obligatorio** si un label de audio se usa dos veces: `[voz]` en `sidechaincompress`
+   (como llave) y en `amix` da `Stream specifier 'voz' matches no streams`. Cadena:
+   `[voice][asil]concat=…[vozfull];[vozfull]asplit=2[voz][vozsc]`.
+4. **`drawtext`: usar `textfile=`, nunca `text=` inline.** Un `:` dentro del texto («DESDE LAS
+   5:00 P. M.») trunca la cadena y la línea sale como «DESDE LAS 5» sin ningún error. Verificar
+   transcribiendo el frame con visión, no leyendo el código.
+5. **Cartela que siempre se lee**: congelar el último frame (`tpad=stop_mode=clone`), `gblur=sigma=22`,
+   `eq=brightness=-0.16`, `format=rgba` + `drawbox=…:color=black@0.42:t=fill` como scrim, y encima
+   las líneas. Calcular el tamaño con PIL contra un ancho seguro (900 px de 1080):
+   `ImageFont.truetype(ttf, size).getbbox(texto)` → bajar de 2 en 2 hasta que quepa.
+   Entradas escalonadas 0,10/0,26/0,42/0,58 s con `alpha='if(lt(t,d),0,min(1,(t-d)/0.28))'`
+   (un `alpha=0` fijo deja el texto invisible para siempre; `enable=` solo no hace fade).
+6. **Normalización en dos pasadas**: render → medir con `loudnorm=print_format=json` → aplicar
+   `volume=<target−medido>dB,alimiter` (una sola pasada de `loudnorm` desvía ±0,5 LU).
+7. **QA mínimo antes de entregar**: `loudnorm` del master (−14 ±1), separación voz/música ≥10 dB,
+   RMS 120 ms antes/después de cada corte (que ninguna palabra cabalgue el corte) y delta máximo de
+   muestra en los primeros/últimos 50 ms (clicks).
+
 ## Reglas del proyecto (no negociables)
 
 - **Nada de pago sin OK explícito del Admin** (este mix cuesta $0, pero el clip que lo

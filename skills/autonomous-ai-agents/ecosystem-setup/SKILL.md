@@ -68,6 +68,24 @@ To check all available skills: `hermes skills list` — shows 3-column table wit
 
 **Key command**: `hermes skills list` — this is the single source of truth for what's available. No separate "enable" step needed for builtin skills.
 
+## Antigravity CLI (agy) — instalar en equipos nuevos (Windows incluido)
+
+`agy` = CLI de Google Antigravity (binario Go ~220 MB, auto-actualiza en segundo plano). En DEV: `/usr/local/bin/agy`.
+
+Instalación: usar el instalador oficial documentado en https://antigravity.google/docs/getting-started/ (script `install.sh` para Linux/macOS → `~/.local/bin/agy`; `install.ps1` para Windows → `%LOCALAPPDATA%\agy\bin\agy.exe`). Descargar el script y revisarlo antes de ejecutarlo; no usar pipe directo a shell.
+
+Pitfall Windows (verificado con usuario "Jesús Díaz"): si el PATH de usuario supera ~1024 caracteres, `[Environment]::SetEnvironmentVariable(..., "User")` falla EN SILENCIO y `agy` no se reconoce aunque el binario exista. Diagnóstico: `[Environment]::GetEnvironmentVariable("Path","User").Length`. Solución segura (no tocar el PATH largo): alias permanente en `$PROFILE`:
+
+```powershell
+Set-ExecutionPolicy -Scope CurrentUser RemoteSigned -Force
+if (!(Test-Path $PROFILE)) { New-Item -ItemType File -Path $PROFILE -Force }
+Add-Content $PROFILE 'Set-Alias agy "$env:LOCALAPPDATA\agy\bin\agy.exe"'
+```
+
+Con espacios/tildes en el usuario, invocar con `& "$env:LOCALAPPDATA\agy\bin\agy.exe"`.
+
+Autenticación OAuth: el primer `agy` abre onboarding + login Google; cambiar cuenta con `/logout` (o `/help` si no existe). Para verificar la cuenta usada por el agy de una VPS, decodificar el `id_token` en `~/.gemini/antigravity-cli/antigravity-oauth-token` (en DEV fleet: `/opt/hermes-agent-data/fleet/agy-home/.gemini/antigravity-cli/`) — cuenta verificada 2026-10: `jonathaun124@gmail.com`.
+
 ## Common Pitfalls
 - `hermes: command not found` — CLI not in PATH, use full path or `export PATH="/opt/hermes/.venv/bin:$PATH"`
 - `Error: No skill named 'X' found in any source` — trying to install a builtin skill from hub (they're already bundled)

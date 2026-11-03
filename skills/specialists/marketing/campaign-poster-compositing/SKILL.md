@@ -40,6 +40,14 @@ Reemplazar un elemento (p.ej. chip de texto → logo real) dibujando un rectáng
 - Sello rojo/marcas claras sobre fondo oscuro del poster: "se aplasta" — montar sobre scrim del color claro de la paleta (marfil) con aro dorado, no directo sobre el arte oscuro.
 - Si el PNG "limpio" del logo no está o la carpeta da 404: buscar en Drive variantes por nombre ("logo pdf", etc.) — un PDF de logo rasterizado a 200dpi (`pdftoppm -png -r 200 -singlefile`) sobre fondo blanco es claveable perfectamente.
 
+## Fotos reales de personas (banda, equipo, cliente)
+- **Nunca pedir al modelo de imagen que redibuje personas reales ni sus logos de ropa**: deriva de identidad y aparecen marcas ajenas como hallazgos de QA (caso Bendabal: logo Adidas). Generar SOLO el fondo y componer la foto real como capa con alpha.
+- Recorte con `rembg` (sesión `isnet-general-use`, CPU): instalar `rembg[cpu]` con `--target` en un dir de scratch y correr con `python3.12`; el modelo ONNX (179 MB) baja solo al primer uso si se exporta `U2NET_HOME=<scratch>/models`. Recortar el crop útil ANTES de `remove()` para acotar la inferencia.
+- Limpieza de alpha: fragmentos sueltos (micrófonos, reflectores) se eliminan con `cv2.connectedComponentsWithStats` sobre el canal A (conservar solo componentes con área > umbral y alto > umbral) y borrados manuales puntuales pintando el alpha. QA con `vision_analyze` sobre la foto sobre fondo de control antes de componer.
+- Integración tonal: SOLO transformaciones globales sobre la foto completa (autocontraste, duotono `colorize`, `posterize(gris, 4)` para look serigráfico), nunca regenerativas. El fade inferior es dispositivo de composición y NUNCA tapa rostros. Separación contra arte cargado: sombra/halo derivados del propio alpha (`MaxFilter` + `GaussianBlur`).
+- Tipografía con aserciones duras: helper `fontfit(texto, fuente, max, min, ancho)` que decrementa tamaño hasta que `textbbox` cabe, y `text_at` que assertiona límites seguros (20..1060 px, y≥0..1340) — el render falla ruidosamente antes de producir texto cortado.
+- Verificación OCR del render terminado: `tesseract --psm 11` sobre el flyer completo con textura puede colgar (OpenMP sobre imagen grande); en su lugar recortar SOLO las bandas de texto, invertir gris, ampliar ~2× y usar `--psm 6` con `OMP_THREAD_LIMIT=1`. Transcripción real contra la lista de copy requerida.
+
 ## Entrega y ruteo
 - Nomenclatura y carpetas: consultar SIEMPRE el mapa `brain/folder-maps/<campaña>.md` antes de subir. Piezas → `03-piezas/`, overlays/logos → `03-piezas/assets/` (crearla si el mapa la prevé), aprobadas → `04-aprobadas/` con `_APROBADA-v<N>` y firma del aprobador. Registrar en el mapa los IDs de carpetas nuevas que se creen.
 - Subida Drive: `HERMES_HOME` = **raíz** (`/root/hermes-agent-legacy-docker/data`), no perfil — con perfil de otro bot el token no está y falla.

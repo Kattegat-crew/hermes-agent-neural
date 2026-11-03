@@ -106,8 +106,13 @@ Formato del mapa (plantilla en `templates/mapa-carpetas.md`):
 3. **BLOQUEO drástico de carpetas nuevas:** si la carpeta no existe en el mapa →
    **NO crearla.** Pedir autorización al Admin: ruta propuesta, propósito, ejemplos.
    Solo después de aprobación se crea y se registra en los dos lugares del mapa.
-4. **Nombres descriptivos (kebab-case):** `AAAA-MM-DD_tipo_cliente_descripcion.ext`
-   Ejemplo: `2026-08-19_informe_golden_landing.docx`. Prohibidos: "nuevo", "final2",
+4. **Nombre según el formato predominante de la carpeta destino** (corrección del Admin):
+   antes de nombrar, listar 5-10 archivos de la carpeta y adoptar SU patrón real —
+   no imponer un formato propio. Ejemplos verificados: campañas usan
+   `10-octubre- Lucky` (número-mes- marca), activos de marca usan
+   `LUCKY - character sheet v2 - 2026-10-29.png` (MARCA - pie - versión - fecha).
+   El kebab-case `AAAA-MM-DD_tipo_cliente_descripcion.ext` es solo el fallback
+   para carpetas sin patrón claro. Prohibidos siempre: "nuevo", "final2",
    "copia", "sin nombre", "aqui".
 5. **Un cambio legítimo de estructura → se registra el mapa ANTES de mover archivos.**
 6. **Verificar el resultado:** si el archivo quedó fuera del mapa (p. ej. autocompletado
@@ -131,6 +136,23 @@ sensibles (`.env`, credenciales) que jamás se suben a Drive.
 
 ## Pitfalls
 
+- **Dos árboles Drive paralelos (corrección dura del Admin):** en el Drive de un
+  cliente pueden convivir un esqueleto de contrato (carpetas correctas, casi vacías)
+  y un árbol de trabajo con el contenido real. Antes de escribir a Drive de un
+  cliente, detectar cuál árbol está vivo: contar archivos y comparar `modifiedTime`
+  en ambos candidatos, y cruzar contra lo que el repo de campañas sincroniza
+  (`drive_sync.py` / `connections-map.json`). Escribir en el esqueleto genera dos
+  realidades paralelas y obliga a migrar después (costo: mover decenas de archivos).
+- **Nunca borrar versiones anteriores de un activo aprobado (regla del Admin):**
+  al actualizar un activo de marca (hoja de personaje, logo, plantilla), la versión
+  anterior se ARCHIVA en `_versiones-anteriores/<YYYY-MM-DD>/` dentro de la misma
+  carpeta, y la nueva entra con sufijo de versión y fecha en el nombre. Esto aplica
+  en TODO el ecosistema (Drive, repo, portal), no solo en el repo.
+- **Impresos de campaña (boletas, volantes):** ver
+  `references/produccion-impresos-campanas.md` — pipeline vectorial del repo m-c-g
+  (costo 0 recortando del maestro aprobado, gates de layout en código, QC por medición
+  de píxeles). Piezas en `planning/<campana>/03-piezas/impresos/`, specs JSON en
+  `03-piezas/specs/<marca>/`.
 - **Token de Google Drive:** no usar token crudo con urllib (401); usar
   `googleapiclient` (refresca solo). Token en `/opt/data/google_token.json`.
 - **`gws` puede no estar instalado:** usar el script `drive_map.py` (patrón probado de

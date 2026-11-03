@@ -109,6 +109,10 @@ clean commercial photography style, 16:9 aspect ratio, 4K
 - Requesting complex text — use overlays instead for anything beyond short headlines
 - No style direction — "photorealistic," "flat illustration," "3D render"
 
+### Codex CLI native image generation (ChatGPT-authenticated)
+
+When the Codex CLI is available on a host, its native `image_generation` tool produces high-fidelity edits/generations from real reference photos using the user's ChatGPT plan (no per-image API spend). Verified workflow, exact command and pitfalls — including the mandatory stdin prompt when attaching `-i` references — live in [references/codex-image-generation.md](references/codex-image-generation.md). Key rules: normalize refs to JPEG RGB ≤2048 px, generate photo-only plates (text/infographics added later with deterministic overlay), and capture the output path the tool reports rather than globbing for the newest file.
+
 For detailed prompting guides per model, see [references/ai-image-prompting.md] ⚠️ FALTA: references/ai-image-prompting.md.
 
 ---

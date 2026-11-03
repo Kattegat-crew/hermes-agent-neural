@@ -27,7 +27,21 @@ Para YouTube usar `youtube-content`; para X/Twitter usar `twitter-telegram-inges
    ```
    Analizar 3-4 frames con `vision_analyze` repartidos a lo largo del video (inicio/hook, medio/herramienta, final/CTA). Así se lee el texto en pantalla (timers, CTAs, nombres de tools) sin transcripción.
 
-## Facebook share links (pitfalls)
+## TikTok vía tikwm.com (sin yt-dlp — verificado 15/27-oct-2026, 3 enlaces seguidos)
+
+Para links de TikTok, la API pública de tikwm.com es más rápida que yt-dlp y devuelve TODO lo que pide el contrato del grupo en UNA llamada (métricas, caption completo, autor, imágenes):
+
+```bash
+# 1) Resolver short link (vt.tiktok.com/ZSxxxx/) al URL canónico:
+URL=$(curl -sI -A "facebookexternalhit/1.1" "<short-url>" | grep -i '^location' | tr -d '\r' | awk '{print $2}')
+# 2) Metadata + métricas:
+curl -s "https://www.tikwm.com/api/?url=$(python3 -c "import urllib.parse;print(urllib.parse.quote('$URL',safe=''))")" -A "Mozilla/5.0 Chrome/126.0" -o /tmp/tikwm.json
+```
+
+- Campos útiles de `data`: `title` (caption COMPLETO, sin truncar), `author.unique_id` (handle), `duration`, y métricas exactas: `play_count`, `digg_count` (likes), `comment_count`, `share_count`, `collect_count` (guardados). El ratio collect/vistas (~8%) es señal de contenido de referencia/tutorial.
+- **Posts foto-carrusel (`/photo/<id>` en el URL, `duration: 0`):** tikwm devuelve `data.images` = lista de URLs CDN de cada tarjeta, una por slide. Descargar 1-2 y pasar a `vision_analyze` para verificar diseño/plantilla de las tarjetas. yt-dlp NO maneja estos posts.
+- Sigue haciendo falta transcripción solo si el caption no resume el audio: descargar `data.play` con el UA y usar whisper local.
+- Caveat: tikwm es API gratuita de terceros (sin key); si cae, volver al pipeline yt-dlp de arriba.
 
 - `web_extract`/Firecrawl → 403. No insistir.
 - curl con UA de escritorio o móvil → HTTP 400 ("Error Facebook").

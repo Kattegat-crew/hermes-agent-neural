@@ -81,7 +81,7 @@ Si Chrome for Testing está disponible, preferir la ruta HTML (reflow automátic
 
 1. **Sin emojis si no hay fuente de color**: `fc-list | grep -i emoji` vacio => salen cuadros. Usa numeros y formas CSS.
 2. **Verifica SIEMPRE con vision antes de enviar**: la imagen completa (¿falta algo? ¿texto encimado?) y una **region del pie**. En la primera version la frase del pie se partio en dos lineas: se arregla con `white-space:nowrap` + acortando el texto, y el corte NO se ve en el HTML, solo en el PNG.
-3. El **chromium del sistema puede ser un snap inservible headless**: usa Chrome for Testing.
+3. El **chromium del sistema puede ser un snap inservible headless**: usa Chrome for Testing; si ese binario tampoco existe, llama el binario real del snap directamente (`/snap/chromium/current/usr/lib/chromium-browser/chrome` con `HOME` escribible y `--user-data-dir` propio) — receta completa en `html-to-print-rendering`.
 4. Entrega **imagen + resumen en palabras**: el Admin pidio las dos cosas ("en palabras y graficamente"). El texto del chat sigue el mismo orden que los pasos de la imagen.
 5. **Higiene**: chown a hermes y no dejar el HTML/PNG como root (rompe el reclamo de cero archivos ajenos).
 6. **`vision_analyze` puede responder 408 (timeout) con imágenes grandes o de alta resolución**: no reintentar idéntico; reducir con PIL a ~700–800 px de ancho, JPEG q75–80, y reintentar. Para revisar detalle usa recortes por sección: el texto pequeño (sellos, pines del calendario) es ilegible a tamaño miniatura y el modelo de visión lo mal-lee en silencio (confundió "4 NOV" por "1 nov"); confirma fechas y cifras pequeñas contra el HTML, no contra el recorte.

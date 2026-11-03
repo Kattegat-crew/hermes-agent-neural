@@ -104,6 +104,15 @@ Skip any step = lying, not verifying
 ❌ Trust agent report
 ```
 
+**Documented frozen artifacts (hashes, sizes, commit IDs in READMEs/docs):**
+```
+✅ Extract values LIVE (sha256sum, stat, git log) → insert programmatically →
+   assert doc quotes match live values with a scripted check (e.g. `sha in readme`, `head in readme`)
+❌ Hand-typing hashes/IDs from scrollback into docs — they drift char-by-char
+   (caught live 27-oct-2026: first README draft had hand-typed values; regenerated
+   with live extraction and verified programmatically 8/8)
+```
+
 ## When To Apply
 
 **ALWAYS before:**
