@@ -21,7 +21,7 @@
   3. **`USER.md` Bloat & Missing Deferred MCPs**: All 12 profiles share a ~7,260-char `USER.md` that omits most active `lazy: true` MCP servers (31 in Ragnar, 29 in Roshi, 1-7 in specialists), causing capability hallucinations when agents do not know which deferred MCPs exist behind `tool_search`.
   4. **Unshielded Model Configuration & Fallback Alignment**: Switching models in Hermes Desktop (`POST /api/model/set`) or via natural-language chat commands overwrites `model.default` in `config.yaml`, flattening all profiles to `glm5.3-flash`. Additionally, assigning `deepseek-v4-flash` on `NaN-Builders` requires adjusting `fallback_model[0]` so it does not self-loop, while strictly preserving `OpenCode-Go` (`mimo-v2.6-flash`) as the cross-provider outage fallback.
 
-* **Why solve it now?** Restores sub-2.5s conversational latency, enforces true Zero-Default-Load for skills and `MEMORY.md`, cuts Jev routing costs by ~70% while eliminating false `no_fit` misses, prevents capability hallucinations at the input layer, and protects per-agent model specialization and `OpenCode-Go` failover across the 12-agent fleet.
+* **Why solve it now?** Enforces true Zero-Default-Load for skills and `MEMORY.md` (eliminating 50s-77s context prefill spikes on conversational turns), cuts Jev routing costs by ~70% while eliminating false `no_fit` misses, prevents capability hallucinations at the input layer, and protects per-agent model specialization and `OpenCode-Go` failover across the 12-agent fleet.
 
 ---
 
@@ -41,7 +41,7 @@
 ---
 
 ## 3. User Stories & Functional Requirements
-* **US-1 (Zero-Default-Load & Fast Conversational Turn)**: As an operator messaging any agent, I want pure conversational turns to respond in <2.5s without loading `MEMORY.md` or skills by default, while keeping the session KV-cache intact.
+* **US-1 (Zero-Default-Load & Fast Conversational Turn)**: As an operator messaging any agent, I want pure conversational turns to execute with Zero-Default-Load without loading `MEMORY.md` or skills by default, while keeping the session KV-cache intact (reducing prompt tokens by >90% to prevent prefill latency spikes).
   * **Requirement 1.1**: `MemoryStore` (`tools/memory_tool_store.py`) must allow `index_char_limit: 0` when `on_demand: true`, rendering only a 4-line on-demand pointer in the System Prompt with zero `MEMORY.md` entries preloaded.
   * **Requirement 1.2**: `_memory_turn_start_and_prefetch` (`agent/turn_context.py`) must skip external memory prefetch when `is_conversational_turn(query)` is `True`.
   * **Requirement 1.3**: `should_decouple_tools_for_turn` (`agent/tool_guardrails.py`) must only return `True` on Turn 1 of a fresh session (`len(messages) <= 2` and `tool_turns == 0`) for unambiguous short greetings/acks (<60 chars, no question marks or capability verbs), keeping `tools_for_api = agent.tools` on all subsequent turns so the provider KV-cache prefix never invalidates.
@@ -65,7 +65,7 @@
 * **Scenario 1: Conversational Turn Latency & KV-Cache Preservation**
   * **Given**: An active multi-turn session in `roshi` or `default`.
   * **When**: The user sends `"Hola Roshi, ¿cómo estás?"`.
-  * **Then**: `_memory_turn_start_and_prefetch` is skipped, `tools_for_api` remains identical to the session's cached prefix, `TaskComplexityRouter` selects L1 (`glm5.3-flash`, `reasoning_effort="low"`), and the response completes in <2.5s.
+  * **Then**: `_memory_turn_start_and_prefetch` is skipped, `tools_for_api` remains identical to the session's cached prefix, `TaskComplexityRouter` selects L1 (`glm5.3-flash`, `reasoning_effort="low"`), and prompt prefill executes with 0 preloaded memory entries (P50 total turn turnaround bounded only by remote provider `NaN-Builders` TTFT ~4-8s).
 * **Scenario 2: Close-Margin Stage-2 Skill Routing in Jev**
   * **Given**: Two skills in `typesafe-skill-router` both score `fits >= 0.40` (e.g., `0.82` and `0.78`, margin `0.04 < 0.15`).
   * **When**: The agent invokes `skill_route(query="...", context="...")`.
