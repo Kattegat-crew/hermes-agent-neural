@@ -273,10 +273,15 @@ def _agent_home(agent):
 
 
 def _load_config_for_home(home):
-    from hermes_cli.config import load_config_readonly
+    """Config of an EXPLICITLY identified owning home.
 
-    if home is None:
-        return load_config_readonly()
+    There is deliberately no ``None``/ambient branch: ``load_config_readonly()``
+    on the bare process answers for whatever profile the process launched with,
+    which in a multiplexed host (dashboard/serve, ``HERMES_HOME`` = launch
+    profile) is not the agent's profile (root HX002/HX004). Callers must fail
+    closed instead — see ``_guard_options``.
+    """
+    from hermes_cli.config import load_config_readonly
     from hermes_constants import reset_hermes_home_override, set_hermes_home_override
 
     token = set_hermes_home_override(str(home))
@@ -288,7 +293,8 @@ def _load_config_for_home(home):
 
 def _guard_options(agent=None):
     """``(enabled, holdback_chars, repair_limit, profile_home)`` for the
-    profile that owns ``agent``. Unreadable config = all defaults = OFF.
+    profile that owns ``agent``. Unreadable config = all defaults = OFF, and so
+    is an UNRESOLVED owning profile (fail closed).
 
     Read once per turn (the only caller is the turn hook), so the guard costs
     one config load per turn and nothing per delta: measured ~32 ms, against
@@ -298,6 +304,12 @@ def _guard_options(agent=None):
     """
     home = _agent_home(agent)
     fallback = (False, _DEFAULT_HOLDBACK_CHARS, _DEFAULT_REPAIR_LIMIT, home)
+    if home is None:
+        # No owning profile to answer for. ``agent/background_review.py:920``
+        # clears ``_session_db`` on the review fork and still runs a turn, so
+        # this is a live path: reading the ambient config there would enable
+        # the guard for whichever profile the process happens to launch with.
+        return fallback
     try:
         config = _load_config_for_home(home)
         section = config.get("agent", {}) if isinstance(config, Mapping) else {}

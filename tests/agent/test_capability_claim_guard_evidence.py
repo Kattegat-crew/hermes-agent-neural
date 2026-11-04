@@ -21,6 +21,7 @@ Pinned behaviour:
   enabled`` turns it on.
 """
 
+from pathlib import Path
 from types import SimpleNamespace
 from unittest.mock import MagicMock, patch
 
@@ -43,9 +44,13 @@ def _make_agent(tools=None, **extra):
     return agent
 
 
-def _session_agent():
-    """Session capability: two direct tools, one deferred (bridge active)."""
-    return _make_agent(
+def _session_agent(home=None):
+    """Session capability: two direct tools, one deferred (bridge active).
+
+    ``home`` binds the owning profile (``_session_db`` → ``<home>/state.db``), which is
+    where the config gate reads the flag from; without it the gate fails closed.
+    """
+    agent = _make_agent(
         tools=[
             _tool_def("send_message"),
             _tool_def("kanban_list"),
@@ -53,6 +58,9 @@ def _session_agent():
         ],
         valid_tool_names={"send_message", "kanban_list", "tool_search"},
     )
+    if home is not None:
+        agent._session_db = SimpleNamespace(db_path=str(Path(home) / "state.db"))
+    return agent
 
 
 # ── T1: Evidence Snapshot (capture_evidence) ─────────────────────────────
@@ -199,28 +207,28 @@ class TestRecordObservedError:
 
 
 class TestEnabledFlag:
-    def test_default_off(self):
+    def test_default_off(self, tmp_path):
         from agent.capability_claim_guard import is_enabled
 
-        assert is_enabled(_session_agent()) is False
+        assert is_enabled(_session_agent(tmp_path)) is False
 
-    def test_config_enabled(self):
+    def test_config_enabled(self, tmp_path):
         from agent.capability_claim_guard import is_enabled
 
         config = {"agent": {"capability_claim_guard": {"enabled": True}}}
         with patch(
             "hermes_cli.config.load_config_readonly", return_value=config
         ):
-            assert is_enabled(_session_agent()) is True
+            assert is_enabled(_session_agent(tmp_path)) is True
 
-    def test_unreadable_config_is_disabled(self):
+    def test_unreadable_config_is_disabled(self, tmp_path):
         from agent.capability_claim_guard import is_enabled
 
         with patch(
             "hermes_cli.config.load_config_readonly",
             side_effect=RuntimeError("config unavailable"),
         ):
-            assert is_enabled(_session_agent()) is False
+            assert is_enabled(_session_agent(tmp_path)) is False
 
 
 # ── T3: per-turn wiring in the real conversation loop ────────────────────

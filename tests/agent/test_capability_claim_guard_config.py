@@ -107,12 +107,36 @@ def test_wire_turn_resets_state_every_turn(tmp_path, home_override):
     assert agent._ccg_evidence.turn_id == "turn-2"
 
 
-def test_wire_turn_without_agent_home_uses_the_bound_scope(tmp_path, home_override):
-    served = _write_home(tmp_path / "served", "agent:\n  capability_claim_guard:\n    enabled: true\n")
-    home_override(served)
-    agent = _Agent(home=None)
-    ccg.wire_turn(agent, "turn-1")
-    assert agent._ccg_evidence is not None
+def test_is_enabled_without_owning_home_fails_closed_never_ambient(tmp_path, home_override):
+    """No owning home → OFF, even when the ambient profile enables the guard.
+
+    ``agent/background_review.py:920`` clears ``_session_db`` on the review fork
+    (``_persist_disabled``) and ``:1102`` still runs ``run_conversation``, so the
+    fork reaches ``wire_turn`` with no owning home. In a multiplexed process
+    (dashboard/serve run with the launch profile's ``HERMES_HOME``) reading the
+    ambient config would answer for a profile that is NOT this agent's — the leak
+    the "flag only for Ragnar/default" authorisation forbids, so fail closed.
+    """
+    ambient = _write_home(
+        tmp_path / "ambient",
+        "agent:\n  capability_claim_guard:\n    enabled: true\n",
+    )
+    home_override(ambient)
+    fork = _Agent(home=None)
+    fork._persist_disabled = True
+    assert ccg.is_enabled(fork) is False
+
+
+def test_wire_turn_without_owning_home_captures_no_evidence(tmp_path, home_override):
+    ambient = _write_home(
+        tmp_path / "ambient",
+        "agent:\n  capability_claim_guard:\n    enabled: true\n",
+    )
+    home_override(ambient)
+    fork = _Agent(home=None)
+    fork._persist_disabled = True
+    ccg.wire_turn(fork, "turn-1")
+    assert fork._ccg_evidence is None
 
 
 def test_edited_config_is_seen_on_the_next_turn(tmp_path, home_override):
