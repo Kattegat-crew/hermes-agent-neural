@@ -47,8 +47,9 @@ During this run another actor added 3 more foreign `skills/` entries (`diff` = 3
 No conflict markers were produced; `git cherry-pick` reported auto-merge only on
 `agent/agent_runtime_helpers.py`. The reviewed branch was 27 files, +4206 / −14 against its own base;
 this branch is 30 files, +4603 / −14 against `9daf7b8fae` (the 27 plus these three documents), and no
-root feature is dropped. Round 2 (§8) adds the isolation probe and three commits: **31 files,
-+4885 / −14**.
+root feature is dropped. Round 2 (§8) added the isolation probe, two code commits and one doc commit
+(31 files, +4885 / −14); round 3 (§9) is documentation-only, so the delivered diffstat is **31 files,
++4928 / −14**.
 
 ## 4. Invariants checked by reading, not by assumption
 
@@ -166,10 +167,13 @@ keeps its commits) or `git branch -D feat/capability-claim-guard-ragnar`. The re
 The **runtime rollback path was dry-run for real**, not just written down: a throwaway detached
 worktree at `9daf` fast-forwarded to the integration head (`338d5dfce6`) and then
 `git revert --no-edit` over the five commits left `git diff 9daf..HEAD` empty and the tree clean
-(`TREE_IDENTICAL=YES`, `DIRTY=0`); the worktree was removed afterwards. The dry-run was **repeated
-after round 2** at the new head (`93697dbb6e`, eight commits): reverts produced `df238ceca5`,
-`git diff --stat 9daf..HEAD` = 0 lines, `git status --porcelain` = 0 entries, worktree removed.
-Evidence and the rollback table live in `09-activation-plan-ragnar.md` §4.
+(`TREE_IDENTICAL=YES`, `DIRTY=0`); the worktree was removed afterwards. Repeated after round 2
+(`ca2f01b5d6`, nine commits) and **again at the delivered head** using the range form
+`git revert --no-edit 9daf7b8fae..HEAD`: clean reverts, `HEAD^{tree}` == `9daf^{tree}`
+(`61ee4dd8c2`), `git diff --stat 9daf..HEAD` = 0 lines, `git status --porcelain` = 0 entries,
+worktree removed. An enumerated hash list was rejected: reverting the documentation commits of this
+branch out of order conflicts on `08`/`09` (`CONFLICT (content)`, repo left mid-revert), which is why
+the plan uses the range. Evidence and the rollback table live in `09-activation-plan-ragnar.md` §4.
 
 ## 8. Round 2 — review findings closed (2026-11-03)
 
@@ -230,7 +234,27 @@ executing card must hold root or stop as `needs_input`. Order changed accordingl
 
 ### N1 / N2 — cosmetic
 
-`+4581` in §3 was wrong; the measured diff was `+4603` (now `+4885` after round 2 — see the diffstat in
-§6 of the plan). `agent/stream_delivery.py` had two consecutive `if not text: return`; the first was
-dead (`_ccg_stream_gate` returns `""` on empty input and the text unchanged when disabled), so it was
-removed and the remaining check documented as the single emptiness gate.
+`+4581` in §3 was wrong; the measured diff was `+4603` (now `+4928` after rounds 2–3 — see the
+diffstat in §3 of this document). `agent/stream_delivery.py` had two consecutive `if not text: return`; the
+first was dead (`_ccg_stream_gate` returns `""` on empty input and the text unchanged when disabled), so
+it was removed and the remaining check documented as the single emptiness gate.
+
+## 9. Round 3 — rollback recipe corrected at the delivered head (doc only)
+
+The round-2 review of `ca2f01b5d6` found one blocking defect and one nit, both confined to
+`09-activation-plan-ragnar.md`; no code, test or probe changed.
+
+- **Blocking — §4 enumerated a frozen revert list.** The list was frozen at `93697dbb6e` (eight
+  commits) while the head shipped was `ca2f01b5d6`; executing it verbatim produced
+  `CONFLICT (content)` on `08`/`09` and left the repo mid-revert (`UU ×2`), because the later
+  documentation commits rewrite those same two files. §4 now reverts the **range**
+  (`git revert --no-edit 9daf7b8fae..HEAD`) and states the acceptance invariant explicitly: the
+  resulting `HEAD^{tree}` must equal `9daf^{tree}` (`61ee4dd8c2`) with a clean status — the revert
+  commit SHA is not the invariant, it depends on committer and date.
+- **Nit — §3-V-2 file split.** "31 files (17 code, 8 tests, 14 spec)" summed to 39. The measured split
+  is **9 code** (8 under `agent/` plus `hermes_cli/config_defaults.py`), 8 tests, 14 spec = 31.
+
+Dry-run re-executed in a throwaway detached worktree at `ca2f01b5d6`: 9 reverts clean, `REVERT_HEAD`
+`6203d2d111`, `HEAD^{tree}` == `9daf^{tree}` == `61ee4dd8c2`, `git diff --stat 9daf..HEAD` = 0 lines,
+`git status --porcelain` = 0 entries, worktree removed; the same range command was re-run at the
+delivered head before review.

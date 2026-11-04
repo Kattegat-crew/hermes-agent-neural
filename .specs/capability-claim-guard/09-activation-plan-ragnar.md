@@ -77,10 +77,10 @@ El backup del config se hace **con la CLI** en la ejecución, nunca editando YAM
 1. `feat/capability-claim-guard-ragnar` limpio y con la suite en verde (§5 y §8 de
    `08-integration-ragnar.md`: 147 tests de guarda + 997 del slice streaming/turnos, 0 fallos).
 2. `git -C /opt/hermes-agent diff --stat 9daf7b8fae..feat/capability-claim-guard-ragnar` = 31 archivos
-   (17 de código —`agent/`, `hermes_cli/`—, 8 de tests y 14 de spec, incluidos los documentos de
-   integración y el probe nuevo), ninguno de `skills/` ni `docs/` (el árbol sucio ajeno no se toca);
-   intersección medida con `git status --porcelain` del root = **0 rutas** (59 entradas sucias hoy,
-   todas ajenas).
+   (9 de código —los 8 de `agent/` más `hermes_cli/config_defaults.py`—, 8 de tests y 14 de spec,
+   incluidos los documentos de integración y los probes), ninguno de `skills/` ni `docs/` (el árbol
+   sucio ajeno no se toca); intersección medida con `git status --porcelain` del root = **0 rutas**
+   (59 entradas sucias hoy, todas ajenas).
 3. `readlink /opt/hermes-agent-data/releases/dashboard/current` y backup legibles; existe
    `/opt/hermes-agent-data/releases/dashboard/bin/promote-release` (root:root) y el card tiene root.
 4. Espacio en `/opt` ≥ 2 GB (release medido 771 MB + build 3.3 MB; `/opt` tenía 24 GB libres).
@@ -153,26 +153,44 @@ No requiere reinicio: la guarda lee la config por turno (test
 
 ## 4. Rollback (dry-run ejecutado en este card sobre un worktree desechable)
 
-Dry-run real (worktree detached en `9daf`, merge `--ff-only` de la rama integrada → HEAD
-`93697dbb6e` = branch head, árbol limpio), después `git revert --no-edit` de los 8 commits
-(93697dbb6e, 51479cd8d9, 78ed036423, 338d5dfce6, 8ccc035c21, 856c93d66a, a8106d317b, cba1f10dbe):
+Dry-run real: worktree detached en el head de la rama integrada (base `9daf7b8fae` más los commits de
+§3-V, sin merge adicional) y revert del **rango completo**, nunca de una lista de hashes congelada —
+los commits de documentación reescriben los mismos dos `.md`, así que revertirlos fuera de orden deja
+`CONFLICT (content)` en `08`/`09` y el repo a mitad de revert (reproducido el 2026-11-03 con la lista
+que traía esta sección):
 
 ```
-REVERT_HEAD=df238ceca5
-DIFF_VS_BASE=0          # git diff --stat 9daf..HEAD → 0 líneas tras los reverts
+SRC=/opt/hermes-agent-data/fleet/worktrees/hermes-agent/capability-claim-guard-ragnar
+WT=$(mktemp -d /opt/hermes-agent-data/profiles/brokkr/cache/scratch/ccg-rb.XXXX)
+git -C "$SRC" worktree add --detach "$WT" "$(git -C "$SRC" rev-parse feat/capability-claim-guard-ragnar)"
+git -C "$WT" revert --no-edit 9daf7b8fae..HEAD
+git -C "$WT" rev-parse HEAD^{tree} 9daf7b8fae^{tree}   # los dos valores deben coincidir
+git -C "$WT" status --porcelain                        # debe salir vacío
+git -C "$SRC" worktree remove --force "$WT"
+```
+
+Medido sobre el head `ca2f01b5d6` (9 commits, 2026-11-03):
+
+```
+COMMITS_REVERTED=9
+REVERT_HEAD=6203d2d111
+TREE_HEAD=61ee4dd8c2 == TREE_BASE=61ee4dd8c2
+DIFF_VS_BASE=0          # git diff --stat 9daf..HEAD → 0 líneas
 DIRTY=0                 # git status --porcelain vacío
-worktree_removed=YES
+worktree_removed=YES    # git worktree list vuelve a sus 5 entradas
 ```
 
-Es decir: el rollback de código devuelve el árbol **byte a byte** al estado `9daf`. Worktree de
-prueba eliminado con `git worktree remove --force`; `git worktree list` vuelve a sus 5 entradas (ninguna
-residual). El mismo dry-run se había hecho antes de la ronda 2 con 5 commits y el mismo resultado.
+El invariante de aceptación es la **igualdad de árbol** (`HEAD^{tree}` == `9daf^{tree}` =
+`61ee4dd8c2`) más el árbol limpio, **no** el sha del commit de revert (depende de committer y fecha).
+El commit de documentación de esta corrección alarga el rango a 10 commits y cambia `REVERT_HEAD`, pero
+el árbol resultante sigue siendo `61ee4dd8c2`: re-verificado sobre el head entregado con el mismo
+comando de rango antes de pasar a review.
 
 | Origen | Acción | Efecto |
 |---|---|---|
 | Falso positivo / latencia | `HERMES_HOME=/opt/hermes-agent-data hermes config unset agent.capability_claim_guard.enabled` | OFF en el siguiente turno, **sin reinicio**, sin tocar código |
 | Dashboard | Repuntar `current` al target guardado en `dashboard-current.path` con swap atómico (`ln -sfn "$(cat "$B/dashboard-current.path")" .../.current.tmp && mv -T .../.current.tmp .../current`) + `sudo systemctl restart hermes-dashboard.service` | vuelve a `cd397afc64`; verificar `/api/health` → `commit` = `cd397afc64c91e…` |
-| Código gateway | `git -C /opt/hermes-agent revert --no-edit <commits de la integración>` + `systemctl restart hermes-agent` | árbol idéntico a `9daf` (probado); `reset --hard` sigue prohibido por el árbol sucio ajeno |
+| Código gateway | `git -C /opt/hermes-agent revert --no-edit "$(cat "$B/root.head")"..HEAD` (rango, no lista: los paths del revert son disjuntos del árbol sucio ajeno) + `systemctl restart hermes-agent` | árbol idéntico al base registrado (`9daf`, probado); `reset --hard` sigue prohibido por el árbol sucio ajeno |
 | Release nuevo | tras repuntar `current`, `sudo rm -rf /opt/hermes-agent-data/releases/dashboard/releases/<sha10>` | libera ~771 MB (medido en el release actual); los commits siguen en la rama |
 
 Nota: tras un rollback por revert, reactivar exige revertir los reverts (o un merge nuevo); no se
@@ -223,13 +241,14 @@ medido y registrado, y `git status` del root solo con el drift ajeno previo.
 
 ## 6. Evidencia que este card deja lista (sin ejecutar)
 
-- Rama `feat/capability-claim-guard-ragnar` (9 commits: 4 cherry-picks, 2 de código de la ronda 2 y 3 de
+- Rama `feat/capability-claim-guard-ragnar` (10 commits: 4 cherry-picks, 2 de código y 4 de
   documentación), 147 tests de guarda + 997 del slice streaming/turnos en verde sobre el código final,
   RED 44 fallos en base `9daf`, ruff y health limpios, canario 31/31.
 - Ronda 2 (hallazgos del review cerrados, detalle en §8 de `08-integration-ragnar.md`): scope fail-closed
   con RED→GREEN propio, probe de runtime `6/6` contra el fix y `4/6` contra `ce34c19c5c`, rollback
-  re-dry-run en `93697dbb6e` (reverts → `df238ceca5`, diff 0, dirty 0), y §3-E replanteado sobre
-  `promote-release` con la aserción de commit servido que el script no hace.
+  por rango sobre el head integrado (9 reverts limpios → árbol `61ee4dd8c2` == `9daf`, diff 0, dirty 0)
+  re-verificado en el head entregado, y §3-E replanteado sobre `promote-release` con la aserción de
+  commit servido que el script no hace.
 - Comandos de §3 verificados en seco: `curl` dashboard = 302 real; `hermes gateway status` exit 0
   real; `config set/unset` probado contra home desechable (no el real).
 - Nada de §3-E se ejecutó: el root sigue en `9daf7b8fae`, sin merge, sin reinicio, sin flag.
