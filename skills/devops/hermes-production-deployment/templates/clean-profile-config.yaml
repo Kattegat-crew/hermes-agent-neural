@@ -1,0 +1,104 @@
+# config.yaml — Plantilla de perfil Hermes LIMPIO para cliente (oficina/gerente).
+# Copiar a: profiles/<CLIENTE>/config.yaml y reemplazar <CLIENTE>.
+# Probado 16/08/2026 — stack minimal para secretaría/gerencia, sin skills técnicas.
+
+model:
+  default: deepseek-v4-flash
+  provider: custom
+  base_url: https://api.nan.builders/v1
+
+providers:
+  NaN-Builders:
+    base_url: https://api.nan.builders/v1
+    models:
+      deepseek-v4-flash:
+        context_length: 1048576
+      qwen3.6:
+        context_length: 262144
+      mimo-v2.5:
+        context_length: 1048576
+      whisper:
+        type: audio
+      kokoro:
+        type: audio
+      flux-2-klein:
+        type: image
+
+smart_model_routing:
+  enabled: true
+  max_simple_chars: 160
+  cheap_model:
+    provider: custom
+    model: qwen3.6
+    base_url: https://api.nan.builders/v1
+
+auxiliary:
+  vision:
+    model: qwen3.6
+    provider: custom
+    base_url: https://api.nan.builders/v1
+  web_extract:
+    model: mimo-v2.5
+    provider: custom
+    base_url: https://api.nan.builders/v1
+  compression:
+    model: deepseek-v4-flash
+    provider: custom
+    base_url: https://api.nan.builders/v1
+
+stt:
+  enabled: true
+  provider: openai
+  openai:
+    model: whisper
+    base_url: https://api.nan.builders/v1
+  language: es
+
+tts:
+  provider: openai
+  openai:
+    model: kokoro
+    voice: em_alex
+    base_url: https://api.nan.builders/v1
+
+toolsets:
+  - terminal
+  - file
+  - web
+
+skills:
+  external_dirs:
+    - /opt/hermes/profiles/<CLIENTE>/skills/
+    - /opt/hermes/shared/skills/
+  disabled: []
+
+agent:
+  max_turns: 50
+  gateway_timeout: 600
+  tool_use_enforcement: auto
+  verbose: false
+  personalities:
+    helpful: You are a helpful, professional assistant.
+    concise: You are a concise assistant.
+
+display:
+  personality: helpful
+  interim_assistant_messages: false
+  tool_progress: summary
+  streaming: true
+
+compression:
+  enabled: true
+  threshold: 0.5
+  target_ratio: 0.2
+
+memory:
+  memory_enabled: true
+  user_profile_enabled: true
+  memory_char_limit: 10000
+
+timezone: America/Bogota
+
+sessions:
+  auto_prune: true
+  retention_days: 30

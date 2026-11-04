@@ -1,10 +1,10 @@
 ---
 name: popular-web-designs
-description: 54 real design systems (Stripe, Linear, Vercel) as HTML/CSS.
+description: "Use when styling a page like Stripe or Linear."
 version: 1.0.0
 author: Hermes Agent + Teknium (design systems sourced from VoltAgent/awesome-design-md)
 license: MIT
-tags: [design, css, html, ui, web-development, design-systems, templates]
+tags: [design, css, html, design-systems, ui, brand, plantillas, templates]
 platforms: [linux, macos, windows]
 triggers:
   - build a page that looks like
@@ -31,8 +31,8 @@ system, shadows, responsive behavior, and practical agent prompts with exact CSS
   Pair it with this skill when the user wants a thoughtfully-designed page styled
   after a known brand: `claude-design` drives the workflow, this skill supplies
   the visual vocabulary.
-- **`design-md`** (optional: `hermes skills install official/creative/design-md`) —
-  use when the deliverable is a formal DESIGN.md token spec file, not a rendered artifact.
+- **`design-md`** — use when the deliverable is a formal DESIGN.md token spec
+  file, not a rendered artifact.
 
 ## How to Use
 
@@ -44,7 +44,7 @@ system, shadows, responsive behavior, and practical agent prompts with exact CSS
 Each template includes a **Hermes Implementation Notes** block at the top with:
 - CDN font substitute and Google Fonts `<link>` tag (ready to paste)
 - CSS font-family stacks for primary and monospace
-- Reminders to use `write_file` for HTML creation and `browser_exec` (`capture_screenshot()`) for verification
+- Reminders to use `write_file` for HTML creation and `browser_vision` for verification
 
 ## HTML Generation Pattern
 
@@ -83,7 +83,7 @@ Each template includes a **Hermes Implementation Notes** block at the top with:
 ```
 
 Write the file with `write_file`, serve with the `generative-widgets` workflow (cloudflared tunnel),
-and verify the result with `browser_exec`: open the page, `capture_screenshot()`, and inspect the image to confirm visual accuracy.
+and verify the result with `browser_vision` to confirm visual accuracy.
 
 ## Font Substitution Reference
 

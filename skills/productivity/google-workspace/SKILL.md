@@ -1,6 +1,7 @@
 ---
 name: google-workspace
-description: "Gmail, Calendar, Drive, Docs, Sheets via gws CLI or Python."
+description: "Use when doing Gmail, Calendar, Drive, Docs or Sheets."
+tags: [google, gmail, calendar, drive, sheets, docs, oauth]
 version: 1.2.0
 author: Nous Research
 license: MIT
@@ -16,6 +17,14 @@ metadata:
     homepage: https://github.com/NousResearch/hermes-agent
     related_skills: [himalaya]
 ---
+
+> [!IMPORTANT]
+> **REGLA DE PROTOCOLO CANÓNICO ACTIVA**: El acceso a Google Workspace (Gmail, Drive, Docs, Sheets, Calendar)
+> está centralizado en el servidor MCP  () usando los tokens
+> en  y el mapa en  (gestionados por ActivePieces).
+>  y  están revocados/deprecados. Usa siempre el MCP .
+
+
 
 # Google Workspace
 

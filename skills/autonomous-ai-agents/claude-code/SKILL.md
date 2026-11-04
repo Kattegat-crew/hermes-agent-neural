@@ -1,6 +1,7 @@
 ---
 name: claude-code
-description: "Delegate coding to Claude Code CLI (features, PRs)."
+description: "Use when delegating coding tasks to Claude Code CLI."
+tags: [claude-code, coding-agent, cli, print-mode, pty, code-review, worktree, anthropic]
 version: 2.2.1
 author: Hermes Agent + Teknium
 license: MIT

@@ -1,6 +1,7 @@
 ---
 name: spike
-description: "Throwaway experiments to validate an idea before build."
+description: "Use when validating an idea with a throwaway spike"
+tags: [spike, prototipo, prototype, experimento, feasibility, validacion, poc]
 version: 1.0.0
 author: Hermes Agent (adapted from gsd-build/get-shit-done)
 license: MIT
