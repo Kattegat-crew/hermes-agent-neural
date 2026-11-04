@@ -11,7 +11,7 @@ import threading
 import time
 from pathlib import Path
 from typing import Any, MutableMapping, Optional
-from gateway.platforms.event import MessageEvent
+from gateway.platforms.event import MessageEvent, MessageType
 from utils import atomic_json_write
 
 logger = logging.getLogger(__name__)
@@ -705,3 +705,113 @@ def platform_http_client(**kwargs: Any) -> Any:
     elif kwargs["limits"] is None:
         del kwargs["limits"]
     return create_ssrf_safe_async_client(event_hooks=hooks, **kwargs)
+
+
+_MULTIMODAL_BATCH_TYPES = frozenset({
+    MessageType.PHOTO, MessageType.DOCUMENT, MessageType.VOICE, MessageType.AUDIO, MessageType.VIDEO,
+})
+
+
+def _clamp_batch_float(raw: Any, default: float, min_val: float, max_val: float) -> float:
+    try:
+        val = float(raw)
+    except (TypeError, ValueError):
+        return default
+    if val != val or val < 0:  # NaN or negative
+        return default
+    return min(max(val, min_val), max_val)
+
+
+def resolve_batch_params_for_event(adapter: Any, event: Optional[MessageEvent]) -> dict[str, Any]:
+    """Return effective batching parameters for *event*, applying per-profile overrides when present."""
+    delay = float(getattr(adapter, "_text_batch_delay_seconds", 0.3))
+    split_delay = float(getattr(adapter, "_text_batch_split_delay_seconds", 1.0))
+    presence_extend = float(getattr(adapter, "_text_batch_presence_extend_seconds", 0.0))
+    hard_cap = float(getattr(adapter, "_text_batch_hard_cap_seconds", 12.0))
+    multimodal = bool(getattr(adapter, "_multimodal_batching", False))
+    extra = getattr(getattr(adapter, "config", None), "extra", None) or {}
+    overrides_map = extra.get("profile_batch_overrides")
+    if isinstance(overrides_map, dict) and event is not None and getattr(event, "source", None) is not None:
+        profile = None
+        with contextlib.suppress(Exception):
+            profile = adapter._session_key_profile(event.source)
+        profile_cfg = overrides_map.get(profile or "default")
+        if isinstance(profile_cfg, dict):
+            delay = _clamp_batch_float(profile_cfg.get("text_batch_delay_seconds"), delay, 0.0, 10.0)
+            split_delay = _clamp_batch_float(profile_cfg.get("text_batch_split_delay_seconds"), max(split_delay, delay), delay, 15.0)
+            presence_extend = _clamp_batch_float(profile_cfg.get("text_batch_presence_extend_seconds"), presence_extend, 0.0, 5.0)
+            hard_cap = _clamp_batch_float(profile_cfg.get("text_batch_hard_cap_seconds"), hard_cap, delay, 30.0)
+            if "multimodal_batching" in profile_cfg:
+                multimodal = bool(profile_cfg.get("multimodal_batching"))
+    return {
+        "delay": delay,
+        "split_delay": split_delay,
+        "presence_extend": presence_extend,
+        "hard_cap": hard_cap,
+        "multimodal": multimodal,
+    }
+
+
+def should_batch_inbound_event(adapter: Any, event: MessageEvent) -> bool:
+    """True if *event* should enter the sliding inbound batch buffer instead of immediate dispatch."""
+    if (getattr(event, "text", None) or "").strip().startswith("/"):
+        return False
+    if event.message_type == MessageType.TEXT:
+        return True
+    if event.message_type in _MULTIMODAL_BATCH_TYPES:
+        return bool(resolve_batch_params_for_event(adapter, event)["multimodal"])
+    return False
+
+
+def merge_inbound_batch_event(existing: MessageEvent, incoming: MessageEvent, append_text_fn: Any) -> None:
+    """Merge *incoming* bubble (text and/or media) into *existing* batch event in place."""
+    existing._batch_chunk_count = getattr(existing, "_batch_chunk_count", 1) + 1  # type: ignore[attr-defined]
+    if incoming.text:
+        existing.text = append_text_fn(existing.text, incoming.text)
+    if incoming.media_urls:
+        existing_inline = list(getattr(existing, "media_text_inlined", None) or [])
+        incoming_inline = list(getattr(incoming, "media_text_inlined", None) or [])
+        if existing_inline or incoming_inline:
+            if len(existing_inline) < len(existing.media_urls):
+                existing_inline.extend([None] * (len(existing.media_urls) - len(existing_inline)))
+            if len(incoming_inline) < len(incoming.media_urls):
+                incoming_inline.extend([None] * (len(incoming.media_urls) - len(incoming_inline)))
+            existing.media_text_inlined = existing_inline + incoming_inline
+        existing.media_urls.extend(incoming.media_urls)
+        existing.media_types.extend(incoming.media_types)
+    if existing.message_type == MessageType.VOICE or incoming.message_type == MessageType.VOICE:
+        existing.message_type = MessageType.VOICE
+    elif existing.message_type == MessageType.PHOTO or incoming.message_type == MessageType.PHOTO:
+        existing.message_type = MessageType.PHOTO
+    elif existing.message_type == MessageType.TEXT and incoming.message_type != MessageType.TEXT:
+        existing.message_type = incoming.message_type
+    if incoming.message_id:
+        existing.message_id = incoming.message_id
+    existing.absorb_reply_expected(incoming)
+    existing._last_chunk_len = len(incoming.text or "")  # type: ignore[attr-defined]
+
+
+async def await_batch_quiet_and_presence(adapter: Any, key: str, current_task: Any) -> bool:
+    """Sleep for the quiet delay and extend in bounded slices while sender is composing up to hard_cap."""
+    pending = adapter._pending_text_batches.get(key)
+    params = resolve_batch_params_for_event(adapter, pending)
+    first_ts = getattr(pending, "_batch_first_ts", None) or time.monotonic()
+    hard_cap = float(params["hard_cap"])
+    base_delay = float(adapter._text_batch_delay_for(pending))
+    initial_sleep = min(base_delay, max(0.0, hard_cap - (time.monotonic() - first_ts))) if hard_cap > 0 else base_delay
+    await asyncio.sleep(initial_sleep)
+    presence_extend = float(params["presence_extend"])
+    while presence_extend > 0.0:
+        owner = adapter._pending_text_batch_tasks.get(key)
+        if owner is not None and owner is not current_task:
+            return False
+        pending = adapter._pending_text_batches.get(key)
+        if pending is None:
+            return False
+        remaining_cap = hard_cap - (time.monotonic() - first_ts)
+        if remaining_cap <= 0.05:
+            break
+        if not await adapter._is_sender_composing(pending):
+            break
+        await asyncio.sleep(min(presence_extend, remaining_cap))
+    return True

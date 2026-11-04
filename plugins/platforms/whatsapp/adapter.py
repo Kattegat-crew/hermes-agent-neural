@@ -1052,7 +1052,7 @@ class WhatsAppAdapter(WhatsAppBehaviorMixin, BasePlatformAdapter):
                             if event:
                                 # Fire-and-forget: a slow bridge /read must not delay dispatch.
                                 asyncio.create_task(self._send_read_receipt(msg_data))
-                                if event.message_type == MessageType.TEXT:
+                                if self._should_batch_event(event):
                                     self._enqueue_text_event(event)
                                 else:
                                     await self.handle_message(event)
@@ -1087,6 +1087,23 @@ class WhatsAppAdapter(WhatsAppBehaviorMixin, BasePlatformAdapter):
             logger.warning("[%s] WhatsApp read receipt failed: %s", self.name, exc)
 
     _SPLIT_THRESHOLD = 6000  # WhatsApp supports ~65K chars; generous threshold
+
+    async def _is_sender_composing(self, event: MessageEvent) -> bool:
+        """Query the local Baileys bridge for active 'composing' or 'recording' presence."""
+        if not self._http_session or event is None or getattr(event, "source", None) is None:
+            return False
+        chat_id = str(getattr(event.source, "chat_id", "") or getattr(event.source, "user_id", "") or "").strip()
+        if not chat_id:
+            return False
+        from urllib.parse import quote
+        try:
+            async with self._bridge_req("get", f"presence?chatId={quote(chat_id, safe='')}", 2) as resp:
+                if resp.status == 200:
+                    data = await resp.json()
+                    return bool(isinstance(data, dict) and data.get("composing"))
+        except Exception:  # health: allow BLE001 -- presence polling is best-effort and must fail open
+            return False
+        return False
 
     @staticmethod
     def _classify_bridge_message(data: dict[str, Any]) -> MessageType:

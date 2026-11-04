@@ -258,6 +258,51 @@ const logger = pino({ level: 'warn' });
 const messageQueue = [];
 const MAX_QUEUE_SIZE = 100;
 
+// Inbound typing/recording presence tracker (bounded TTL so stuck 'composing' states auto-expire)
+const PRESENCE_TTL_MS = 12_000;
+const chatPresence = new Map();
+const subscribedPresenceChats = new Set();
+
+function _presenceAliasKeys(rawId) {
+  if (!rawId) return [];
+  const raw = String(rawId).trim();
+  if (!raw) return [];
+  const normalized = normalizeWhatsAppId(raw);
+  const bareRaw = raw.split('@')[0].split(':')[0];
+  const bareNorm = (normalized || '').split('@')[0].split(':')[0];
+  return Array.from(new Set([raw, normalized, bareRaw, bareNorm].filter(Boolean)));
+}
+
+function recordChatPresence(id, participant, state) {
+  const now = Date.now();
+  const normalizedState = String(state || '').trim().toLowerCase();
+  for (const key of [..._presenceAliasKeys(id), ..._presenceAliasKeys(participant)]) {
+    chatPresence.set(key, { state: normalizedState, updatedAt: now });
+  }
+}
+
+function clearChatPresence(id, participant) {
+  for (const key of [..._presenceAliasKeys(id), ..._presenceAliasKeys(participant)]) {
+    chatPresence.delete(key);
+  }
+}
+
+function getChatPresence(chatId) {
+  const now = Date.now();
+  for (const key of _presenceAliasKeys(chatId)) {
+    const entry = chatPresence.get(key);
+    if (!entry) continue;
+    const ageMs = now - entry.updatedAt;
+    if (ageMs >= PRESENCE_TTL_MS) {
+      chatPresence.delete(key);
+      continue;
+    }
+    const composing = entry.state === 'composing' || entry.state === 'recording';
+    return { composing, state: entry.state, ageMs };
+  }
+  return { composing: false, state: null, ageMs: null };
+}
+
 // Track recently sent message IDs.  Two purposes:
 //   1. Prevent echo-back loops with media in self-chat mode.
 //   2. (When WHATSAPP_FORWARD_OWNER_MESSAGES=true) distinguish our own
@@ -423,7 +468,17 @@ async function startSocket() {
     },
   });
 
+  subscribedPresenceChats.clear();
   sock.ev.on('creds.update', () => { saveCreds(); lidToPhone = buildLidMap(); });
+
+  sock.ev.on('presence.update', ({ id, presences }) => {
+    if (!presences || typeof presences !== 'object') return;
+    for (const [participantJid, presenceObj] of Object.entries(presences)) {
+      if (presenceObj && presenceObj.lastKnownPresence) {
+        recordChatPresence(id, participantJid, presenceObj.lastKnownPresence);
+      }
+    }
+  });
 
   sock.ev.on('connection.update', (update) => {
     const { connection, lastDisconnect, qr } = update;
@@ -788,6 +843,11 @@ async function startSocket() {
       }
 
       messageStore.remember(msg);
+      clearChatPresence(msg.key.remoteJid, senderId);
+      if (msg.key.remoteJid && !subscribedPresenceChats.has(msg.key.remoteJid)) {
+        subscribedPresenceChats.add(msg.key.remoteJid);
+        Promise.resolve(sock.presenceSubscribe(msg.key.remoteJid)).catch(() => {});
+      }
       // Remember this message's already-downloaded media/text so a later
       // reply to it (even uncaptioned media) can resolve the original
       // content instead of seeing only a stripped-down quoted-message stub.
@@ -1112,6 +1172,15 @@ app.post('/typing', async (req, res) => {
   } catch (err) {
     res.json({ success: false });
   }
+});
+
+// Query inbound typing/recording presence for a chat/sender
+app.get('/presence', (req, res) => {
+  const chatId = String(req.query.chatId || '').trim();
+  if (!chatId) {
+    return res.status(400).json({ error: 'chatId query parameter is required' });
+  }
+  return res.json(getChatPresence(chatId));
 });
 
 // Mark an inbound message as read only after the Python adapter has accepted

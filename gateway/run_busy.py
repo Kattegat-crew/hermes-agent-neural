@@ -550,20 +550,59 @@ class GatewayBusySessionMixin:
 
         self._enqueue_fifo(session_key, event, adapter)
 
-    async def _prepare_busy_steer_text(self, event: MessageEvent) -> str:
-        """Steerable text for a busy follow-up, transcribing voice-message media first.
+    def _enrich_busy_non_voice_media(self, event: MessageEvent, text: str) -> str:
+        """Enrich documents, audio/video files, and images into steerable/redirectable text."""
+        session_key = getattr(event, "_busy_session_key", None)
+        with contextlib.suppress(Exception):
+            if getattr(getattr(self, "config", None), "multiplex_profiles", False) is True:
+                with self._profile_scope_for_source(event.source):
+                    if hasattr(self, "rehome_inbound_media"):
+                        self.rehome_inbound_media(event)
+            elif hasattr(self, "rehome_inbound_media"):
+                self.rehome_inbound_media(event)
+        image_paths, _voice, audio_file_paths, video_paths = [], [], [], []
+        if hasattr(self, "_classify_inbound_media"):
+            with contextlib.suppress(Exception):
+                image_paths, _voice, audio_file_paths, video_paths = self._classify_inbound_media(
+                    event, pending_stt_prepared=True
+                )
+        if hasattr(self, "_prepend_inbound_document_notes"):
+            with contextlib.suppress(Exception):
+                text = self._prepend_inbound_document_notes(event, text).strip()
+        if (audio_file_paths or video_paths) and hasattr(self, "_prepend_inbound_media_file_notes"):
+            with contextlib.suppress(Exception):
+                text = self._prepend_inbound_media_file_notes(text, audio_file_paths, video_paths).strip()
+        if image_paths:
+            if session_key and hasattr(self, "_session_state"):
+                with contextlib.suppress(Exception):
+                    pstate = self._session_state(session_key).persistent
+                    existing_imgs = list(getattr(pstate, "native_image_paths", None) or [])
+                    pstate.native_image_paths = existing_imgs + [p for p in image_paths if p not in existing_imgs]
+            for img_path in image_paths:
+                display_name, agent_path = (
+                    self._inbound_attachment_display_name(img_path)
+                    if hasattr(self, "_inbound_attachment_display_name")
+                    else (os.path.basename(img_path), img_path)
+                )
+                note = f"[The user attached an image: '{display_name}'. It is saved at: {agent_path}.]"
+                text = f"{note}\n\n{text}".strip() if text else note
+        return text
 
-        Steer bypasses the inbound STT queue, so a media-only voice follow-up would otherwise
-        silently degrade to queue mode. Uses the single out-of-band STT choke point, so STT runs at
-        most once per message; on failure the caption (if any) is kept.
-        """
+    async def _prepare_busy_steer_text(self, event: MessageEvent) -> str:
+        """Steerable text for a busy follow-up, enriching voice, document, and media attachments."""
         text = (event.text or "").strip()
-        if not self._pending_event_audio_paths(event):
-            return text
-        enriched_text, successful_transcripts = await self._transcribe_and_echo_pending_voice(
-            event, self._delivery_adapter_for(event.source), event.source, text, log_context="Busy-steer"
-        )
-        return (enriched_text or text).strip() if successful_transcripts else text
+        voice_paths = self._pending_event_audio_paths(event)
+        if voice_paths:
+            enriched_text, successful_transcripts = await self._transcribe_and_echo_pending_voice(
+                event, self._delivery_adapter_for(event.source), event.source, text, log_context="Busy-steer"
+            )
+            if successful_transcripts:
+                text = (enriched_text or text).strip()
+        media_urls = getattr(event, "media_urls", None) or []
+        voice_set = set(voice_paths)
+        if media_urls and any(p not in voice_set for p in media_urls):
+            text = self._enrich_busy_non_voice_media(event, text)
+        return text
 
     def _steer_text_with_origin(self, text: str, event: MessageEvent) -> str:
         """Keep event origin in this injection, never in the cached system prompt."""
@@ -727,22 +766,27 @@ class GatewayBusySessionMixin:
             event.message_type == MessageType.TEXT and not event.media_urls and not event.media_types
         )
         if effective_mode == "steer":
+            event._busy_session_key = session_key  # type: ignore[attr-defined]
             steer_text = await self._prepare_busy_steer_text(event)
-            # Steerable: plain text, OR every attachment is voice media folded into steer_text.
-            # A follow-up qualifies for steering when it is plain text, OR when every attachment is
-            # STT-eligible voice media whose transcript was just folded into steer_text — otherwise a voice
-            # note in steer mode silently degrades to queue mode (#58780).
-            _steer_media_urls = getattr(event, "media_urls", None) or []
-            _steer_all_voice = bool(_steer_media_urls) and (
-                len(self._pending_event_audio_paths(event)) == len(_steer_media_urls)
+            _model_req_ev = getattr(running_agent, "_model_request_active", None)
+            _can_redirect_in_flight = (
+                agent_live
+                and getattr(running_agent, "_supports_active_turn_redirect", False) is True
+                and hasattr(running_agent, "redirect")
+                and not getattr(running_agent, "_executing_tools", False)
+                and type(_model_req_ev).__name__ != "MagicMock"
+                and callable(getattr(_model_req_ev, "is_set", None))
+                and _model_req_ev.is_set() is True
             )
-            if steer_text and (plain_text or _steer_all_voice) and agent_live and hasattr(running_agent, "steer"):
+            if steer_text and _can_redirect_in_flight:
+                redirected = self._redirect_active_turn(running_agent, steer_text, session_key, event)
+            if steer_text and not redirected and agent_live and hasattr(running_agent, "steer"):
                 steered = self._try_agent_verb(
                     running_agent, "steer", steer_text, session_key, event=event
                 )
             if steered:
                 self._fold_into_running_turn(running_agent, session_key, event)
-            else:
+            elif not redirected:
                 effective_mode = "queue"
         elif (
             effective_mode == "interrupt" and plain_text and agent_live
