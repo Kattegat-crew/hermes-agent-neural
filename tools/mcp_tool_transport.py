@@ -592,8 +592,14 @@ class MCPServerTransportMixin:
                 # Without max_sse_event_size the SDK parses each event against httpx2's 1 MiB default,
                 # a tighter second cap under our wire cap: a large tools/list or tool result (an
                 # editor screenshot) failed outright.
-                async with _core.streamable_http_client(url, http_client=http_client,
-                                                        max_sse_event_size=_MCP_HTTP_MAX_BODY_BYTES) as streams:
+                kw = {"http_client": http_client}
+                try:
+                    import inspect
+                    if "max_sse_event_size" in inspect.signature(_core.streamable_http_client).parameters:
+                        kw["max_sse_event_size"] = _MCP_HTTP_MAX_BODY_BYTES
+                except Exception:
+                    pass
+                async with _core.streamable_http_client(url, **kw) as streams:
                     yield streams
         return _owned_client_streams()
 
