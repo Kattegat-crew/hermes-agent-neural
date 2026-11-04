@@ -1,0 +1,37 @@
+# Display por perfil Hermes — bloque limpio para que el bot NO filtre cadena de pensamiento ni comandos
+# Descubierto 26/08/2026: un perfil sin sección `display` cae al default de Discord
+# `tool_progress: "all"` + `tool_preview_length: 40` + `busy_ack_detail: true` → muestra cada tool/command.
+# Copiar este bloque al config.yaml de CADA perfil especializado. Aplica por turno sin reinicio (caché mtime).
+display:
+  compact: false
+  streaming: true
+  final_response_markdown: strip
+  interim_assistant_messages: false
+  tool_progress: false
+  tool_preview_length: 0
+  cleanup_progress: true
+  show_reasoning: false
+  busy_ack_detail: false
+  long_running_notifications: true
+  platforms:
+    telegram:
+      tool_progress: off
+      show_reasoning: false
+      interim_assistant_messages: false
+      tool_preview_length: 0
+      long_running_notifications: true
+    whatsapp:
+      tool_progress: false
+      show_reasoning: false
+      interim_assistant_messages: false
+      long_running_notifications: true
+
+# Verificación (sin reinicio):
+#   python3 - <<'PY'
+#   import sys; sys.path.insert(0,'/opt/hermes')
+#   from gateway.display_config import resolve_display_setting
+#   import yaml
+#   cfg = yaml.safe_load(open('/opt/data/profiles/<slug>/config.yaml'))
+#   print(resolve_display_setting(cfg, 'discord', 'tool_progress'))   # 'off'
+#   print(resolve_display_setting(cfg, 'discord', 'show_reasoning'))  # False
+#   PY

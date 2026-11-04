@@ -1,6 +1,7 @@
 ---
 name: grounded-citations
 description: "Ground answers and documents in cited, verifiable sources."
+tags: [citas, citations, fuentes, grounding, verificacion, fact-check, research]
 version: 1.2.0
 author: Hermes Agent + Teknium
 license: MIT
@@ -9,7 +10,7 @@ metadata:
   hermes:
     tags: [Research, Citations, Grounding, Sources, Web, Reports]
     category: research
-    related_skills: [arxiv, pdf, reddit-reading, rss-feeds, youtube-content]
+    related_skills: [arxiv, pdf, reddit-reading, rss-feeds, youtube-content, research-paper-writing, ocr-and-documents]
 ---
 
 # Grounded Citations
@@ -26,7 +27,7 @@ and `verify --evidence` fails any draft whose cited sources carry no evidence.
 
 This skill covers answers in chat, written documents (markdown, PDF, docx,
 slides), and research reports. It does not cover academic BibTeX pipelines —
-for conference papers use the `arxiv` skill, which this skill
+for conference papers use the `research-paper-writing` skill, which this skill
 feeds (see `references/citation-formats.md`).
 
 ## When to Use
@@ -48,7 +49,7 @@ Mention a URL only if the user would plausibly want the link.
 
 None beyond the standard toolset. `scripts/sources.py` is stdlib-only Python 3.
 Retrieval comes from whatever is configured: `web_search`, `web_extract`,
-`browser_exec`, or `terminal` (curl, CLIs).
+`browser_navigate`, or `terminal` (curl, CLIs).
 
 Ledger location: `$HERMES_HOME/cache/citations/ledger.json` (profile-aware).
 Override per task with `--ledger <path>` or `HERMES_CITATION_LEDGER`.
@@ -58,12 +59,12 @@ Override per task with `--ledger <path>` or `HERMES_CITATION_LEDGER`.
 ```bash
 S=~/.hermes/skills/research/grounded-citations/scripts/sources.py
 
-python "$S" reset                                  # start a clean ledger
-python "$S" add https://example.com/a --title "A"  # prints: [1]
-python "$S" add https://example.com/b --title "B"  # prints: [2]
-python "$S" list                                   # ledger table
-python "$S" render                                 # Sources: block
-python "$S" verify draft.md                        # catch bad citations
+python3 "$S" reset                                  # start a clean ledger
+python3 "$S" add https://example.com/a --title "A"  # prints: [1]
+python3 "$S" add https://example.com/b --title "B"  # prints: [2]
+python3 "$S" list                                   # ledger table
+python3 "$S" render                                 # Sources: block
+python3 "$S" verify draft.md                        # catch bad citations
 ```
 
 `add` is idempotent and URL-normalized: the same page always returns the same
@@ -91,7 +92,7 @@ answer or document. Skip the reset when continuing work whose ids are already
 in a draft — reusing the ledger keeps the numbering stable.
 
 ② **Register every source at retrieval time.** After each `web_search` /
-`web_extract` / `browser_exec` / fetch, pass the URLs to `sources.py add`
+`web_extract` / `browser_navigate` / fetch, pass the URLs to `sources.py add`
 (or pipe the raw JSON through `sources.py ingest`). Do this *before* writing
 prose. Registering later, from memory, is the failure mode this skill exists to
 prevent.
@@ -161,7 +162,7 @@ upgrade from citations to evidence:
 text to a file and attach the sentence(s) that carry each claim:
 
 ```bash
-python "$S" quote 1 --text "Ice is about 9% less dense than liquid water." --from page1.txt
+python3 "$S" quote 1 --text "Ice is about 9% less dense than liquid water." --from page1.txt
 ```
 
 The quote is rejected unless it appears verbatim in the evidence text
@@ -193,8 +194,8 @@ corroboration.
 ④ **Verify with the evidence gate and render the evidence block:**
 
 ```bash
-python "$S" verify report.md --evidence --min-coverage 0.5
-python "$S" render --style evidence --replace-in report.md
+python3 "$S" verify report.md --evidence --min-coverage 0.5
+python3 "$S" render --style evidence --replace-in report.md
 ```
 
 `--evidence` fails the draft if any cited source has no attached quote. The
@@ -247,7 +248,7 @@ and read the `info: stats:` line to see the counts before picking a number.
 ## Verification
 
 ```bash
-python "$S" verify report.md --strict --min-coverage 0.5
+python3 "$S" verify report.md --strict --min-coverage 0.5
 ```
 
 Green means: every `[n]` in the draft exists in the ledger, the Sources block

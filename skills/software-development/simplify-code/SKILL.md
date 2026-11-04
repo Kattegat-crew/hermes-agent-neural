@@ -1,6 +1,7 @@
 ---
 name: simplify-code
-description: "Parallel 4-agent cleanup of recent code changes."
+description: "Use when cleaning up recent code changes in parallel"
+tags: [code-review, cleanup, refactor, delegation, subagentes, parallel, simplify, limpieza]
 version: 1.1.0
 author: Hermes Agent (inspired by Claude Code /simplify)
 license: MIT

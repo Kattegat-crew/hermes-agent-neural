@@ -1,0 +1,153 @@
+---
+name: hermes-vps-update
+description: "Use when updating Hermes Agent on the VPS host."
+tags: [hermes, vps, update, actualizar, upstream, docker, backup, gateway]
+license: MIT
+metadata:
+  author: opencode
+  version: "1.0"
+---
+
+# Actualizar Hermes Agent en VPS (a upstream/main) sin perder config
+
+Patrón para el mantenimiento de instancias de Hermes en hosts remotos: lleva el
+checkout a la última de NousResearch, rearma el gateway Docker y preserva TODA la
+config real (`data/`, `.env`, NaN-Builders, allowlists, perfiles). El Desktop OS
+pide este procedimiento cuando reporta "update hermes on the remote host".
+
+## Disparadores
+
+- «hermes update», «actualizar hermes en el VPS», «update hermes remote host»,
+  «alinear hermes a upstream/main», «actualizar el fork», «estudio semanal de
+  actualizaciones de Hermes».
+
+## Decisión previa OBLIGATORIA: ¿el checkout tiene parches propios?
+
+Antes de tocar nada, medir la divergencia. `reset --hard` / `checkout -B main
+upstream/main` solo son válidos si la respuesta es 0:
+
+```bash
+cd /opt/hermes-agent        # o el checkout objetivo
+MB=$(git merge-base HEAD upstream/main)
+echo "propios: $(git rev-list --count $MB..HEAD) | detrás: $(git rev-list --count HEAD..$(git tag -l 'v0.*' | sort -V | tail -1))"
+git log --oneline $MB..HEAD -- agent hermes_cli gateway tools plugins cron | wc -l
+```
+
+- **0 commits propios** → seguir el procedimiento de abajo (reset a upstream).
+- **>0 commits propios** → **PROHIBIDO** `reset --hard` / `checkout -B main`:
+  borra el fork entero. Usar el replay de parches de
+  `references/fork-upstream-replay.md` (rama nueva desde el tag limpio +
+  `cherry-pick -x` de los commits propios, `rerere` activo).
+
+Caso real (nov-2026, `/opt/hermes-agent`): 56 commits propios de código, base
+`v0.22.0`, 9.000 commits detrás de `v0.22.6`, solape en 67 archivos (49 de
+código). Un `reset --hard` ahí habría borrado DSML guard, glm5.3-flash, memoria
+on-demand, heartbeat efímero, frenos Telegram, Config Shield y `skill_route` —
+ninguna existe upstream.
+
+## Pre-vuelo: backups (obligatorio)
+
+```bash
+# 1. data/ completo (git-ignored, config real)
+rsync -aHA /root/hermes-agent-legacy-docker/data/ /root/hermes-agent-legacy-docker-backups/data-$(date +%Y%m%d-%H%M%S)/
+# 2. .env del root
+cp /root/hermes-agent-legacy-docker/.env /root/hermes-agent-legacy-docker/.env.pre-update-$(date +%Y%m%d-%H%M%S)
+git -C /root/hermes-agent-legacy-docker hash-object .env   # anotar hash para verificar post
+```
+
+## Procedimiento
+
+### 1. Alinear checkout a upstream/main
+
+```bash
+cd /root/hermes-agent-legacy-docker
+git fetch origin && git fetch upstream
+git checkout -B main upstream/main
+git reset --hard upstream/main
+git hash-object .env     # DEBE ser idéntico al hash pre-vuelo
+git check-ignore data    # → data/
+```
+
+Peligro: `git checkout` a `upstream/main` SOBRESCRIBE el `docker-compose.yml`
+personalizado del VPS. Restaurarlo SIEMPRE desde la rama previa:
+
+```bash
+git show release-v0.20.4:docker-compose.yml > /root/hermes-agent-legacy-docker/docker-compose.yml
+```
+
+Luego apuntar `image:` a la imagen construida de la rama main (`hermes-agent`).
+
+### 2. Reinstalar venv host + migrar config
+
+```bash
+cd /root/hermes-agent-legacy-docker
+VIRTUAL_ENV=/opt/hermes-venv uv pip install -e ".[all,dev]"
+/opt/hermes-venv/bin/hermes --version    # debe decir "Up to date"
+
+# migrar la config REAL (HERMES_HOME explícito — sin él apunta a ~/.hermes)
+VIRTUAL_ENV=/opt/hermes-venv HERMES_HOME=/root/hermes-agent-legacy-docker/data \
+  /opt/hermes-venv/bin/python3.11 -c "
+import os; os.environ['HERMES_HOME']='/root/hermes-agent-legacy-docker/data'
+from hermes_cli.config import migrate_config; print(migrate_config(interactive=False))
+"
+```
+
+### 3. Reconstruir el gateway Docker
+
+```bash
+cd /root/hermes-agent-legacy-docker
+docker compose build     # reintentar si falla con `denied` en ghcr (ver Pitfalls)
+docker compose up -d
+```
+
+### 4. Post-verificación
+
+```bash
+/opt/hermes-venv/bin/hermes --version
+VIRTUAL_ENV=/opt/hermes-venv HERMES_HOME=/root/hermes-agent-legacy-docker/data \
+  /opt/hermes-venv/bin/python3.11 -c "import os;os.environ['HERMES_HOME']='/root/hermes-agent-legacy-docker/data';from hermes_cli.config import check_config_version;print('config_version:',check_config_version()[0])"
+cat /root/hermes-agent-legacy-docker/data/gateway_state.json | python3 -m json.tool | grep -A1 '"state"'
+docker exec hermes-agent /opt/hermes/bin/hermes --version
+```
+
+## Pitfalls (anotadas: causa raíz de la operación real)
+
+- **`git checkout upstream/main` sobrescribe `docker-compose.yml` del VPS**: el
+  compose genérico de upstream monta `~/.hermes` y crea `hermes` +
+  `hermes-dashboard`, NO tu `./data`, `.env`, vault, `mcp_tool.py` → contenedores
+  accidentales apuntando a data vacía. **Fix**: restaurar el compose personalizado
+  de la rama previa (mounts `./data`, `.env`, `./tools/mcp_tool.py`, vault,
+  puertos `3000/9119`, `container_name: hermes-agent`, `image: hermes-agent`).
+- **Token `ghcr.io` revocado (en `~/.docker/config.json`)**: rompe el build del
+  `uv` público. **Fix**: backup del config docker, quitar la entrada `ghcr.io`
+  (pull anónimo de imagen pública OK), reintentar el pull por reset de IPv6
+  transitorio.
+- **HERMES_HOME explícito**: sin él, `hermes` del host apunta a `~/.hermes`
+  (default), NO a la data real del gateway (`/root/hermes-agent-legacy-docker/data`).
+- **Migración sin pérdida**: esperar `env_added: []` y `config_added: []`.
+- **Tags de fecha `v2026.M.D` no son versiones**: un regex `v(\d+)\.(\d+)\.(\d+)`
+  los toma como "la última estable" y el informe concluye falsamente
+  "0 commits por detrás". Filtrar `^v0\.(\d+)\.(\d+)$`.
+- **`reset --hard` en un fork con parches propios destruye el trabajo**: verificar
+  primero `git rev-list --count $MB..HEAD` (ver "Decisión previa") — no asumir
+  que todo checkout de Hermes es descartable.
+- **`shared:a2a fatal` (bind 9900)**: pre-existente, no es un retroceso del update.
+
+## Salida
+
+- Archivos tocados y estado post-verificación.
+- Ruta de backups creados.
+- Comandos reales ejecutados.
+- `config_version` y plataformas en `gateway_state`.
+- Cualquier incidente.
+
+## Referencias
+
+- `references/fork-upstream-replay.md` — actualizar un fork con parches propios
+  (replay de parches, medición de solape, ¿upstream ya lo trae?) y cadencia
+  semanal con autorización en dos pasos.
+- `scripts/hermes_upstream_review.py` — informe semanal listo para Discord
+  (≤1900 chars) con veredicto de riesgo; detalle en
+  `/opt/data/logs/hermes-upstream-review-latest.md`.
+- `docs/actualizacion-hermes-vps-2026-08-20.md` — bitácora completa de la operación real.
+- `hermes-desktop-remote-connection/SKILL.md` — diagnóstico de conexión remota Desktop.

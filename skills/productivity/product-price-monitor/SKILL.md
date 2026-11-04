@@ -1,6 +1,7 @@
 ---
 name: product-price-monitor
-description: "Watch product, flight, or listing prices; alert on target."
+description: "Use when watching a price or stock for an alert."
+tags: [precios, monitoring, alertas, cron, ecommerce, vuelos]
 version: 0.1.0
 author: Ben Barclay (benbarclay), Hermes Agent
 license: MIT
@@ -37,7 +38,7 @@ Specify currency, all-in vs pre-tax price, maximum price, availability/stock rul
 
 ### 3. Establish a live baseline, then schedule
 
-Fetch a bounded live result with `web_extract` or `browser_exec` and record retrieval time, source price, fees/taxes, availability, and terms. Do not schedule until one foreground fetch works. Write the watch contract (item, condition, baseline observation) to a state file under `~/.hermes/price-watches/<watch-slug>.json`, then create the job:
+Fetch a bounded live result with `web_extract` or `browser_navigate` and record retrieval time, source price, fees/taxes, availability, and terms. Do not schedule until one foreground fetch works. Write the watch contract (item, condition, baseline observation) to a state file under `~/.hermes/price-watches/<watch-slug>.json`, then create the job:
 
 ```
 cronjob(action="create",

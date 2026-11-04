@@ -1,0 +1,38 @@
+name: open-design
+
+services:
+  open-design:
+    container_name: open-design
+    image: ${OPEN_DESIGN_IMAGE:-ghcr.io/nexu-io/od:latest}
+    restart: unless-stopped
+    environment:
+      NODE_ENV: production
+      NODE_OPTIONS: --max-old-space-size=256
+      OD_PORT: 7456
+      OD_WEB_PORT: 7456
+      # Listen on all interfaces INSIDE the container (only NPM reaches it via the shared docker network)
+      OD_BIND_HOST: 0.0.0.0
+      OD_API_TOKEN: ${OD_API_TOKEN}
+      OD_ALLOWED_ORIGINS: ${OPEN_DESIGN_ALLOWED_ORIGINS:-}
+    volumes:
+      - /opt/open-design/data:/app/.od    # persistent bind-mount (NOT a named volume)
+    read_only: true
+    tmpfs:
+      - /tmp
+    security_opt:
+      - no-new-privileges:true
+    mem_limit: ${OPEN_DESIGN_MEM_LIMIT:-512m}
+    pids_limit: 256
+    healthcheck:
+      test: ["CMD", "wget", "-q", "-O", "/dev/null", "http://127.0.0.1:7456/api/health"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+      start_period: 25s
+    networks:
+      - default
+      - nginx-proxy-manager_proxy
+
+networks:
+  nginx-proxy-manager_proxy:
+    external: true

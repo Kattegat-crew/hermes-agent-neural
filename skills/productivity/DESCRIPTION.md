@@ -1,3 +1,3 @@
 ---
-description: Skills for document creation, presentations, spreadsheets, and other productivity workflows.
+description: Skills for interacting with social platforms and social-media workflows — posting, reading, monitoring, and account operations.
 ---

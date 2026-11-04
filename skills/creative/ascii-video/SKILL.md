@@ -1,6 +1,7 @@
 ---
 name: ascii-video
-description: "ASCII video: convert video/audio to colored ASCII MP4/GIF."
+description: "Use when making colored ASCII video (MP4/GIF)."
+tags: [ascii, video, ffmpeg, generativo, audio-reactivo, arte, terminal, visualizer]
 version: 1.0.0
 author: SHL0MS, Hermes Agent
 license: MIT

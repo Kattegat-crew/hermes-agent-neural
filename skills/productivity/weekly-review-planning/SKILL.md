@@ -1,6 +1,7 @@
 ---
 name: weekly-review-planning
-description: "Weekly reset: commitments, stalled work, next-week plan."
+description: "Use when running a weekly review and planning next week"
+tags: [revision-semanal, weekly-review, planificacion, planning, calendario, tareas, cron]
 version: 0.1.0
 author: Ben Barclay (benbarclay), Hermes Agent
 license: MIT
