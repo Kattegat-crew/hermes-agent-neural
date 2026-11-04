@@ -29,6 +29,7 @@ archivo/carpeta dentro de `/opt/data`; después el gateway (que corre como **uid
 | `insufficient permission for adding an object to repository database .git/objects` | repo bajo `/opt/data/repos/...` | `git` invocado con dueño distinto |
 | `Failed to cache voice: [Errno 13] Permission denied: '/opt/data/audio_cache/audio_*.ogg'` en `gateway.log` | caché de audio entrante | Igual que el primero |
 | Cron job muere con `PermissionError: [Errno 13] Permission denied: '/opt/data/logs/errors.log'` | `/opt/data/logs/*.log` | El cron del host corre `docker exec hermes-agent ...` (**root** dentro del contenedor) y deja el log con dueño `root:root` |
+| `PermissionError: '/opt/hermes-agent-data/tools/facts.json'` al arrancar/adaptador de WhatsApp (plataforma ✗, luego reconecta) | `/opt/hermes-agent-data/tools/facts.json` (hermes-agent-data) | `pm`/update ejecutados como **root** reescriben `facts.json` con dueño `root:root 600`; el gateway (`hermes`) recibe EACCES al abrirlo. Cura: reinicio normal (el gateway reescibe el archivo como `hermes`); prevención: correr pm/update SIEMPRE como `hermes`, nunca root (ver sección abajo) |
 
 ## Diagnóstico (3 comandos)
 
@@ -102,7 +103,63 @@ Reglas de esa línea: `|| true` para que **nunca aborte** el vigía cuando corre
 - Anotar en la bitácora del día qué proceso corrió como root, si se puede identificar (`ps -eo user,comm`),
   para que no vuelva a crear carpetas root dentro de `/opt/data`.
 
+## pm/update como root: drift masivo (caso real 04-nov-2026)
+
+Durante una actualización de Hermes, los procesos `pm` corrieron como **root** (prueba forense: los recibos `logs/update_receipts/pm_*.json` quedaron `root:root`) y reescribieron `tools/facts.json` como root 600 → el adaptador de WhatsApp del gateway recibió EACCES al conectar. El reinicio del gateway curó el archivo puntual (lo reescribe como `hermes`), pero el drift queda en todo el árbol: auditoría encontró **53.773 archivos root en `releases/` y 37.191 en `fleet/`** bajo `hermes-agent-data`, además de recibos y `vault/rclone.conf`.
+
+Reglas:
+- Toda operación `pm`/update/instalación se ejecuta como `hermes` (`sudo -u hermes ...` o sesión del usuario), jamás como root desde el host.
+- Tras cualquier intervención root, medir el drift: `find /opt/hermes-agent-data -user root | wc -l` y normalizar solo los directorios afectados (nunca `chown -R` sobre todo el árbol; ver Pitfalls).
+- Un `Could not back up ... Permission denied` en el arranque del gateway (ej. backup de `config.yaml`) es el mismo patrón: la carpeta destino quedó root-owned.
+
+## Saneamiento masivo post-drift (probado 04-nov-2026, DEV + PROD)
+
+Cuando el drift ya está expandido por el árbol, NO normalizar a ciegas. Separar en dos clases:
+
+**Activas** (el runtime lee/escribe aquí → chown obligatorio): `logs`, `tools`, `installs`,
+`cache`, `home`, `state-snapshots`, `profiles`, `scripts`, `git-mirror`, `engram`,
+`finanzas-casinos`, `bin`, `docs`, `.hermes` + archivos sueltos de la raíz (`config.yaml.bak-*`,
+`facts.json`, `kanban.db*`, `install_id`, `.gateway_state_*.tmp`).
+
+**Pasivas/secretas** (dejar root-owned: es intencional o inofensivo): `releases/`, `fleet/`
+(legibles 755/444), `backups/` (copias de config/.env, deben quedar restringidas), `vault/`
+(secretos como `rclone.conf` 600).
+
+Procedimiento:
+1. **Manifiesto antes de tocar nada** (rollback garantizado):
+   `find $D -user root -not -path ... > /opt/hermes-backups/ownership-manifest-$(date +%Y%m%d).txt`
+2. `chown` solo directorios activos + `chown -R` de `cache` y `git-mirror`.
+3. Borrar locks huérfanos: `find $D/profiles -path '*/.chrome-profile/Singleton*' -delete`.
+4. Verificar con conteo y prueba de escritura real como el usuario runtime:
+   - Conteo real: `find $D ! -readable -type f | wc -l` (esperar 0 en activas; los 2-3 restantes
+     deben ser secretos identificables).
+   - DEV (gateway en host como `hermes`): `su -s /bin/bash hermes -c '[ -w $ruta ] && echo OK'`
+     sobre `facts.json`, `update_receipts`, `cache`, `config.yaml`.
+   - PROD (docker, runtime uid 10000): `docker exec -u 10000 hermes-agent sh -c 'touch ...'`.
+   - Cerrar con health: `curl -s -o /dev/null -w '%{http_code}' http://127.0.0.1:8642/health`.
+
+**Guard permanente** (instalado en DEV): `/opt/hermes-agent-data/scripts/ownership_guard.sh` —
+normaliza solo rutas activas con lista explícita, respeta pasivas/secretos, tiene `--dry-run`.
+Probarlo SIEMPRE con `--dry-run` antes de la ejecución real. Sin cron aprobado, correr manual
+tras cualquier intervención root.
+
+**Variante PROD** (contenedor docker, uid 10000): el patrón se reduce a UN archivo mal dueñado.
+Caso real: `Could not back up /opt/data/config.yaml (good): Permission denied` porque un único
+`backups/config/config.yaml.good.*` quedó `root:root 640` (creado en el arranque del contenedor)
+mientras los demás son `10000:10000`. Fix: `chown 10000:10000` de ese archivo + `install_id`,
+`assets`, `.cache/npm-uid0`, `.cache/uv-uid0`. Antes de chown masivo en PROD, buscar el archivo
+puntual: `ls -la backups/config/ | grep -v 10000`.
+
 ## Pitfalls
+
+- **`find ! -readable` infla el conteo con sockets**: los `Singleton*`/`*.sock` (modo 777) se
+  reportan "no legibles" aunque no bloquean nada. Filtrar SIEMPRE con `-type f` para medir el
+  problema real (ej.: 1.249 reportados → 1.195 reales, y de esos 1.094 eran caché desechable).
+- **Caché raíz ≠ problema**: 1.094 de los no legibles eran `cache/` de sesiones root ya muertas.
+  Chown barato y sin riesgo; NO borrar (el directorio puede estar en uso).
+- Un chown de backup de configuración (`.good.*`, `.bak-*`) cambia quién puede restaurar:
+  en DEV se dejan root-restricted a propósito; normalizar solo si el runtime los escribe.
+- **No usar `sudo`**: no existe en el contenedor. Cualquier receta con `sudo` falla; el camino es `ssh dev`.
 
 - **No usar `sudo`**: no existe en el contenedor. Cualquier receta con `sudo` falla; el camino es `ssh dev`.
 - **No cambiar permisos del árbol completo** (`chown -R /opt/data`) para "arreglar todo": rompe

@@ -170,6 +170,25 @@ exigir `scripts/run_tests.sh` y su salida.
   que todo checkout de Hermes es descartable.
 - **`shared:a2a fatal` (bind 9900)**: pre-existente, no es un retroceso del update.
 
+## Rollback de una actualización fallida
+
+Cuando el upgrade/port rompe el sistema, el procedimiento inverso (snapshot del
+estado malo, reconstrucción del árbol pre-upgrade desde parche de tracked +
+tarball de untracked, restauración de state.db y reinicio canónico) está en
+`references/rollback-failed-upgrade.md`. Incluye el pitfall de los normalizadores
+de config que silencian valores nuevos (`tool_progress_grouping: replace`
+rechazado por v0.22.6 → caía a `accumulate`).
+
+## Auditoría post-deploy por host (lección 04-nov-2026: DEV y PROD divergieron)
+
+Tras un upgrade fallido en DEV y un deploy exitoso de Roshi en PROD, los dos hosts quedaron en estados opuestos. Tres reglas duras extraídas:
+
+- **La conclusión de un host nunca es el estado del otro.** Antes de recomendar revertir/desplegar, verificar EN VIVO en cada host: `docker ps` (imagen exacta), `docker inspect` (StartedAt, RestartCount), health desde dentro del contenedor y plataformas conectadas de `gateway.log` (`Gateway running with N platform(s)`).
+- **Comparar timestamp de la imagen construida vs timestamp de los commits de fix.** Si la imagen se construyó ANTES de los fixes, los huecos están vivos en producción aunque el deploy haya sido «exitoso». Verificar dentro del contenedor: `docker exec hermes-agent grep -n "tool_progress_grouping" /opt/hermes/gateway/display_config.py`.
+- **Verificar que la regresión aplica al host ANTES de proponer revertir.** El rechazo de `replace` en `display_config.py` era irrelevante en PROD porque su config tenía `tool_progress: 'off'`. Revertir un sistema sano por una brecha que su config no ejercita es churn con riesgo propio. Caso real: la sugerencia de revertir PROD se retiró tras revisar su config.
+
+Y no presentar una conclusión vieja como actual: si el deploy de terceros ocurrió DESPUÉS del último chequeo, re-auditar antes de responder (un «PROD está intacto» previo al deploy miente después del deploy).
+
 ## Salida
 
 - Archivos tocados y estado post-verificación.
@@ -183,6 +202,7 @@ exigir `scripts/run_tests.sh` y su salida.
 - `references/fork-upstream-replay.md` — actualizar un fork con parches propios
   (replay de parches, medición de solape, ¿upstream ya lo trae?) y cadencia
   semanal con autorización en dos pasos.
+- `references/rollback-failed-upgrade.md` — rollback de un upgrade fallido:
 - `references/auditoria-replay-tercero.md` — auditar un replay ejecutado por
   otro agente: leer su transcript, cobertura real de commits, paridad funcional
   por keyword y los dos agujeros (modify/delete y working tree sucio).
