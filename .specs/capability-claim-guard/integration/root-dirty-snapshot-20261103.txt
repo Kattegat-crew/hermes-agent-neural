@@ -1,0 +1,52 @@
+# Root dirty snapshot — /opt/hermes-agent @ 9daf7b8fae, captured 2026-11-03T20:01-05
+# 48 entries: 17 modified (16 skills + scripts/backup_audit.py), 31 untracked.
+# sha256 of this listing (below the header): 603fac941b79c668e885a5a49e12a1d682e2971852147d41e5a0bfcf8c86e71b
+# None of these paths appear in the guard diff. Not stashed, not reset, not touched.
+ M scripts/backup_audit.py
+ M skills/core/brain-knowledge-ops/SKILL.md
+ M skills/core/github-workflow/SKILL.md
+ M skills/core/hermes-cron-ops/SKILL.md
+ M skills/core/hermes-fleet-operations/SKILL.md
+ M skills/core/multi-agent-collaboration/SKILL.md
+ M skills/devops/devops-infrastructure/SKILL.md
+ M skills/devops/hermes-desktop-gateway-support/SKILL.md
+ M skills/devops/independent-infra-audit/SKILL.md
+ M skills/devops/multi-profile-cron-reliability/SKILL.md
+ M skills/productivity/escalada-tecnica/SKILL.md
+ M skills/productivity/service-availability-forensics/SKILL.md
+ M skills/specialists/comms/discord-server-admin/SKILL.md
+ M skills/specialists/hermes-internal/discord-reporter/SKILL.md
+ M skills/specialists/hermes-internal/hermes-vps-update/SKILL.md
+ M skills/specialists/marketing/hermes-team-ops/SKILL.md
+ M skills/specialists/media-video/spanish-deliverable-proofreading/SKILL.md
+?? .specs/hermes-update-controller/
+?? docs/skills/lucky-identity.md
+?? scripts/backup_audit.py.bak-ua-20261103-195706
+?? scripts/backup_audit.py.bak2-20261103-195728
+?? skills/core/hermes-cron-ops/references/entrega-foro-discord.md
+?? skills/core/hermes-cron-ops/references/higiene-tags-foro-tickets.md
+?? skills/core/hermes-cron-ops/references/ncl-diario-contrato-pipeline.md
+?? skills/core/hermes-fleet-operations/references/langfuse-fleet-observability.md
+?? skills/core/hermes-fleet-operations/references/pm-dependency-env-recovery.md
+?? skills/core/mapa-de-carpetas/references/
+?? skills/core/multi-agent-collaboration/references/forensic-worktree-recovery.md
+?? skills/core/whatsapp-bridge-operations/references/broadcast-campanas.md
+?? skills/devops/hermes-desktop-gateway-support/references/dashboard-stale-code.md
+?? skills/devops/independent-infra-audit/references/mcg-test-verification.md
+?? skills/specialists/amazon-sp-api-listings/references/account-status-diagnostics.md
+?? skills/specialists/amazon-sp-api-listings/references/au-gst-registration-non-resident.md
+?? skills/specialists/amazon-sp-api-listings/references/image-gallery-uploads.md
+?? skills/specialists/amazon-sp-api-listings/references/published-run-2026-11-03.md
+?? skills/specialists/amazon-sp-api-listings/references/unit-economics-and-sales-watcher.md
+?? skills/specialists/comms/telephony/references/
+?? skills/specialists/hermes-internal/hermes-admin-operations/references/approvals-deny-audit.md
+?? skills/specialists/hermes-internal/hermes-vps-update/references/
+?? skills/specialists/hermes-internal/hermes-vps-update/scripts/
+?? skills/specialists/hybrid-poster/references/bendabal-approved-direction.md
+?? skills/specialists/marketing/brand-art-prompt-briefs/references/
+?? skills/specialists/marketing/hermes-team-ops/references/auditoria-routing-handoffs.md
+?? skills/specialists/marketing/image/references/
+?? skills/specialists/meta-pixel-capi/references/form-idempotency-e2e.md
+?? skills/specialists/meta-pixel-capi/references/lead-idempotency-server.md
+?? skills/specialists/mobile-landing-optimization/references/
+?? skills/specialists/print-asset/references/pil-raster-printables-recipe.md
