@@ -1,5 +1,9 @@
 """Unit tests for the local semantic intent triage classifier."""
 
+import pytest
+
+pytest.importorskip("fastembed", reason="fastembed required for semantic triage tests")
+
 from agent.semantic_triage import SemanticIntentClassifier, classify_semantic_intent
 
 
