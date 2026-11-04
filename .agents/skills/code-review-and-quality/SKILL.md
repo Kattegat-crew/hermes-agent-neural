@@ -94,6 +94,33 @@ or evidence activates that risk. Supporting skills may deepen an axis but may
 not redefine the canonical policy's causality, stage, verdict, or blocking
 rules.
 
+## Modo de Revisión Paralela en Dos Ejes (Estándares vs. Especificación)
+
+Al realizar revisiones exhaustivas de diffs, ramas o pull requests, dispara dos subagentes de revisión en paralelo con contextos aislados para evitar sesgos de confirmación:
+
+### Eje 1: Subagente de Estándares (Standards Sub-agent)
+Evalúa el cumplimiento de las normas del repositorio y la línea base de los 12 olores de código (*code smells*) de Martin Fowler:
+- **Nombre Misterioso (Mysterious Name)**: Funciones, variables o tipos cuyos nombres no revelan su intención ni contenido.
+- **Código Duplicado (Duplicated Code)**: La misma forma lógica repetida en más de un bloque o archivo.
+- **Envidia de Características (Feature Envy)**: Métodos que acceden a los datos de otro objeto más que a los propios.
+- **Grupo de Datos (Data Clumps)**: Conjuntos de parámetros o campos que viajan juntos y deberían formar un tipo/modelo propio.
+- **Obsesión Primitiva (Primitive Obsession)**: Uso de strings o enteros genéricos para representar conceptos clave del dominio.
+- **Switches Repetidos (Repeated Switches)**: Cascadas condicionales recurrentes sobre el mismo tipo que deberían usar polimorfismo o mapas compartidos.
+- **Cirugía con Perdigones (Shotgun Surgery)**: Un cambio lógico que obliga a realizar modificaciones dispersas en múltiples archivos.
+- **Cambio Divergente (Divergent Change)**: Un archivo o módulo que se edita por múltiples razones no relacionadas.
+- **Generalidad Especulativa (Speculative Generality)**: Parámetros, hooks o capas agregadas para necesidades no solicitadas en la especificación.
+- **Cadenas de Mensajes (Message Chains)**: Navegaciones profundas del tipo `a.b().c().d()` que violan la ley de Deméter.
+- **Hombre del Medio (Middle Man)**: Clases o funciones que solo delegan hacia otro componente sin añadir valor.
+- **Legado Rechazado (Refused Bequest)**: Subclases que ignoran o anulan la mayor parte del comportamiento heredado (preferir composición).
+
+### Eje 2: Subagente de Especificación (Spec Sub-agent)
+Evalúa la fidelidad frente a la especificación SDD de origen (`01-spec.md` / `02-design.md`):
+- **Requerimientos Faltantes**: Capacidades o criterios de aceptación exigidos por la especificación que están incompletos o ausentes.
+- **Ampliación de Alcance (Scope Creep)**: Comportamientos o APIs en el diff que no fueron solicitados.
+- **Inversión de Contratos**: Lógica que aparenta estar implementada pero viola los contratos o esquemas definidos en el diseño técnico.
+
+Los resultados se presentan en paralelo: el código que sigue todos los estándares pero resuelve el problema equivocado reprueba en el eje de Especificación; el código que cumple la especificación pero rompe la arquitectura reprueba en el eje de Estándares. Presentar ambos ejes por separado evita que la discusión de estilo opaque la falta de requerimientos de negocio.
+
 ## Completion Check
 
 Before returning:
