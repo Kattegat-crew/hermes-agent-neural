@@ -115,8 +115,14 @@ def avisar(webhook: str, texto: str) -> None:
     if not webhook:
         return
     cuerpo = json.dumps({"content": texto[:1900]}).encode()
+    # Cloudflare delante del CDN de Discord responde 403 (error code 1010) al
+    # User-Agent por defecto de urllib ("Python-urllib/x.y"). Diagnóstico 3-nov-2026:
+    # GET del webhook daba 200 y POST daba 403; con UA de navegador el POST llega.
     req = urllib.request.Request(webhook, data=cuerpo,
-                                 headers={"Content-Type": "application/json"})
+                                 headers={"Content-Type": "application/json",
+                                          "User-Agent": "Mozilla/5.0 (X11; Linux x86_64) "
+                                                        "AppleWebKit/537.36 (KHTML, like Gecko) "
+                                                        "Chrome/120.0 Safari/537.36"})
     try:
         urllib.request.urlopen(req, timeout=20).read()
     except Exception as e:

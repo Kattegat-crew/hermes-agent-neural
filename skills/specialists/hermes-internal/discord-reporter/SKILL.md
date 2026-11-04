@@ -119,6 +119,17 @@ Detalles: [qué se hizo]
 
 Cuando `send_message` no cubre el caso (crear hilos en canales-foro, aplicar tags, reacciones, leer mensajes de vuelta) se usa la REST API directamente. Resolución del token EN ORDEN:
 
+**Vía más corta y verificada (03-nov-2026):** el helper `_discord_token.py` resuelve el token solo, sin `/proc` ni búsquedas:
+```python
+import sys; sys.path.insert(0, '/opt/hermes-agent-data/scripts')
+from _discord_token import discord_token   # import-only: NUNCA ejecutarlo como script
+print(bool(discord_token()), len(discord_token()))   # esperado: True 72
+```
+Con eso el ticket se creó y se verificó en una sola pasada. Añadir `User-Agent: DiscordBot (https://neuralcrewlabs.com, 1)` y `Authorization: Bot <tok>`. Si el helper devuelve vacío, recién entonces bajar a `/proc/<pid>/environ` (paso 3).
+PITFALL de tiempo: `grep -rl DISCORD_BOT_TOKEN /opt/hermes-agent-data` se cuelga (>40 s, timeout) — no barrer el árbol a ciegas, resolver con el helper.
+
+Resolución ordenada (contexto histórico):
+
 1. **NO buscar en archivos**: `DISCORD_BOT_TOKEN` NO está en `/opt/data/.env`, ni en los `.env` de perfil, ni en `config.yaml`. Buscar ahí es un callejón sin salida verificado (28-oct).
 2. **NO usar el bot NCA** (`Missing Access`): solo vive en un servidor de pruebas.
 3. **Fuente correcta**: el entorno del proceso del gateway en vivo — pero OJO: puede haber varios procesos con variables `DISCORD*TOKEN`; verificar identidad con `GET /users/@me` ANTES de usarlo (un token erróneo devuelve 403 incluso ahí, verificado 29-oct):

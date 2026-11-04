@@ -4482,9 +4482,7 @@ class GatewayRunner(
             agent._last_activity_ts = time.time()
             agent._last_activity_desc = "starting new turn (cached)"
             agent._last_activity_provenance = ActivityProvenance.UNKNOWN
-            # Reset the SessionDB flush cursor so the new turn's messages are fully persisted — a stale
-            # value from the previous turn makes `_flush_messages_to_session_db` skip new rows.
-            # See #44327.
+            # Reset the SessionDB flush cursor so the new turn's messages are fully persisted (#44327).
             if hasattr(agent, "_last_flushed_db_idx"):
                 agent._last_flushed_db_idx = 0
         agent._api_call_count = 0
@@ -4493,11 +4491,7 @@ class GatewayRunner(
         self, source: SessionSource, adapter_profile: Optional[str] = None,
     ) -> Optional[str]:
         """Resolve the profile name for an inbound source via configured routes (most specific wins).
-        ``None`` = default/active profile (or, for a secondary adapter, its own profile — the caller
-        stamps it). Gated on ``multiplex_profiles``, since the scoped run only activates under
-        multiplexing; otherwise keys would be profile-namespaced while the agent ran in ``agent:main``.
-        ``adapter_profile`` is the profile owning the receiving bot; only routes declaring it as
-        ``bot_profile`` apply (#104933)."""
+        Gated on ``multiplex_profiles``; only routes matching ``adapter_profile`` apply (#104933)."""
         config = getattr(self, "config", None)
         if not getattr(config, "multiplex_profiles", False):
             return None
@@ -4505,11 +4499,11 @@ class GatewayRunner(
         if not routes:
             return None
         if adapter_profile is None:
-            # Sources built outside ``build_source`` may still carry the receiving adapter as provenance.
             owner = self._transport_owner(source) if callable(getattr(source, "_transport_adapter_ref", None)) else None
             if isinstance(owner, tuple):
                 adapter_profile = owner[1]
         from gateway.profile_routing import ProfileRouteRejected, match_profile_route
+        from hermes_cli.profiles import get_profile_dir, profile_exists, profile_is_standalone
         try:
             matched = match_profile_route(
                 routes, platform=source.platform.value, guild_id=getattr(source, "guild_id", None),
@@ -4517,22 +4511,19 @@ class GatewayRunner(
                 parent_chat_id=getattr(source, "parent_chat_id", None),
                 adapter_profile=adapter_profile, user_id=getattr(source, "user_id", None))
         except Exception as exc:
-            logger.warning(
-                "Rejecting %s/%s: profile route matching failed",
-                source.platform, source.chat_id, exc_info=True)
+            logger.warning("Rejecting %s/%s: profile route matching failed", source.platform, source.chat_id, exc_info=True)
             raise ProfileRouteRejected("matcher") from exc
         if matched:
             try:
                 served = {name for name, _home in _multiplex_profile_homes(config)}
             except Exception as exc:
-                logger.warning(
-                    "Rejecting profile route %r because the served-profile set could not be resolved",
-                    matched.name, exc_info=True)
+                logger.warning("Rejecting profile route %r because the served-profile set could not be resolved", matched.name, exc_info=True)
                 raise ProfileRouteRejected(matched.name) from exc
-            if matched.profile not in served:
-                logger.warning(
-                    "Rejecting profile route %r: target profile %r is not served",
-                    matched.name, matched.profile)
+            if matched.profile not in served and not (
+                adapter_profile is None and source.platform.value in {"whatsapp", "whatsapp_cloud"}
+                and profile_exists(matched.profile) and profile_is_standalone(get_profile_dir(matched.profile))
+            ):
+                logger.warning("Rejecting profile route %r: target profile %r is not served", matched.name, matched.profile)
                 raise ProfileRouteRejected(matched.name)
             return matched.profile
         logger.debug(

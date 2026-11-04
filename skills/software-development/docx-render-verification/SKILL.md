@@ -1,6 +1,6 @@
 ---
 name: docx-render-verification
-description: "Use when QA-ing a DOCX and LibreOffice isn't installed."
+description: "Use when QA-ing or editing an existing .docx deliverable."
 version: 1.0.1
 author: Ragnar
 license: MIT
@@ -19,6 +19,7 @@ metadata:
 - Un entregable DOCX (membrete, informe, contrato) requiere el QA visual del workflow y `libreoffice`/`soffice`/`pdftoppm` no están en el contenedor ni se pueden instalar (agente sin root).
 - Aplica a DOCX de clientes generados por otros skills (p. ej. neuralcrew-letterhead), cuyo paso de verificación asume LibreOffice local.
 - NO aplica si el entorno ya tiene LibreOffice: usar el flujo directo del skill de membrete.
+- **Edición quirúrgica de un DOCX ya aprobado** (tesis, planteamiento, informe): cuando hay que reescribir párrafos concretos sin perder estilos, numeración ni sangrías, y verificar cada cita antes de entregar. Ver `references/edicion-quirurgica-academica.md`.
 
 Patrón para el paso "verificar SIEMPRE con libreoffice→pdftoppm→vision_analyze" cuando el contenedor Hermes **no trae** `libreoffice`/`soffice`/`pdftoppm` y el agente corre como uid no-root (no puede instalar paquetes). Probado 28/08/2026 generando el DOCX de estado de guiones Bingo.
 
@@ -47,6 +48,8 @@ Luego: `vision_analyze` sobre `_preview_pg1.png` y limpiar los previews antes de
 - Montar la ruta del **host** (`/root/hermes-agent-legacy-docker/data/...`): los outputs del contenedor efímero quedan root-owned pero legibles para el agente.
 - **chown de outputs del Docker efímero (03/09):** los archivos que el contenedor `docker run --rm` genera (default root) quedan **root-owned**. Si el flujo siguiente necesita moverse/leerse desde una sesión hermes (uid 10000), hacer `docker exec hermes-agent chown -R hermes:hermes <ruta>` (o `chmod`) ANTES de usarlos — lección directa con el `MEMORY.md` que quedó root:root tras correr comandos curator y bloqueó el write de memoria. No intentar chown como agente no-root.
 - No intentar `apt-get install` desde el agente (no es root) ni `docker exec hermes-agent` (tampoco lo tiene).
+- **QA de contenido, no solo de layout:** cuando `soffice` sí está disponible, `soffice --headless --convert-to pdf` + `pdftotext -layout` permite revisar texto (placeholders, citas colgantes, concordancia) además de la estructura; `scripts/docx_surgical.py check` lo corre en un paso.
+- **Nunca inventar una referencia ni citar los COMENTARIOS de un insumo como si fueran el artículo:** en un RAE el bloque RESUMEN es textual con página, pero los COMENTARIOS son lectura del grupo. Si una cita del texto no tiene entrada en la lista de referencias, atribuir la afirmación a quien la sostiene en el insumo y dejarlo como pendiente en la planilla.
 
 ## Alternativa pandoc/core: MD→DOCX + QA en un solo contenedor
 

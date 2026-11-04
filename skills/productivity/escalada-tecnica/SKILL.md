@@ -52,6 +52,16 @@ El cron `escalation-watcher` corre cada 2 min (job `4561df77e8b8`, script `escal
 
 pending (en pending/) -> processing (reclamado) -> done (con evidencia) | failed (con error)
 
+## Responder a Bob (CLI agent_exchange.py, verificado 2026-11-03)
+
+La forma canonica de dialogar con Bob NO es escribir el JSON a mano: usar el CLI en PROD via SSH.
+
+- **Ticket agente -> Bob:** `ssh prod 'python3 /opt/data/scripts/agent_exchange.py send --from <perfil> --asunto "..." --tarea "$(cat)" --deliver bot-chat:<perfil> --prioridad normal' < archivo.txt` (pasar el texto por stdin evita el quoting infernal). Output esperado: `[exchange] webhook buzon-bob -> HTTP 202` + ruta del ticket.
+- **Subcomandos:** `send` (ticket nuevo a la cola del agente), `reply` (cierra el ticket PROPIO en pending/processing con respuesta y lo mueve a done/failed), `notify` (mensaje one-way Bob -> agente en `from-bob/`; NO sirve para contestar).
+- **Contestar un `buzon.mensaje` libre de Bob:** no hay `reply` posible; la respuesta correcta es un `send` (ticket nuevo) con asunto claro y marca explicita de "no es orden de cambio" si solo es acuerdo/confirmacion.
+- **IDs sin colision:** `_next_id` escanea pending+processing+done+failed antes de asignar el numero del dia; no reutilizar nombres a mano.
+- **Verificacion de entrega real:** el webhook 202 solo confirma el deposito. La entrega cierra cuando `watcher.log` muestra `CLAIMED <perfil>/ticket-....json` (watcher corre cada 2 min); esperar ~3 min y grepear antes de declarar entregado.
+
 ## Ubicaciones en PROD
 
 - Buzon: /opt/data/inbox/<perfil>/{pending,processing,done,failed}/
@@ -66,7 +76,9 @@ pending (en pending/) -> processing (reclamado) -> done (con evidencia) | failed
 - `hermes cron runs` solo registra ejecuciones con stdout (tickets); runs silenciosos no aparecen.
 - API whisper NaN: WAV >~2MB da 413 del proxy nginx -> convertir a MP3 antes. Audio sin voz (-91dB) retorna texto vacio (no es bug); diagnosticar con ffmpeg volumedetect.
 - Segmentos <2 min retornan texto vacio; >52 min retornan 503. Chunk recomendado: 50 min.
-- Claim atomico: shutil.move pending->processing + flock exclusivo evitan doble procesamiento.
+- **Aviso por webhook NO marca como visto.** Cuando llega el push `buzon.mensaje` (via gateway DEV), hay que atenderlo y ademas anexar el nombre del archivo (`msg-....json`) al archivo de estado `state/buzon_from_bob.seen`; si no, el wake-gate de 10 min lo re-entregara y se quemaran tokens en duplicado.
+- **Ruido permanente del watcher:** cada ciclo escupe `carpetas del buzon sin subdir pending/ (sus tickets se ignoran): bob` porque el watcher se queja de su propia carpeta. Ignorarlo en triage; no es sintoma de fallo.
+- **Claim atomico: shutil.move pending->processing + flock exclusivo evitan doble procesamiento.**
 
 ## Lecciones operativas (verificadas en produccion)
 

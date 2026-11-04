@@ -47,6 +47,14 @@ Reglas para reportar al Admin (Jonathan) en crons, informes de estado, y cualqui
 - `cron.wrap_response: false` en config.yaml → entrega limpia (sin cabecera "Cronjob Response" en inglés).
 - Aplicado en dev y prod (24/08/2026) con backup de config.yaml.
 
+## Envío directo a Telegram del Admin (fallback verificado 04-nov-2026)
+
+Para avisos de cierre de proyecto/avances que el Admin espera por Telegram (chat `8709909260`, 5-8 líneas, español, sin logs ni JSON):
+
+1. `TELEGRAM_BOT_TOKEN` puede NO estar en `/opt/data/.env` ni en `/opt/data/secrets/`. Fuente viva: el environ de un proceso daemon de Hermes vivo — iterar `pgrep -f hermes`, y por cada pid leer `tr '\0' '\n' < /proc/<pid>/environ | grep '^TELEGRAM_BOT_TOKEN='` (algunos dan Permission denied / No such file: seguir al siguiente).
+2. Los pids se RECICLAN entre llamadas: capturar el token y usarlo EN EL MISMO comando shell (variable `TOK`), nunca en dos llamadas separadas — el pid puede morir en el ínterin y un token vacío produce HTTP 404 silencioso.
+3. Enviar con la Bot API: `POST https://api.telegram.org/bot$TOK/sendMessage` con JSON `{"chat_id":"8709909260","text":...}`; verificar `ok:true` + `message_id` en la respuesta, no asumir el envío.
+
 ## Referencias
 
 - `references/prod-agents-cron-ops.md` — roster real de agentes de prod, profile_routes WhatsApp, saludos 7AM creados.

@@ -82,9 +82,19 @@ print('Grafo de notas sincronizado exitosamente.')
 "
 ```
 
+**Sincronización escritor↔lector (verificado 2026-11-04):** la re-indexación de producción la hace
+el cron Hermes `brain-graph-update-noche` (3:30am diario) invocando `/opt/data/scripts/run_brain_graph.sh`
+(graphify desde `.venv-graphify`, salida `--out .../graphify-out-v2`). El consultor vivo es
+`/opt/data/tools/memory_graph.py`, que lee `/opt/hermes-agent-data/brain/graphify-out-v2/graph.json`.
+Convivieron un `graphify-out` (v1) y un `graphify-out-v2` y el cron alimentaba el que nadie leía:
+antes de diagnosticar "el grafo está desactualizado", verificar que el `--out` del launcher coincide
+con `GRAPH_PATH` del consultor y revisar `/opt/data/brain/graphify_update.log` (última corrida).
+`memory_graph.py` hace matching LITERAL por tokens, no semántico: una query de varios términos
+falla si ninguna entidad contiene todos los términos, aunque el grafo trate el tema.
+
 ---
 
 ## Gotchas y Errores Críticos
 
 1. **Desincronización de enlaces rotos**: Si renombras una nota en el brain sin actualizar las referencias `[[nota]]` en los demás archivos, los analizadores de grafos generarán nodos huérfanos.
-2. **Duplicación de memorias**: La información táctica y de corto plazo vive en las sesiones de Hermes o en Engram; el Brain (`/opt/data/brain/`) se reserva exclusivamente para conocimiento compuesto a largo plazo (reglas de negocio, clientes, credenciales maestras y arquitectura).
+2. **Duplicación de memorias**: La información táctica y de corto plazo vive en las sesiones de Hermes o en Engram; el Brain (`/opt/data/brain/`) se reserva exclusivamente para conocimiento compuesto a largo plazo (reglas de negocio, clientes, credenciales maestras y arquitectura). Cuando la memoria nativa (`MEMORY.md`) se acerque a su límite, usa la skill `memory-compaction` (inventario por cobertura de destino, gate de cero pérdida y recall multi-fuente) en lugar de vaciarla a mano.

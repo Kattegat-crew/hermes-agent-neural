@@ -92,6 +92,27 @@ del script; probarlo con un canal inválido y exigir `rc≠0`. Para saber si el 
 contexto del scheduler (otro uid/env que tu sesión), usar la sonda `env -i` de
 `notification-delivery-reliability`.
 
+### Pitfall E — publicador sin `?thread_id=` genera un hilo nuevo por corrida (explosión de hilos)
+Symptom: un canal-foro de Discord se llena de hilos duplicados que nacen solos
+(`Informe de Vigia 02-nov`, `Latido flota Hermes`, `vigia-auditoria-2100`, …), con 0–1
+mensaje cada uno. Causa: jobs cuya publicación usa `curl $WH` (webhook Discord) **sin
+`?thread_id=<fijo>`** en la URL → cada corrida crea un hilo nuevo. No es un fallo del
+webhook: es la URL sin ancla.
+Detección: grep `thread_id` en el `jobs.json` de cada publicador (los hay con y sin);
+en DEV (03/11) eran 3: `hermes-maintenance-night` (30 3), `vigia-informe-0800` (0 8),
+`vigia-auditoria-2100` (0 21), todos en perfil vigia. Parchear SOLO uno deja la
+explosión activa por los otros — cubrir TODOS los publicadores.
+Fix: fijar `?thread_id=` en la URL del curl de cada job. Antes de cualquier limpieza
+masiva (script con `--apply`), snapshot reversible:
+```
+D=/opt/data/cache/<tema>/backup-$(date -u +%Y%m%d-%H%M%S); mkdir -p $D
+cp /opt/data/cron/jobs.json $D/jobs-default.json
+for p in /opt/data/profiles/*/cron/jobs.json; do cp $p $D/jobs-$(basename $(dirname $(dirname $p))).json; done
+```
+Y en Discord, antes de borrar hilos "vacíos", verificar contra la API real (token en
+`/opt/data/.env`): un hilo "de 1 mensaje" puede contener una ficha de tarea valiosa; si
+son duplicados exactos, archivar el contenido a disco con sha256 antes de borrar.
+
 ### Cobertura — cada perfil tiene SU `jobs.json`
 `/opt/data/cron/jobs.json` lista solo los jobs del perfil `default`. Un job que vive en
 `/opt/hermes-agent-data/profiles/<perfil>/cron/jobs.json` (ej. vigía) es invisible para

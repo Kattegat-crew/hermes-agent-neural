@@ -39,6 +39,17 @@ Soporte de la topología NeuralCrew: **Desktop Windows → Tailscale → `hermes
 
 Diferencia clave: **"could not reach" = no hubo respuesta (red)**; **"session has expired" = hubo respuesta y fue un rechazo de auth**. No mezclarlas al diagnosticar.
 
+## Antes que nada: ¿el dashboard sirve el código actual?
+
+Caso repetido 4 veces (oct-2026): el checkout se actualiza y el proceso `hermes dashboard`
+sigue vivo con el código anterior. Se ve **idéntico a un problema de red** (no modelos, plugins
+que no conectan, "can't reach that address", timeout de arranque) con el servidor sano por `curl`.
+
+Regla: **si el dashboard responde en el host pero el Desktop no obtiene datos, primero compara
+fecha de arranque del proceso vs. fecha del HEAD del repo** (`git log -1 --format=%ci`). Si el
+proceso es más viejo que el HEAD, no hay nada que diagnosticar en la red: hay que relanzarlo.
+Detalle, comandos y pitfalls en [references/dashboard-stale-code.md](references/dashboard-stale-code.md).
+
 ## Triaje (orden obligatorio)
 
 1. **Gateway arrancado y sano (host):**

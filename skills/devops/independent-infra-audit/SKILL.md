@@ -16,6 +16,7 @@ Support files:
 - `templates/independent-audit-prompt.md` — reusable reviewer prompt (11-check skeleton, prohibitions, verdict format).
 - `scripts/audit_ticker_ownership.sh` — read-only forensics: which ticker owns the cron runs, output-dir permissions, root-owned residue, git state as uid 10000.
 - `references/bingo-calendar-audit-2026-09.md` — worked example: the calendar bingo-sep2026 publication audit and the four findings it produced.
+- `references/mcg-test-verification.md` — MCG-specific test/CI verification: PYTHONPATH 3.14/3.12 contamination, `run-tests.sh` option allowlist, pytest rc/traceback preservation, CI run facts, worktree convention.
 
 ## 1. Golden rule: an audit that writes is worthless
 
@@ -79,6 +80,29 @@ Also check the human-editable sync surface can't overwrite state backwards: if `
 - Check whether a CLI flag can bypass the gate (`--force`): if it exists in the function signature but is not exposed via `argparse`, say so precisely.
 - Note `--dry-run` paths that `return` **before** the approval guard: harmless (dry never publishes), but a green dry-run does not prove the row is publishable.
 - Note crons that are not `no_agent`: a script + agent turn means an LLM with tools runs after the script, and the gate lives in the script, not the prompt.
+
+## Verificar afirmaciones publicadas por OTRO agente (verificado 03-nov-2026)
+
+Cuando el audit consiste en validar lo que otro agente declaró ("publiqué el
+mensaje X, exit 2, sha256 Y"):
+- **Read-back, no confianza en el POST**: releer el artefacto publicado por su
+  id real (`GET /channels/{tid}/messages/{mid}` con token del bot): autor,
+  bot=true, longitud de chars, timestamp y contenido íntegro. Un POST exitoso
+  del reportador no prueba el contenido.
+- **Reproducir códigos de salida EN MEMORIA, sin tocar prod**: importar el
+  módulo con un destino falso (monkeypatch de la función que publica) y
+  confirmar la rama de `main()`/`sys.exit` — nunca fabricar un fallo en vivo
+  contra el destino real.
+- **Interpreter/contexto del cron, no del host**: los scripts de cron corren
+  DENTRO del contenedor `hermes-agent`. `/opt/hermes/.venv/bin/python3` existe
+  en el contenedor y NO en el host; `127.0.0.1:3000-3002` (gateways) escucha
+  solo dentro del contenedor. Un "No such file or directory" o puerto vacío
+  observado desde el host NO es un bloqueo real — es la vista equivocada.
+  Validar `py_compile` y paths con `docker exec hermes-agent ...` (el mismo
+  intérprete que usará el cron) antes de declarar BLOCKED.
+- **Cifras contra fuente, no contra el resumen**: sumar/count los registros de
+  la fuente primaria (JSONL/DB) para la fecha reportada y comparar al peso
+  (ej.: Golden 7 reportes / neto 4.255.374 en historico.jsonl).
 
 ## 6. Deliverable shape
 
