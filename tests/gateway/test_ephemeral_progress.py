@@ -752,3 +752,20 @@ async def test_bubble_cleanup_uses_source_chat_id_not_thread_id():
     cleanup_adapter.delete_message.assert_any_await("-1001234567890", "msg-2")
 
 
+def test_resolve_display_setting_tool_progress_grouping_replace():
+    """Verify tool_progress_grouping accepts and preserves 'replace' mode in display_config normalizer."""
+    from gateway.display_config import resolve_display_setting
+
+    config = {
+        "display": {
+            "platforms": {
+                "discord": {"tool_progress_grouping": "replace"},
+                "telegram": {"tool_progress_grouping": "replace"},
+            }
+        }
+    }
+    assert resolve_display_setting(config, "discord", "tool_progress_grouping") == "replace"
+    assert resolve_display_setting(config, "telegram", "tool_progress_grouping") == "replace"
+
+
+
