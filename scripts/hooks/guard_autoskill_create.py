@@ -274,7 +274,13 @@ def main():
         # permitido: se registra con candidatos para revision posterior
         log({'ts': ts, 'session_id': payload.get('session_id'), 'skill': nombre,
              'veredicto': 'CREAR', 'candidatos': cand, 'corpus': len(clases), 'cache': cacheado})
-        print(digest(clases))
+        # El runtime exige JSON de un hook fail_closed: en la rama de permiso no se
+        # imprime nada (stdout vacio = permitido). El indice de clase queda en disco
+        # para consulta, sin romper el contrato del hook.
+        try:
+            (dir_datos() / 'autoskill_digest.txt').write_text(digest(clases), encoding='utf-8')
+        except Exception:
+            pass
     return 0
 
 
