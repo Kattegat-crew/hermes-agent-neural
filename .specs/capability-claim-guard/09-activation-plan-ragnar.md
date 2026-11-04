@@ -118,14 +118,29 @@ HERMES_HOME=/opt/hermes-agent-data hermes config get agent.capability_claim_guar
 No requiere reinicio: la guarda lee la config por turno (test
 `test_edited_config_is_seen_on_the_next_turn`), y una sesión ya abierta la toma en el turno siguiente.
 
-## 4. Rollback (probado en seco en este card)
+## 4. Rollback (dry-run ejecutado en este card sobre un worktree desechable)
+
+Dry-run real (worktree detached en `9daf`, merge `--ff-only` de la rama integrada → HEAD
+`338d5dfce6` = branch head, árbol limpio), después `git revert --no-edit` de los 5 commits
+(338d5dfce6, 8ccc035c21, 856c93d66a, a8106d317b, cba1f10dbe):
+
+```
+TREE_IDENTICAL=YES      # git diff 9daf..HEAD vacío tras los reverts
+DIRTY=0
+```
+
+Es decir: el rollback de código devuelve el árbol **byte a byte** al estado `9daf`. Worktree de
+prueba eliminado con `git worktree remove --force`; nada quedó colgando.
 
 | Origen | Acción | Efecto |
 |---|---|---|
 | Falso positivo / latencia | `HERMES_HOME=/opt/hermes-agent-data hermes config unset agent.capability_claim_guard.enabled` | OFF en el siguiente turno, **sin reinicio**, sin tocar código |
 | Dashboard | `ln -sfn` al target guardado en `dashboard-current.path` + `systemctl restart hermes-dashboard` | vuelve a `cd397afc64` |
-| Código gateway | `git -C /opt/hermes-agent revert --no-edit <5 commits integrados>` + `systemctl restart hermes-agent` | rama viva vuelve al comportamiento anterior sin destruir el árbol sucio ajeno (`reset --hard` prohibido) |
+| Código gateway | `git -C /opt/hermes-agent revert --no-edit <commits de la integración>` + `systemctl restart hermes-agent` | árbol idéntico a `9daf` (probado); `reset --hard` sigue prohibido por el árbol sucio ajeno |
 | Release nuevo | `git -C /opt/hermes-agent worktree remove <R>` tras repuntar `current` | libera ~800 MB; los commits siguen en la rama |
+
+Nota: tras un rollback por revert, reactivar exige revertir los reverts (o un merge nuevo); no se
+reutiliza el SHA viejo porque el árbol ya no coincide.
 
 Criterio de abort: dos reinicios fallidos, `gateway status` ≠ 0, o cualquier mensaje publicado y
 retractado en el canario → rollback completo por tabla.

@@ -155,5 +155,11 @@ No YAML was hand-edited; the writer is the CLI's atomic config writer.
 ## 7. Rollback of this phase
 
 Nothing deployed, so rollback is local: `git worktree remove` the integration worktree (branch
-keeps the 4 commits) or `git branch -D feat/capability-claim-guard-ragnar`. The reviewed branch
+keeps its commits) or `git branch -D feat/capability-claim-guard-ragnar`. The reviewed branch
 `feat/capability-claim-guard` at `ce34c19c5c` and the root tree are untouched.
+
+The **runtime rollback path was dry-run for real**, not just written down: a throwaway detached
+worktree at `9daf` fast-forwarded to the integration head (`338d5dfce6`) and then
+`git revert --no-edit` over the five commits left `git diff 9daf..HEAD` empty and the tree clean
+(`TREE_IDENTICAL=YES`, `DIRTY=0`); the worktree was removed afterwards. Evidence and the rollback
+table live in `09-activation-plan-ragnar.md` §4.
