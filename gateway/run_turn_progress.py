@@ -31,6 +31,13 @@ if TYPE_CHECKING:  # string annotations only; never imported at runtime (cycle)
 logger = logging.getLogger("gateway.run")
 
 
+@dataclasses.dataclass(frozen=True)
+class _ProgressStatusUpdate:
+    """Heartbeat text and routing metadata consumed by the per-turn progress writer."""
+    text: str
+    metadata: Any = None
+
+
 def _append_progress_repeat_count(message: str, occurrences: int) -> str:
     """Put a repeat counter after a closing code fence on its own line: ```` ``` (×N) ```` is not a
     valid closing fence, so Telegram/Markdown renderers would leave the block open."""
@@ -423,6 +430,9 @@ class GatewayTurnProgressMixin:
             return self.tasks[call_id]
 
         def apply_event(self, raw: Any) -> bool:
+            if isinstance(raw, _ProgressStatusUpdate):
+                self._upsert("__heartbeat__", raw.text)
+                return True
             event_type = raw.get("type") if isinstance(raw, dict) else None
             if event_type not in {"tool.started", "tool.completed"}:
                 return False
@@ -613,9 +623,14 @@ class GatewayTurnProgressMixin:
         flood_pending: bool = False
         # (message_id, text) of bubbles a content reset closed while their update was flood-held.
         owed_bubbles: list = dataclasses.field(default_factory=list)
+        metadata: Any = None
+        heartbeat_update: bool = False
+        suppress_replace_updates: bool = False
+        edit_retry_at: float = 0.0
 
     def _progress_edit_state(self, adapter) -> TurnRunner._ProgressEditState:
         ctx = self._ctx
+        edit_method = getattr(adapter, "edit_message", None)
         len_fn = adapter.message_len_fn if isinstance(adapter, BasePlatformAdapter) else len
         try:
             raw_limit = int(getattr(adapter, "MAX_MESSAGE_LENGTH", 4000) or 4000)
@@ -635,7 +650,8 @@ class GatewayTurnProgressMixin:
             # Leave room for platform quirks / formatting; tiny test adapters keep a usable limit.
             _PROGRESS_TEXT_LIMIT=max(1, raw_limit - (64 if raw_limit > 128 else 0)),
             # Overflow edits pass metadata (Telegram topic/thread routing) only when edit_message takes it.
-            _edit_accepts_metadata=bool(ctx._progress_metadata) and _accepts_keyword(adapter.edit_message, "metadata"),
+            _edit_accepts_metadata=callable(edit_method) and _accepts_keyword(edit_method, "metadata"),
+            metadata=getattr(ctx, "_progress_metadata", None),
         )
 
     async def _edit_progress_message(self, st, message_id: str, content: str):
@@ -644,7 +660,7 @@ class GatewayTurnProgressMixin:
         if getattr(st.adapter, "REQUIRES_EDIT_FINALIZE", False):
             kwargs["finalize"] = True
         if st._edit_accepts_metadata:
-            kwargs["metadata"] = ctx._progress_metadata
+            kwargs["metadata"] = st.metadata
         return await st.adapter.edit_message(**kwargs)
 
     @staticmethod
@@ -666,7 +682,10 @@ class GatewayTurnProgressMixin:
     async def _send_progress_text(self, st, text: str):
         ctx = self._ctx
         result = await st.adapter.send(
-            chat_id=ctx.source.chat_id, content=text, reply_to=ctx._progress_reply_to, metadata=ctx._progress_metadata,
+            chat_id=ctx.source.chat_id,
+            content=text,
+            reply_to=ctx._progress_reply_to,
+            metadata=getattr(st, "metadata", ctx._progress_metadata),
         )
         self._track_progress_result(result)
         return result
@@ -721,6 +740,25 @@ class GatewayTurnProgressMixin:
 
     def _progress_absorb(self, st, raw) -> Any:
         """Fold a queue item into the bubble buffer; returns the line to render this tick."""
+        st.heartbeat_update = isinstance(raw, _ProgressStatusUpdate)
+        if st.heartbeat_update:
+            st.metadata = raw.metadata
+            raw = raw.text
+        else:
+            st.metadata = getattr(self._ctx, "_progress_metadata", None)
+        is_replace = (
+            getattr(self._ctx, "progress_grouping", "accumulate") == "replace"
+            or getattr(st, "progress_grouping", "accumulate") == "replace"
+        )
+        if is_replace:
+            if isinstance(raw, tuple) and len(raw) == 3 and raw[0] == "__dedup__":
+                _, base_msg, count = raw
+                line = f"{base_msg} (×{count + 1})"
+            else:
+                line = str(raw)
+            st.progress_lines = [line]
+            return line
+
         if isinstance(raw, tuple) and len(raw) == 3 and raw[0] == "__dedup__":
             _, base_msg, count = raw
             if not st.progress_lines:
@@ -768,6 +806,11 @@ class GatewayTurnProgressMixin:
         Transient network errors (ConnectError, timeouts) must not disable editing; only permanent
         failures (not found, permissions) set can_edit=False. Flood control backs off but keeps editing.
         """
+        is_replace = getattr(self._ctx, "progress_grouping", "accumulate") == "replace"
+        if is_replace and st.suppress_replace_updates:
+            return True
+        if st.edit_retry_at and time.monotonic() < st.edit_retry_at:
+            return True
         if _in_flood_window(st):
             st.flood_pending = True
             return False
@@ -784,8 +827,19 @@ class GatewayTurnProgressMixin:
                 # bills every call against the open penalty and escalates it (#76494). The buffer
                 # stays intact; a later tick (or the final flush) edits the same bubble.
                 logger.info("[%s] Progress edit flood control, backing off", st.adapter.name)
+                retry_after = getattr(result, "retry_after", None)
+                try:
+                    delay = float(retry_after) if retry_after is not None else 1.5
+                except (TypeError, ValueError):
+                    delay = 1.5
+                st.edit_retry_at = time.monotonic() + max(1.5, min(delay, 300.0))
                 return False
             st.can_edit = False
+            if is_replace:
+                # Once an existing replace bubble cannot be edited, neither heartbeat nor tool
+                # status can safely create a second bubble while the original may remain visible.
+                st.suppress_replace_updates = True
+                return True
             _settle_progress_send(st, await self._send_progress_text(st, msg))
             return True
         # First tool: send all accumulated text as a new message; editing unsupported: just this line.
@@ -793,6 +847,8 @@ class GatewayTurnProgressMixin:
         _settle_progress_send(st, result)
         if result.success and result.message_id:
             st.progress_msg_id = result.message_id
+        if is_replace and not st.can_edit and result.success and result.message_id:
+            st.suppress_replace_updates = True
         return True
 
     async def _deliver_flood_pending_progress(self, st) -> bool:
@@ -827,10 +883,10 @@ class GatewayTurnProgressMixin:
         # each update would be a separate bubble. getattr, not attribute access: duck-typed
         # adapters (test fakes, minimal plugins) may lack edit_message — treated as "can't edit".
         adapter_edit = getattr(type(adapter), "edit_message", None)
-        if adapter_edit is None or adapter_edit is BasePlatformAdapter.edit_message:
-            self._drain_progress_queue()
-            return
+        supports_edit = adapter_edit is not None and adapter_edit is not BasePlatformAdapter.edit_message
         st = self._progress_edit_state(adapter)
+        if not supports_edit:
+            st.can_edit = False
         last_edit_ts = 0.0
         EDIT_INTERVAL = 1.5  # Minimum seconds between edits (Telegram flood control)
         while True:
@@ -846,6 +902,8 @@ class GatewayTurnProgressMixin:
                     continue
                 if self._is_reset_marker(raw):
                     self._reset_progress_bubble(st)
+                    continue
+                if not supports_edit and not isinstance(raw, _ProgressStatusUpdate):
                     continue
                 msg = self._progress_absorb(st, raw)
                 if not await self._roll_progress_overflow_if_needed(st):
