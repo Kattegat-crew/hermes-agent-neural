@@ -71,6 +71,27 @@ ls -la /opt/data/auth.json   # owner root = PermissionError por turno
 grep "No fallback model group" /opt/data/logs/agent.log | tail
 ```
 
+### Aislar TTFT del proveedor vs overhead del runtime (baseline cuantitativa)
+
+Cuando el Admin percibe «todo va lento», separar las 3 capas con 3 medidas
+(sesión nueva, CLI directo, 2026-11-04):
+
+```bash
+H=/opt/hermes-agent/.hermes/bin/hermes
+# 1. arranque sin modelo (overhead de proceso)
+/usr/bin/time -f '%es' $H --version                    # → ~1.3-1.6 s
+# 2. turno sin toolsets (modelo + ensamblado de prompt, sin MCP)
+s=$(date +%s.%N); $H -z "Hola" -t "" >/dev/null; e=$(date +%s.%N)
+awk -v a=$s -v b=$e 'BEGIN{printf "%.1fs\n", b-a}'     # → ~23.8 s
+# 3. turno con toolsets completos (referencia del gateway real)
+# → ~28.2 s
+```
+
+Interpretación: overhead de proceso ≈ medida 1; carga de tools/MCP ≈ medida 3 −
+medida 2 (~4.4 s); el resto (medida 2 − arranque) es TTFT del proveedor. Si el
+TTFT domina (caso real: ~84% de un turno conversacional), el problema se ataca
+cambiando proveedor/modelo, NO tocando el código de Hermes ni desactivando tools.
+
 ## Interpretación y fixes (D-I-V-E: backup de config antes de tocar)
 
 | Dato medido | Causa | Fix |
