@@ -391,11 +391,10 @@ class StreamDeliveryMixin:
                 and not getattr(self, "_ccg_hold_parts", None)
             ):
                 text = text.lstrip("\n")
-        if not text:
-            return
         # Capability Claim Guard S1: judge before publishing — the released prefix is what the
         # surface receives AND what the streamed-text accumulator records, so a held tail is
-        # never counted as already shown.
+        # never counted as already shown. The gate is a no-op on empty text and returns "" while
+        # the head is held, so its result is the only emptiness check this path needs.
         text = self._ccg_stream_gate(text)
         if not text:
             return
