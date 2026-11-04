@@ -839,25 +839,12 @@ def _apply_main_assignment_sync(cfg: dict, provider: str, model: str, base_url: 
     provider_lc = provider.strip().lower()
     endpoint_already_known = (
         provider_lc in {"custom", "local"} and bool(base_url) and _endpoint_known_to_config(cfg, base_url))
-<<<<<<< HEAD
-    model_cfg = _apply_main_model_assignment(cfg.get("model", {}), result, api_key)
+    model_cfg = _apply_main_model_assignment(dict(existing_model_cfg), result, api_key)
     if not (explicit_endpoint and _entry_points_elsewhere(provider_entry, base_url)):
         # A submitted endpoint carries its own key (or none); a ``providers.custom`` block for
         # ANOTHER host shares the selector's name, and hydrating from it would pair the new URL with
         # that host's key. A block for the same host (its ``key_env``) still supplies the credential.
         _resolve_assignment_credentials(model_cfg, provider, provider_entry)
-    cfg["model"] = model_cfg
-
-    new_provider = provider.strip().lower()
-    gateway_tools = _apply_nous_gateway_defaults(cfg) if new_provider == "nous" else []
-    # One route: a model.* key locked by the time the save runs (even after the preflight guard
-    # above, or on its CAS retry) refuses the whole save instead of being omitted from it.
-    with refusing_locked_omissions("model"):
-        save_config(cfg)
-    if new_provider in {"custom", "local"} and base_url and not endpoint_already_known:
-=======
-    model_cfg = _apply_main_model_assignment(dict(existing_model_cfg), result, api_key)
-    _resolve_assignment_credentials(model_cfg, provider, provider_entry)
     if lock_default and locked_default_model:
         # Config Shield: preserve canonical model.default and model.provider on disk
         # while allowing the live Desktop/Web session to switch to the selected model.
@@ -869,10 +856,12 @@ def _apply_main_assignment_sync(cfg: dict, provider: str, model: str, base_url: 
 
     new_provider = provider.strip().lower()
     gateway_tools = _apply_nous_gateway_defaults(cfg) if new_provider == "nous" and not lock_default else []
+    # One route: a model.* key locked by the time the save runs (even after the preflight guard
+    # above, or on its CAS retry) refuses the whole save instead of being omitted from it.
     if not lock_default:
-        save_config(cfg)
+        with refusing_locked_omissions("model"):
+            save_config(cfg)
     if new_provider in {"custom", "local"} and base_url and not endpoint_already_known and not lock_default:
->>>>>>> 5402f60bb8 (feat(security): enforce lock_default_in_config and add Config Shield mutation hook)
         _register_custom_endpoint(base_url, api_key, model)
     # The serve process's boot record may still say "nothing configured"; the chat gates on it.
     reconcile_record()
