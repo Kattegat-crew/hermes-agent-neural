@@ -46,8 +46,9 @@ During this run another actor added 3 more foreign `skills/` entries (`diff` = 3
 
 No conflict markers were produced; `git cherry-pick` reported auto-merge only on
 `agent/agent_runtime_helpers.py`. The reviewed branch was 27 files, +4206 / −14 against its own base;
-this branch is 30 files, +4581 / −14 against `9daf7b8fae` (the 27 plus these three documents), and no
-root feature is dropped.
+this branch is 30 files, +4603 / −14 against `9daf7b8fae` (the 27 plus these three documents), and no
+root feature is dropped. Round 2 (§8) adds the isolation probe and three commits: **31 files,
++4885 / −14**.
 
 ## 4. Invariants checked by reading, not by assumption
 
@@ -136,10 +137,14 @@ gateway adapter, no messaging channel.
 
 ```
 hermes config set agent.capability_claim_guard.enabled true   -> ✓ Set … = True
-probe is_enabled(None)                                        -> enabled: True
+probe is_enabled(<agent con home desechable>)                 -> enabled: True
 hermes config unset agent.capability_claim_guard.enabled      -> ✓ Unset …
-probe is_enabled(None)                                        -> enabled: False (default)
+probe is_enabled(<agent con home desechable>)                 -> enabled: False (default)
 ```
+
+Desde el fix de §8, `is_enabled()` **sin perfil propietario es False por diseño** (fail-closed): el
+probe tiene que pasar un agente con `_session_db` apuntando a un home, como hace
+`probes/ccg_probe_profile_scope.py`.
 
 No YAML was hand-edited; the writer is the CLI's atomic config writer.
 
@@ -161,5 +166,71 @@ keeps its commits) or `git branch -D feat/capability-claim-guard-ragnar`. The re
 The **runtime rollback path was dry-run for real**, not just written down: a throwaway detached
 worktree at `9daf` fast-forwarded to the integration head (`338d5dfce6`) and then
 `git revert --no-edit` over the five commits left `git diff 9daf..HEAD` empty and the tree clean
-(`TREE_IDENTICAL=YES`, `DIRTY=0`); the worktree was removed afterwards. Evidence and the rollback
-table live in `09-activation-plan-ragnar.md` §4.
+(`TREE_IDENTICAL=YES`, `DIRTY=0`); the worktree was removed afterwards. The dry-run was **repeated
+after round 2** at the new head (`93697dbb6e`, eight commits): reverts produced `df238ceca5`,
+`git diff --stat 9daf..HEAD` = 0 lines, `git status --porcelain` = 0 entries, worktree removed.
+Evidence and the rollback table live in `09-activation-plan-ragnar.md` §4.
+
+## 8. Round 2 — review findings closed (2026-11-03)
+
+Two blocking findings and two cosmetic notes from the review of `78ed036423`; all four are closed here.
+
+### B1 — the config gate answered for the ambient profile (fixed, fail-closed)
+
+`_guard_options()` read `load_config_readonly()` whenever the agent had no session DB. That is a live
+path, not a hypothetical: `agent/background_review.py:920` sets `_session_db = None` on the review fork
+(`_persist_disabled = True`) and `:1102` still runs `run_conversation` → `wire_turn`. In a multiplexed
+host (`hermes serve` / dashboard, whose `HERMES_HOME` is the launch profile) the fork therefore
+inherited the **launch profile's** flag — the exact cross-profile leak the gate exists to prevent.
+
+Fix: `_load_config_for_home()` lost its `None`/ambient branch and `_guard_options()` returns the
+disabled fallback when no owning home resolves. The guard now answers only for the profile that owns
+the session; nothing else can turn it on.
+
+Test-first, on the pre-fix tree (`tests/agent/test_capability_claim_guard_config.py`):
+
+```
+FAILED test_is_enabled_without_owning_home_fails_closed_never_ambient
+    assert True is False                      # ambient ENABLED leaked in
+FAILED test_wire_turn_without_owning_home_captures_no_evidence
+    assert <evidence> is None
+=== Summary: 1 files, 2 failed, 7 passed ===
+```
+
+After the fix: `1 files, 9 tests passed, 0 failed`. The pre-existing test that blessed the ambient
+fallback (`test_wire_turn_without_agent_home_uses_the_bound_scope`) was replaced — it encoded the bug.
+`tests/agent/test_capability_claim_guard_evidence.py` gained an owning home in its three flag tests
+(`_session_agent(home)` → `_session_db`), because a bare agent is now OFF by contract.
+
+Runtime probe (`.specs/capability-claim-guard/probes/ccg_probe_profile_scope.py`, 4 throwaway homes,
+never the real profile):
+
+```
+old code (ce34c19c5c):  FAIL fork under ambient ENABLED -> is_enabled: got=True want=False
+                        FAIL fork under ambient ENABLED -> wire_turn evidence: got={...} want=None
+                        4/6 expectations hold                       (exit 1)
+fixed (93697dbb6e):     6/6 expectations hold                      (exit 0)
+```
+
+Suite results on the fixed tree: guard files `8 files, 147 passed`; streaming/turn/regression slice
+`110 files, 997 passed, 6 skipped`; `scripts/check --only health --base 9daf7b8fae` → 21 files,
+0 blocking, 0 advisory.
+
+### B2 — the activation plan used a hand-rolled release (replanned)
+
+§3-E of `09-activation-plan-ragnar.md` now uses the operational mechanism that already exists,
+`releases/dashboard/bin/promote-release <sha>`, and documents what that script does and does not do.
+The old steps (`git worktree add` inside `releases/`, `npm ci`+`npm run build`, hand-written
+`ensure_install_launchers`, hand-made `ln -sfn`) are gone. Two gaps in the script are compensated
+explicitly: it prints `/api/health`'s `commit` but never compares it to the requested SHA (new step
+**E2-bis** asserts equality and rolls back on mismatch), and it needs root privileges
+(`chown -R root:root`, `systemctl restart`) which this host's `sudo -n` does not grant — so the
+executing card must hold root or stop as `needs_input`. Order changed accordingly: merge the code first
+(E1), because promote-release resolves the SHA in `/opt/hermes-agent` and `clone --shared`s from it.
+
+### N1 / N2 — cosmetic
+
+`+4581` in §3 was wrong; the measured diff was `+4603` (now `+4885` after round 2 — see the diffstat in
+§6 of the plan). `agent/stream_delivery.py` had two consecutive `if not text: return`; the first was
+dead (`_ccg_stream_gate` returns `""` on empty input and the text unchanged when disabled), so it was
+removed and the remaining check documented as the single emptiness gate.

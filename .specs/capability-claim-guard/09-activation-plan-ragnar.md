@@ -34,9 +34,11 @@ acierta al prohibir tocar roshi: reiniciarlo sí mataría cards en vuelo (la mí
 Reiniciar el dashboard no las mata.
 
 Otra restricción real: el release `cd397afc64` ya está **viejo** y su `hermes_cli/web_dist` es un
-build no versionado (3.3 MB). Un release nuevo exige construir la SPA en ese checkout
-(`web: node ../scripts/build/web.mjs` → `hermes_cli/web_dist`), no copiar archivos dentro del
-release inmutable ni apuntar `current` a un worktree de desarrollo.
+build no versionado (3.3 MB). Un release nuevo se crea con el mecanismo oficial que ya existe,
+`/opt/hermes-agent-data/releases/dashboard/bin/promote-release <sha>` (§3-E2): construye la SPA
+dentro del release nuevo, lo deja inmutable `root:root`, hace swap atómico de `current`, reinicia la
+unidad y revierte solo si el health falla. **No** se copian archivos dentro del release inmutable ni
+se apunta `current` a un worktree de desarrollo.
 
 ## 3. D-I-V-E (cada paso con su comando exacto)
 
@@ -72,43 +74,74 @@ El backup del config se hace **con la CLI** en la ejecución, nunca editando YAM
 
 ### V — Verificar prerrequisitos
 
-1. `feat/capability-claim-guard-ragnar` limpio y con 488 tests verdes (§5 de `08-integration-ragnar.md`).
-2. `git -C /opt/hermes-agent diff --stat 9daf7b8fae..feat/capability-claim-guard-ragnar` = 30 archivos
-   (27 de código/spec + 3 de documentación), ninguno de `skills/` ni `docs/` (el árbol sucio ajeno no se toca).
-3. `readlink /opt/hermes-agent-data/releases/dashboard/current` y backup legibles.
-4. Espacio en `/opt` ≥ 2 GB (release nuevo ≈ 800 MB + build).
+1. `feat/capability-claim-guard-ragnar` limpio y con la suite en verde (§5 y §8 de
+   `08-integration-ragnar.md`: 147 tests de guarda + 997 del slice streaming/turnos, 0 fallos).
+2. `git -C /opt/hermes-agent diff --stat 9daf7b8fae..feat/capability-claim-guard-ragnar` = 31 archivos
+   (17 de código —`agent/`, `hermes_cli/`—, 8 de tests y 14 de spec, incluidos los documentos de
+   integración y el probe nuevo), ninguno de `skills/` ni `docs/` (el árbol sucio ajeno no se toca);
+   intersección medida con `git status --porcelain` del root = **0 rutas** (59 entradas sucias hoy,
+   todas ajenas).
+3. `readlink /opt/hermes-agent-data/releases/dashboard/current` y backup legibles; existe
+   `/opt/hermes-agent-data/releases/dashboard/bin/promote-release` (root:root) y el card tiene root.
+4. Espacio en `/opt` ≥ 2 GB (release medido 771 MB + build 3.3 MB; `/opt` tenía 24 GB libres).
 
 ### E — Ejecutar (orden obligatorio; flag OFF durante todo el despliegue)
 
-**E1. Dashboard nuevo release (solo si Desktop debe quedar cubierto).**
-```
-NEW=<commit integrado>; R=/opt/hermes-agent-data/releases/dashboard/releases/$NEW
-test ! -e "$R"
-git -C /opt/hermes-agent worktree add --detach "$R" "$NEW"
-( cd "$R/web" && npm ci && npm run build )          # genera hermes_cli/web_dist
-PYTHONPATH="$R" /opt/hermes-agent/.venv/bin/python - <<'PY'
-from pathlib import Path
-from hermes_cli._launchers import ensure_install_launchers
-print(ensure_install_launchers(Path("/opt/hermes-agent-data/releases/dashboard/releases/NEW"), Path("/opt/hermes-agent-data/releases/dashboard/bin")))
-PY
-```
-`ensure_install_launchers` es el API que mintó el launcher actual (no se escribe a mano).
-Cambio de symlink atómico: `ln -sfn "$R" /opt/hermes-agent-data/releases/dashboard/.current.tmp && mv -T /opt/hermes-agent-data/releases/dashboard/.current.tmp /opt/hermes-agent-data/releases/dashboard/current`.
+**Precondición de privilegio.** `promote-release` hace `chown -R root:root` y `systemctl restart`,
+así que corre como root. Hoy `sudo -n` en este host **no** está disponible (pide contraseña): el card
+que ejecute E2 debe tener root (shell de root o `SUDO_PASSWORD`). Si no lo tiene, se detiene y lo
+declara (`needs_input`) — no se improvisan `chown`/`chmod`, no se copia código a mano al release y no
+se apunta `current` a un worktree.
 
-**E2. Código del gateway default.** Merge fast-forward sobre la rama viva del root (los archivos
-sucios son `skills/` y `docs/`, ajenos al diff):
+**E1. Código del gateway default (primero: es la fuente que clona el release).** Merge fast-forward
+sobre la rama viva del root (los archivos sucios son `skills/`, `docs/` y `scripts/backup_audit.py`,
+ajenos al diff; `hermes_cli/web_dist/` está en `.gitignore:93`, así que el build de E2 no ensucia el
+árbol):
 ```
+NEW=$(git -C /opt/hermes-agent rev-parse feat/capability-claim-guard-ragnar)
 git -C /opt/hermes-agent merge --ff-only feat/capability-claim-guard-ragnar
+git -C /opt/hermes-agent rev-parse HEAD | grep -qx "$NEW"
 git -C /opt/hermes-agent status --porcelain | diff - "$B/root.status"   # solo el drift ajeno previo
 ```
 
-**E3. Reinicios con drenaje.**
-- Dashboard: `systemctl restart hermes-dashboard.service` → el daemon de navegador muere; verificar
-  `curl -s -o /dev/null -w '%{http_code}' http://127.0.0.1:9112/` = 302 y `journalctl -u hermes-dashboard -n 40`.
-- Gateway default: primero confirmar hijos idle (sin `ssh/scp/bash` en vuelo) y que WhatsApp lleva
-  > 60 s sin tráfico; después `systemctl restart hermes-agent.service` (TimeoutStopSec 360 s drena
-  cron/WhatsApp), `hermes gateway status` exit 0 y `journalctl -u hermes-agent -n 60 --no-pager`.
-- **No** tocar `hermes-agent-roshi.service`.
+**E2. Dashboard: release nuevo con el mecanismo oficial (sin `--skip-build`).**
+```
+NEW=$(git -C /opt/hermes-agent rev-parse HEAD)
+sudo /opt/hermes-agent-data/releases/dashboard/bin/promote-release "$NEW"
+```
+Lo que el script hace (leído el 2026-11-03, no supuesto):
+1. `rev-parse` del SHA en `/opt/hermes-agent` (de ahí que E1 vaya antes: `clone --shared` sólo ve
+   commits, así que el árbol sucio no importa y no hace falta stash).
+2. Build acotado en el root: `HERMES_WEB_BUILD_LIGHT=1`, `NODE_OPTIONS=--max-old-space-size=2048`,
+   `RAYON_NUM_THREADS=2`, `node scripts/build/web.mjs` → `hermes_cli/web_dist` (node v26.8.2
+   medido). Sin `--skip-build` para no copiar el build viejo que hoy vive en el root.
+3. `git clone --shared /opt/hermes-agent releases/<sha10>` + `git checkout <sha>` + copia de
+   `web_dist` (el release actual, `cd397afc64`, ocupa 771 MB medidos; `/opt` tiene 24 GB libres).
+4. Inmutabilidad: `chown -R root:root`, `chmod 755` dirs / `644` files, `+x` en `hermes`,
+   `activate` y `scripts/*`.
+5. Swap atómico de `current` (symlink temporal + `Path.replace`).
+6. `systemctl restart hermes-dashboard.service` (el cgroup se lleva `browser_harness.daemon`
+   722419: las sesiones de browser control caen, ya avisado en §2).
+7. Health `/api/health` con `ok: true` e **rollback automático** al `current` previo si falla.
+
+**E2-bis. Aserción del commit servido.** El script imprime `version`/`commit` pero **no** los compara
+con el SHA pedido, así que la verificación explícita del requisito ("el daemon nuevo reporta el
+source commit esperado") es este paso, obligatorio:
+```
+SERVED=$(curl -s http://127.0.0.1:9112/api/health | python3 -c 'import json,sys;print(json.load(sys.stdin)["commit"])')
+test "$SERVED" = "$NEW" || { echo "MISMATCH served=$SERVED want=$NEW"; <rollback Dashboard de §4>; exit 1; }
+curl -s -o /dev/null -w 'dashboard=%{http_code}\n' --max-time 5 http://127.0.0.1:9112/   # 302
+/opt/hermes-agent-data/releases/dashboard/bin/hermes --version                          # mismo commit
+```
+El launcher `bin/hermes` vive fuera de los releases y hace `sys.path.insert(0, .../current)`, así que
+sigue el swap sin re-acuñarse; sólo si `--version` no reporta el commit nuevo se re-acuñan con
+`ensure_install_launchers(<release>, <bin>)` (el API que mintó el launcher actual).
+
+**E3. Reinicio del gateway default con drenaje** (el dashboard ya lo reinició E2; **no** reiniciar de
+nuevo ni tocar `hermes-agent-roshi.service`):
+- Confirmar hijos idle (sin `ssh/scp/bash` en vuelo) y que WhatsApp lleva > 60 s sin tráfico.
+- `systemctl restart hermes-agent.service` (TimeoutStopSec 360 s drena cron/WhatsApp),
+  `hermes gateway status` exit 0 y `journalctl -u hermes-agent -n 60 --no-pager`.
 
 **E4. Flag ON (última acción).**
 ```
@@ -121,23 +154,26 @@ No requiere reinicio: la guarda lee la config por turno (test
 ## 4. Rollback (dry-run ejecutado en este card sobre un worktree desechable)
 
 Dry-run real (worktree detached en `9daf`, merge `--ff-only` de la rama integrada → HEAD
-`338d5dfce6` = branch head, árbol limpio), después `git revert --no-edit` de los 5 commits
-(338d5dfce6, 8ccc035c21, 856c93d66a, a8106d317b, cba1f10dbe):
+`93697dbb6e` = branch head, árbol limpio), después `git revert --no-edit` de los 8 commits
+(93697dbb6e, 51479cd8d9, 78ed036423, 338d5dfce6, 8ccc035c21, 856c93d66a, a8106d317b, cba1f10dbe):
 
 ```
-TREE_IDENTICAL=YES      # git diff 9daf..HEAD vacío tras los reverts
-DIRTY=0
+REVERT_HEAD=df238ceca5
+DIFF_VS_BASE=0          # git diff --stat 9daf..HEAD → 0 líneas tras los reverts
+DIRTY=0                 # git status --porcelain vacío
+worktree_removed=YES
 ```
 
 Es decir: el rollback de código devuelve el árbol **byte a byte** al estado `9daf`. Worktree de
-prueba eliminado con `git worktree remove --force`; nada quedó colgando.
+prueba eliminado con `git worktree remove --force`; `git worktree list` vuelve a sus 5 entradas (ninguna
+residual). El mismo dry-run se había hecho antes de la ronda 2 con 5 commits y el mismo resultado.
 
 | Origen | Acción | Efecto |
 |---|---|---|
 | Falso positivo / latencia | `HERMES_HOME=/opt/hermes-agent-data hermes config unset agent.capability_claim_guard.enabled` | OFF en el siguiente turno, **sin reinicio**, sin tocar código |
-| Dashboard | `ln -sfn` al target guardado en `dashboard-current.path` + `systemctl restart hermes-dashboard` | vuelve a `cd397afc64` |
+| Dashboard | Repuntar `current` al target guardado en `dashboard-current.path` con swap atómico (`ln -sfn "$(cat "$B/dashboard-current.path")" .../.current.tmp && mv -T .../.current.tmp .../current`) + `sudo systemctl restart hermes-dashboard.service` | vuelve a `cd397afc64`; verificar `/api/health` → `commit` = `cd397afc64c91e…` |
 | Código gateway | `git -C /opt/hermes-agent revert --no-edit <commits de la integración>` + `systemctl restart hermes-agent` | árbol idéntico a `9daf` (probado); `reset --hard` sigue prohibido por el árbol sucio ajeno |
-| Release nuevo | `git -C /opt/hermes-agent worktree remove <R>` tras repuntar `current` | libera ~800 MB; los commits siguen en la rama |
+| Release nuevo | tras repuntar `current`, `sudo rm -rf /opt/hermes-agent-data/releases/dashboard/releases/<sha10>` | libera ~771 MB (medido en el release actual); los commits siguen en la rama |
 
 Nota: tras un rollback por revert, reactivar exige revertir los reverts (o un merge nuevo); no se
 reutiliza el SHA viejo porque el árbol ya no coincide.
@@ -165,16 +201,35 @@ Casos (Telegram default y Desktop, texto):
    (`["stop", "para", "corta"]`) y **todos los lectores lo ignoran** — es un defecto previo del
    home default, ajeno a esta guarda; no bloquea el canario pero invalida cualquier prueba de
    barge-in por voz hasta que su dueño lo corrija.
-5. **Aislamiento** — `hermes -p heimdall config get agent.capability_claim_guard` (muestra) debe
-   seguir OFF; el flag no se propaga entre homes.
+5. **Aislamiento** — no basta `config get`: la guarda debe responder por el perfil que POSEE la
+   sesión y fallar cerrada cuando no hay perfil propietario. Probe de runtime (sin hogares reales,
+   4 homes desechables; el argumento es la raíz de código a importar):
+```
+# contra el árbol integrado (pre-deploy)
+cd /opt/hermes-agent && python .specs/capability-claim-guard/probes/ccg_probe_profile_scope.py /opt/hermes-agent
+# contra el código servido (post-deploy, el release que apunta current)
+python .specs/capability-claim-guard/probes/ccg_probe_profile_scope.py \
+  /opt/hermes-agent-data/releases/dashboard/current
+# esperado 6/6: fork shape (sin _session_db, forma de agent/background_review.py:920) = OFF,
+# wire_turn del fork = sin evidencia, dueño OFF/ambiente ON = OFF, dueño ON/ambiente OFF = ON,
+# config ilegible = OFF, y sólo homes desechables tocados
+```
+   Además, en el home default `hermes -p heimdall config get agent.capability_claim_guard` debe seguir
+   OFF (el flag no se propaga entre homes) y `is_enabled()` sin agente es **False por diseño**
+   (fail-closed: no hay perfil propietario que responder).
 
 Aceptación: 0 denegaciones falsas, 0 texto retractado, reparaciones ≤ 2, delta de primer chunk
 medido y registrado, y `git status` del root solo con el drift ajeno previo.
 
 ## 6. Evidencia que este card deja lista (sin ejecutar)
 
-- Rama `feat/capability-claim-guard-ragnar` (5 commits: 4 cherry-picks + esta documentación), 488
-  tests verdes, RED 44 fallos en base `9daf`, ruff y health limpios, canario 31/31.
+- Rama `feat/capability-claim-guard-ragnar` (9 commits: 4 cherry-picks, 2 de código de la ronda 2 y 3 de
+  documentación), 147 tests de guarda + 997 del slice streaming/turnos en verde sobre el código final,
+  RED 44 fallos en base `9daf`, ruff y health limpios, canario 31/31.
+- Ronda 2 (hallazgos del review cerrados, detalle en §8 de `08-integration-ragnar.md`): scope fail-closed
+  con RED→GREEN propio, probe de runtime `6/6` contra el fix y `4/6` contra `ce34c19c5c`, rollback
+  re-dry-run en `93697dbb6e` (reverts → `df238ceca5`, diff 0, dirty 0), y §3-E replanteado sobre
+  `promote-release` con la aserción de commit servido que el script no hace.
 - Comandos de §3 verificados en seco: `curl` dashboard = 302 real; `hermes gateway status` exit 0
   real; `config set/unset` probado contra home desechable (no el real).
 - Nada de §3-E se ejecutó: el root sigue en `9daf7b8fae`, sin merge, sin reinicio, sin flag.
