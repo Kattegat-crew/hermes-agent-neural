@@ -1,0 +1,6 @@
+name: soul-survey
+version: "1.0.0"
+description: "Deterministic state machine and WhatsApp native poll dispatcher for /soul client onboarding survey."
+author: "NeuralCrew Labs"
+hooks:
+  - pre_gateway_dispatch
