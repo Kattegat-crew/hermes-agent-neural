@@ -398,6 +398,7 @@ class TestAnnotationCaptureAtDiscovery:
 
     def test_sdk2_snake_case_annotations_supported(self):
         """mcp 2.x models expose ``read_only_hint``; camelCase is only a serialization alias."""
+        pytest.importorskip("mcp")
         from mcp.types import ToolAnnotations
         sdk2 = ToolAnnotations.model_validate({"readOnlyHint": True, "destructiveHint": False})
         assert _mcp_registration._annotation_read_only_hint(SimpleNamespace(annotations=sdk2)) is True
