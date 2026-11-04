@@ -51,6 +51,9 @@ Checklist: root 200 + galería 200 + un video 200 con `Content-Type: video/mp4` 
 
 ## Pitfalls
 - Root del dominio sin index.html → nginx 403 (fue el bug del estreno)
+- **Mapa público vs SSO (verificado 04-nov-2026 con curl externo):** para links a CLIENTES usar SOLO `https://reels.neuralcrewlabs.com/assets/<dir>/...` (NPM proxy_host 20 → reels-web :9020, sin auth — GET 200). NO usar `goldengame.com.co/va/...`: esa location está detrás del Universal Forward Auth (oauth2-proxy, `auth_request` en el server_proxy.conf de NPM) y devuelve 403 a cualquiera sin sesión. Symptom típico: el Admin ve el link "roto" porque su navegador sí tenía sesión. La raíz de reels.neuralcrewlabs.com también conserva SSO (solo el shell ~5 KB sin sesión); solo los paths /assets/ son públicos.
+- Actualizar imágenes ya cacheadas por Cloudflare: añadir query param de versión (`?t=1103b`) a cada URL del HTML; no esperar a que el TTL expire.
+- Empaquetar entregables zip con `python3 -m zipfile -c` o `zipfile.ZipFile(...)`: el binario `zip` no existe en el contenedor DEV.
 - Range requests: nginx los sirve nativo para archivos estáticos; no romper con config rara de gzip en .mp4
 - Cache-Control `no-store` en la galería para evitar HTML viejo
 - Monid necesita frames por URL https de dominio público — publicarlos aquí y usarlos como input

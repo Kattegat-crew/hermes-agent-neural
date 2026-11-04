@@ -83,6 +83,30 @@ Pitfall: el ad account de Paradise NO se deduce del slug — consultarlo con `me
 
 ---
 
+## 2c. Instagram Insights vía Composio + Fuentes de Datos de la Rendición Mensual
+
+Para los videos mensuales de rendición de cuentas se recolectan métricas de IG con el CLI Composio (misma mecánica `composio search "<use case>"` → `composio execute <SLUG> -d '{...}'`).
+
+* **Cuenta IG Paradise verificada (03-nov-2026):** `@thegrandparadiseclubcasino`, `ig_user_id 27571270162548342`, perfil BUSINESS, conexión activa en toolkit `instagram` (sin `--account`, conexión default).
+* **Validación estricta de `INSTAGRAM_GET_USER_INSIGHTS`:** `metric` debe ser ARRAY (`["reach","profile_views"]`) y `since`/`until` deben ser enteros UNIX en segundos. Pasar strings tipo `"2026-10-01"` o el epoch entre comillas falla la validación de schema sin ejecutar nada.
+* **Epoch equivocado = datos del año anterior SIN error:** una ventana mal calculada devuelve silenciosamente la serie del período equivalente previo (2025). Siempre sanity-check de `end_time` de la primera fila contra el mes solicitado.
+* **Omisión silenciosa de métricas:** la API de IG omite las métricas sin datos (en cuentas pequeñas solo suele volver `reach`; `profile_views`, `accounts_engaged`, `follower_count` se omiten). La respuesta trae `composio_execution_message` listando las omitidas — tratarlas como NO DISPONIBLES, nunca como cero.
+* `INSTAGRAM_GET_IG_USER_MEDIA` sí lista las publicaciones del mes (`id,timestamp,media_type,like_count,comments_count,caption`) — base del bloque de redes del informe.
+* **No existe tool de Facebook Page** en el catálogo (`FACEBOOK_GET_PAGE_INFO` → ToolNotFound): métricas de página FB van por Business Suite/navegador o Graph API directa.
+* **Fuente de verdad de cifras de negocio:** el schema canónico está en `motion/facts.json` dentro de cada repo de landing (rama `feature/motion-rendicion-sep2026`): `ventas_netas`, `meta_ventas`, `cumplimiento`, `breb_total` (monto + Nº pagos + ticket promedio), `ads_total` (gasto/leads/vistas/impresiones/clics), `contenido` (piezas/vistas/top reel), `automatizacion_horas`. Replicar ese schema cada mes.
+* **Receta completa de recolección mensual** (incluye query de executions.db en PROD y el workaround del deny rule): `references/rendicion-mensual-fuentes.md`.
+
+### 2d. Métricas de Página FB vía Business Suite (navegador local, verificado 03-nov-2026)
+
+Complementa 2c: al no existir tool de Facebook Page en Composio, la ruta verificada para métricas de página es el **navegador local del Admin** (`browser_exec` con `local=true`, sesión ya logueada de Business Suite). Solo lectura — nunca publicar desde esta vía.
+
+* Al abrir `business.facebook.com/latest/home` puede cargar una página equivocada (venía en "El mural de los desechos", 179 seguidores) — NUNCA reportar métricas de la primera página que cargue; confirmar el asset primero.
+* IDs de página verificados en `business.facebook.com/latest/settings/pages`: **Golden Game Casinos = 820898971112738** (business_id `1382474126828188`). Portfolios en la cuenta: Bajo Costo Colombia, Bendabal Sonico, Golden Game, Licoresdistrisabana, The Grand Paradise Club Casino.
+* Insights: `business.facebook.com/latest/insights/overview?asset_id=<page_id>` — default "últimos 30 días" (4-oct→2-nov al verificarlo); fijar 1–31 del mes exacto con el selector de fechas antes de cerrar la cifra del informe. Golden 30d: 11,9K visualizaciones (+46,4%), 4.988 espectadores únicos (+47,8%), 96 visitas (+33,8%), +1 seguidor neto, 97,4% del alcance desde no seguidores.
+* Para la otra marca: cambiar de portfolio en el selector de Business Suite (la lista se lee del DOM tras abrir el combobox del nombre de página) y repetir en `settings/pages`.
+
+---
+
 ## 3. Protocolo de Creación Segura de Campañas
 
 Los anuncios consumen presupuesto real. **Regla de oro: Todo se crea en estado PAUSADO.**

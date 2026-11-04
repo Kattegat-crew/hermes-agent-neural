@@ -1,8 +1,8 @@
 ---
 name: hermes-team-ops
-description: "Use when who-owns-what or cron handoff between profiles."
-tags: [roster, equipo, crons, handoff, perfiles, profiles, ownership, hermes]
-version: 1.0.0
+description: "Use when who-owns-what, handoffs o ruteo Discord por perfil."
+tags: [roster, equipo, crons, handoff, perfiles, profiles, ownership, hermes, routing, buzones]
+version: 1.1.0
 author: Ragnar
 metadata:
   hermes:
@@ -104,6 +104,45 @@ perfil destino (ej. vigia):
   `state: scheduled` con `next_run_at` futuro.
 - Para confirmar quién es dueño de qué cron: leer `cron/jobs.json` de cada perfil
   (`/opt/data/profiles/<p>/cron/jobs.json`, default usa `/opt/data/cron/jobs.json`).
+
+## Ruteo Discord por perfil y buzones de handoff (auditado en vivo 03-nov-2026)
+
+- **Config:** bloque `profile_routes` en `/opt/hermes-agent-data/config.yaml` (rutas `- name:` con platform/chat_id/profile; canales sin ruta caen al perfil default). Hilos de foro: la ruta del `parent_chat_id` aplica a los hilos hijos.
+- **Despertar por buzón:** vigía `buzon-<agente>` (`*/1 * * * *`) corre `scripts/buzon_handoff_gate.sh <agente>` → `{"wakeAgent": true}` + prompt estructurado SOLO si hay novedad en `/opt/data/inbox/<agente>/from-*/pending`; dedupe por archivo de state. La segunda corrida sobre lo mismo debe dar `false`.
+- **Dos stores de cron:** el default tiene SU vigía (`buzon-ragnar`) en el store central (`/opt/hermes-agent-data/cron/jobs.json`), los demás perfiles en `profiles/<p>/cron/jobs.json` — revisar AMBOS antes de concluir que falta un vigía.
+- **`deliver: discord:<chat_id>` de un cron es entrega de mensajes, NO ruteo de conversación:** un cron del default que entrega al canal de otro perfil es válido; el dueño de la ruta es quien RESPONDE si un humano escribe ahí.
+- **Trampas:** (a) `_log` del gate escribe con `|| true` — si `logs/buzon_handoff.log` queda root:root 644, el gate como hermes no puede escribir y la trazabilidad muere EN SILENCIO (probar `echo test >> <log>` como hermes); (b) el gateway REESCRIBE config.yaml en runtime (estado runtime) — tras un cambio de rutas, re-contar las rutas para confirmar que sobrevivieron; (c) perfiles `gateway.standalone: true` (roshi/vigia) NO son servidos por el gateway multiplexado (warning `gateway.run` en agent.log); (d) ruteo probado sintéticamente ≠ despertar real: la aceptación exige un handoff real observable.
+- **Receta completa de auditoría** (parseo real con `gateway.profile_routing`, 17 casos de matching, prueba de gate con dedupe y limpieza, verificación de vigías y repo): `references/auditoria-routing-handoffs.md`.
+
+## Buzón agente→Bob en PROD: agent_exchange.py (verificado 03-nov-2026)
+
+Canal bidireccional Ragnar/Rochi ↔ Bob sobre el filesystem compartido de PROD.
+Script: `/opt/data/scripts/agent_exchange.py` (correr vía `ssh prod`, solo stdlib).
+
+- **Comandos:** `send` (agente→Bob, crea ticket), `reply` (Bob cierra ticket), `notify` (mensaje libre), `read`/`list`.
+- **send:** `--from ragnar --tarea "..." --asunto "..." [--prioridad alta|normal] --archivo /opt/data/...`. El `--archivo` DEBE existir en PROD bajo `/opt/data/` (validado por el script): escribir antes el adjunto vía SSH, no pasar rutas locales de DEV.
+- **Ciclo:** `inbox/<agente>/pending/` → el cron `escalation-watcher` de PROD lo reclama en ≤5 min → `processing/` → respuesta en `done/|failed/<ticket>.json`. Cada depósito emite webhook best-effort al gateway DEV (ruta `buzon-bob`, HMAC `X-Hub-Signature-256`, `event_type` buzon.nuevo/respuesta/mensaje).
+- **Pitfall (propietario de archivos):** si envías el ticket corriendo el script como root por SSH, el JSON queda `root:root`; hacer `chown 10000:10000` del ticket en `pending/` (el watcher corre como uid 10000 y necesita poder moverlo/borrarlo). Verificar con `ls -la` tras el send.
+- **IDs no se reciclan:** `_next_id` escanea pending+processing+done+failed — si un día se parchea para mirar solo `pending/`, un id cerrado se reutilizaría y sobrescribiría la respuesta anterior.
+- **Las respuestas de Bob (y sus artefactos) aterrizan SOLO en PROD (verificado 03-nov-2026):** el `.md`/JSON de verificación vive en `/opt/hermes/data/inbox/ragnar/from-bob/` de PROD; el buzón local de DEV (`/opt/hermes-agent-data/inbox/ragnar/from-bob/`) queda VACÍO. El webhook `buzon-bob` entrega el JSON del mensaje, pero los archivos referenciados hay que leerlos vía `ssh prod` con la ruta PROD. No concluir "no hay respuesta" desde el buzón local de DEV.
+
+## Push atómico de archivos DEV→PROD (patrón verificado 03-nov-2026)
+
+El usuario `hermes` de DEV tiene `~/.ssh/id_ed25519` autorizada como `root@100.73.30.29` (alias `ssh prod`); canal ya en uso diario por `informe_diario_exacto.py` (línea ~358) — no es teoría, es infraestructura existente.
+
+```bash
+cat local.json | ssh -o BatchMode=yes -o ConnectTimeout=20 root@100.73.30.29 \
+  "cat > /opt/data/<dir>/f.json.tmp \
+   && mv /opt/data/<dir>/f.json.tmp /opt/data/<dir>/f.json \
+   && chown 10000:10000 /opt/data/<dir>/f.json \
+   && ln -sfn f.json /opt/data/<dir>/latest.json"
+```
+
+- `cat > .tmp && mv` en el mismo filesystem = **atómico**: el consumidor (ej. Bob, uid 10000) nunca lee un archivo a medio escribir.
+- Escribir como root obliga al `chown 10000:10000` posterior; `ln -sfn` para un symlink `latest` con nombre estable.
+- Los directorios nuevos en `/opt/data/` que consuma Bob crearlos con `install -d -o 10000 -g 10000 -m 775`.
+- Probar siempre contra `/tmp` (o dir sandbox) antes de tocar el directorio real; validar lectura de regreso (`cat` del archivo remoto) en el mismo comando.
+- **775 vs 755 en dirs `hermes:hermes` de `/opt/data` es cosmético (03-nov-2026):** el grupo `hermes` solo contiene al uid 10000, así que 775 no concede escritura a nadie nuevo; lo que importa es la propiedad (`-o 10000 -g 10000`), no el bit de grupo. No "corregir" 755→775 por homogeneidad sin motivo real.
 
 ## Referencias
 

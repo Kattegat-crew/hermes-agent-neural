@@ -46,7 +46,7 @@ Gateway → infra-postgres 100.73.30.29 (golden_game / paradise_casino) + Active
 | `routing_<code>` | La cadena pública falla | NPM/Cloudflare/DNS | Escalar al Admin con el código exacto |
 | `ap_unhealthy` | ActivePieces no Healthy | Contenedor ap-db/ap-app | `docker ps` + `docker logs ap-app` |
 | `db_error` | No conecta a `golden_game`/`paradise_casino` | infra-postgres caído o credenciales | Revisar `docker ps` (infra-postgres) y el item del vault |
-| `count_N` (webhook_404_6h) | N usuarios reales rebotando 404 en 6 h | Igual que `health_404` | Escalado inmediato + fix de rutas |
+| `count_N` (webhook_404_6h) | N 404 de **POST a una ruta de chat real** en `/webhook/` en 6 h (desde 3-nov el check filtra scanners, GET y probes) | Ruta borrada/renombrada en el gateway **solo si** hubo deploy (verificar `StartedAt`/`RestartCount`); si no hubo deploy, es un cliente real con URL vieja | Triaje scanner primero; si `RestartCount` no cambió, NO correr `deploy.sh`: revisar qué ruta pidió el cliente |
 | `simulado` | Corrida de prueba (`--simulate=`) | — | Ignorar (validación del sistema de alertas) |
 
 ## Procedure
@@ -122,12 +122,29 @@ Flow bono Golden (AP): email VIP → notificación interna → insert Sheets "Re
 
 **Fix pattern (gateado, alta impacto):** agregar a los flows de bono (Golden + Paradise) los pasos ya validados de los flows Sheets: paso CODE "Firmar lead (HMAC)" (crypto-js) + paso HTTP POST firmado con `failureMode: continue_all` y timeout 5s (si DEV está caído no rompe el email del bono). Publicar, probar con lead sintético `QA-`, re-correr el coverage check (cron vs webhook events) y recién ahí degradar la frecuencia del cron.
 
+## Falso positivo de scanner en `webhook_404_6h` (verificado 3-nov-2026)
+
+El check contaba CUALQUIER 404 en `/webhook/` del log de NPM que no fuera curl/Uptime-Kuma/`__*probe__` — y eso incluía a los scanners de internet. Cuatro recurrencias (13-oct, 21-oct, 30-oct, 3-nov) hasta que se endureció el 3-nov-2026 (ver más abajo).
+
+- **El texto "Causa probable" del alerta es un mapeo estático del reason code, no un diagnóstico.** Puede afirmar "el deploy reescribió el archivo y borró handlers" sin que haya existido deploy. Verificar SIEMPRE en vivo antes de escalar o correr `deploy.sh` reactivo.
+- **Triaje en 4 pasos (todo read-only):**
+  1. Descartar deploy: `docker inspect -f '{{.Name}} {{.State.StartedAt}} restarts={{.RestartCount}}' webhook-gateway webhook-paradise` — 0 restarts + `StartedAt` viejo = no hubo deploy.
+  2. Identificar el hit real: filtrar NPM `grep ' 404 ' /data/logs/*.log` excluyendo curl/kuma/probes y mirar URI + IP. Firma de scanner: `GET` + `%2e`/`.env`/`secrets`/`wp-`/`tsconfig` y UA `l9scan`/leakix; suelen golpear varias rutas hermanas (`/back/.env`, `/system/.env`, `/wp-content/.env`) desde la misma IP.
+  3. Confirmar que no se filtró nada: `grep -E '\.env|%2e' <logs> | grep -c ' 200 '` = 0, y probar desde fuera `curl -s -o /dev/null -w '%{http_code}' https://<dominio>/.env` (y `/webhook/.env`) → 404. Los secretos viven en disco con permisos `600` root, fuera del docroot que sirve nginx.
+  4. NO tocar nada: el check se auto-recupera cuando el hit sale de la ventana móvil de 6h (cutoff = now-6h). El `RECOVERED` emite `incident|RECOVERED` y borra `/root/.vigia/audit_incident.json`; el re-alertado ~6h después es el bucket de diseño, no un evento nuevo.
+- **Aplicada 3-nov-2026** en `/root/audit_remote.sh` (backup `/root/audit_remote.sh.bak-404filter-*`): `webhook_404_6h` ahora cuenta **solo `POST` a `^/webhook/<ruta>`** y descarta `GET`, rutas con `%` (encoding de scanner), UAs de scan (`curl`, `Uptime-Kuma`, `leakix`, `l9scan`, `zgrab`, `masscan`, `nuclei`, `nmap`, `sqlmap`, `python-requests`, `go-http-client`, `expanse`, `censys`) y los probes `__vigia_probe__`/`__kuma_probe__`. Ojo con el formato del log de NPM: la línea es `[ts] - <status> <upstream> - POST https <host> "/ruta"`, **no** trae `HTTP/1.1` — parsear el método como token suelto y la ruta como primera cadena entrecomillada; un regex `"METHOD /path HTTP/"` nunca matchea y deja el check en falso-negativo permanente.
+- **Probado con log sintético:** POST 404 a `/webhook/golden-chat` con UA de navegador → cuenta 1; `GET /webhook/%252eenv` de scanner → 0; los 5.778 POST 404 reales del log son todos `/webhook/__kuma_probe__` de Uptime-Kuma (excluidos).
+- **fail2ban (PROD):** activo (v1.0.2) con **un solo jail, `sshd`** — no cubre HTTP, los scanners web nunca se banean y está bien así. Decisión 3-nov-2026 (Admin + Ragnar): **no** agregar jail web — el 404 ya es la respuesta correcta y el log de NPM trae IPs de Cloudflare, un filtro mal armado banea al CDN y tumba los sitios. Reconsiderar solo ante fuerza bruta real y sostenida contra `auth.neuralcrewlabs.com`, y en ese caso usar el `CF-Connecting-IP` real, no el `remote_addr`.
+- **FAILs transitorios aislados:** `ssh_error|sin_conexion` = el wrapper no conectó en `ConnectTimeout=8`s (con load alta de PROD pasa; verificar `uptime` antes de escalar). `chat_000` aislado sin otros FAIL = timeout transitorio del probe de chat. En ambos: re-correr la auditoría y solo escalar si persiste.
+- **Pipeline real:** wrapper DEV `/opt/data/scripts/system-health-audit.py` (SSH `-i /opt/hermes-agent-data/.ssh/id_ed25519`) → `bash /root/audit_remote.sh` en PROD → **14 checks** por corrida (8 por marca: webhook/chat/contract/public, + activepieces + 2 DB + `webhook_404_6h` + vault_sync/backup), no 12.
+
 ## Pitfalls
 
 - No asumir que un webhook firmado publicado "funciona" porque los tests e2e pasaron: identificar en QUÉ flow vive y si los leads reales pasan por ese flow (correlación de timestamps runs ↔ PG).
 - Evidencia efímera: outputs del cron se podan y `agent.log` rota en días — capturar la evidencia original en caliente o documentar el método de reconstrucción.
 
 - No editar NPM, Cloudflare, Coolify ni los landings para "arreglar" `/webhook/*`.
+- Fail2ban en PROD (verificado 3-nov-2026): solo tiene el jail `sshd` (auth.log). No protege tráfico HTTP, y NO agregarle un jail web por un scanner suelto: (a) el scanner ya recibe 404 (respuesta correcta, no gana nada bloquearlo), y (b) el access log de NPM mezcla IPs de Cloudflare edge con IPs reales — un filtro naive banearía el CDN y tumbaría los sitios (NPM ya tiene `real_ip` configurado via `include/ip_ranges.conf`). Solo armarse un jail web con filtro de IP real si aparece fuerza bruta real contra un endpoint de login.
 - No reiniciar contenedores como primer reflejo: si el problema son rutas faltantes, el restart no cambia nada.
 - `docker compose restart` re-ejecuta `node` (el código montado se relee), pero un deploy ordenado es `deploy.sh`.
 - El `/health` **público** devuelve 200 HTML por el fallback del SPA: no es una señal válida; el `/health` del backend devuelve JSON.
@@ -138,6 +155,6 @@ Flow bono Golden (AP): email VIP → notificación interna → insert Sheets "Re
 
 ## Verification
 
-- `bash /root/audit_remote.sh` → 12 líneas `|OK|` y sin bloque `incident`.
+- `bash /root/audit_remote.sh` → 14 líneas `|OK|` y sin bloque `incident`.
 - La salida debe ser byte-estable entre corridas OK (es lo que mantiene silencioso al watchdog).
 - Prueba de fuego: `bash /root/audit_remote.sh --simulate=<check>` → FAIL `simulado` + `incident|OPEN`; y la corrida siguiente → `incident|RECOVERED` y estado limpio en `/root/.vigia/`.

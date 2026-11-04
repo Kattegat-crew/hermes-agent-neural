@@ -266,22 +266,13 @@ def is_network_accessible(host: str) -> bool:
         return True
 
 
-# ``scutil --proxy`` is a fork+exec (~11 ms measured) and resolve_proxy_url runs it on the SEND path —
-# per chunk of an outbound message and per media attachment, not once per adapter. The answer is an
-# OS-level network setting that changes when someone edits Network Settings or joins a VPN, so it is
-# cached briefly rather than per call. The TTL is the staleness a proxy change can suffer; a send that
-# goes out on a stale answer fails and is retried, which is the same outcome as any transient proxy error.
-# No lock: a race costs one extra fork and both answers are equally current.
+# ``scutil --proxy`` is a fork+exec (~11 ms) on the SEND path; memoise briefly (#108440).
 _MACOS_PROXY_TTL_SECONDS = 60.0
 _macos_proxy_cache: tuple[float, str | None] | None = None
 
 
 def _detect_macos_system_proxy() -> str | None:
-    """Read the macOS system HTTP(S) proxy via ``scutil --proxy``: ``http://host:port``
-    when an HTTP(S) proxy is enabled, else None (non-macOS or any subprocess error).
-
-    Memoised for ``_MACOS_PROXY_TTL_SECONDS``; call :func:`reset_macos_proxy_cache` to force a re-read.
-    """
+    """Read the macOS system HTTP(S) proxy via ``scutil --proxy`` (memoised for ``_MACOS_PROXY_TTL_SECONDS``)."""
     global _macos_proxy_cache
 
     if sys.platform != "darwin":
@@ -319,8 +310,7 @@ def reset_macos_proxy_cache() -> None:
 
 
 def should_bypass_proxy(target_hosts: str | list[str] | tuple[str, ...] | set[str] | None) -> bool:
-    """True when NO_PROXY/no_proxy matches at least one target host (exact hosts, domain /
-    wildcard suffixes, IP literals, CIDR ranges, optional host:port entries, ``*``)."""
+    """True when NO_PROXY/no_proxy matches at least one target host."""
     return _should_bypass_proxy(target_hosts)
 
 
@@ -328,18 +318,8 @@ def resolve_proxy_url(
     platform_env_var: str | None = None, *,
     target_hosts: str | list[str] | tuple[str, ...] | set[str] | None = None,
     configured: str | None = None) -> str | None:
-    """Proxy URL: *platform_env_var* (e.g. ``DISCORD_PROXY``) first, then the adapter's own YAML
-    value *configured* (``telegram.proxy_url``), then HTTPS_PROXY / HTTP_PROXY / ALL_PROXY (any
-    case), then the macOS system proxy — the latter two only when ``gateway.trust_env`` is true.
-    None when nothing is found or NO_PROXY matches a target.
-
-    *platform_env_var* is a per-adapter, per-profile-configurable setting (each proxy URL can
-    embed credentials, e.g. ``http://user:pass@host``) so it is read scope-aware: under a
-    secondary multiplex profile it comes from that profile's own ``.env``, not the shared
-    process env another profile's ``TELEGRAM_PROXY``/``DISCORD_PROXY``/etc. may hold; the YAML
-    value is the same profile's, so a secondary keeps its configured route without any env
-    bridge (#108440). The generic ``HTTPS_PROXY``/``HTTP_PROXY``/``ALL_PROXY`` fallback stays a raw
-    process-env read — those are OS/system-level network settings, not a per-profile Hermes concept."""
+    """Proxy URL: *platform_env_var* (scoped) first, then *configured* YAML, then HTTPS/HTTP/ALL_PROXY
+    or macOS system proxy (when ``gateway.trust_env`` is true); None when NO_PROXY matches (#108440)."""
     from gateway.platforms._shared import get_scoped_secret as _get_scoped_proxy_var
     value = (_get_scoped_proxy_var(platform_env_var, "") or "").strip() if platform_env_var else ""
     if not value:
@@ -2520,13 +2500,19 @@ class BasePlatformAdapter(ABC):
     _SPLIT_THRESHOLD: int = 4000
     _text_batch_delay_seconds: float = 0.0
     _text_batch_split_delay_seconds: float = 0.0
-    # Shared cadence for adapters that batch: a quiet period long enough to merge a client-side
-    # split (Telegram's measured envelope), short enough that a single short message is not
-    # visibly delayed (#44883). Ceilings bound a misconfigured value fed to asyncio.sleep().
+    _text_batch_presence_extend_seconds: float = 0.0
+    _text_batch_hard_cap_seconds: float = 12.0
+    _multimodal_batching: bool = False
+    # Shared cadence for adapters that batch: default 0.3s preserves fast single-message response;
+    # ceilings bound configured values fed to asyncio.sleep() (incl. multi-bubble human bursts).
     _TEXT_BATCH_DEFAULT_DELAY_S: float = 0.3
-    _TEXT_BATCH_MAX_DELAY_S: float = 2.0
+    _TEXT_BATCH_MAX_DELAY_S: float = 10.0
     _TEXT_BATCH_DEFAULT_SPLIT_DELAY_S: float = 1.0
-    _TEXT_BATCH_MAX_SPLIT_DELAY_S: float = 4.0
+    _TEXT_BATCH_MAX_SPLIT_DELAY_S: float = 15.0
+    _TEXT_BATCH_DEFAULT_PRESENCE_EXTEND_S: float = 0.0
+    _TEXT_BATCH_MAX_PRESENCE_EXTEND_S: float = 5.0
+    _TEXT_BATCH_DEFAULT_HARD_CAP_S: float = 12.0
+    _TEXT_BATCH_MAX_HARD_CAP_S: float = 30.0
 
     def _coerce_float_extra(self, key: str, default: float, *, min_value: float = 0.0, max_value: Optional[float] = None) -> float:
         """Float from ``config.extra``; NaN/Inf/negative/unparseable → ``default``; clamped to ``[min_value, max_value]``."""
@@ -2544,12 +2530,27 @@ class BasePlatformAdapter(ABC):
         return parsed
 
     def _configure_text_batch_delays(self) -> None:
-        """Read ``text_batch_delay_seconds`` / ``text_batch_split_delay_seconds`` from ``config.extra`` at the shared cadence."""
+        """Read ``text_batch_*`` and ``multimodal_batching`` from ``config.extra`` at the shared cadence."""
         self._text_batch_delay_seconds = self._coerce_float_extra(
             "text_batch_delay_seconds", self._TEXT_BATCH_DEFAULT_DELAY_S, max_value=self._TEXT_BATCH_MAX_DELAY_S)
         self._text_batch_split_delay_seconds = self._coerce_float_extra(
-            "text_batch_split_delay_seconds", self._TEXT_BATCH_DEFAULT_SPLIT_DELAY_S,
+            "text_batch_split_delay_seconds", max(self._TEXT_BATCH_DEFAULT_SPLIT_DELAY_S, self._text_batch_delay_seconds),
             min_value=self._text_batch_delay_seconds, max_value=self._TEXT_BATCH_MAX_SPLIT_DELAY_S)
+        self._text_batch_presence_extend_seconds = self._coerce_float_extra(
+            "text_batch_presence_extend_seconds", self._TEXT_BATCH_DEFAULT_PRESENCE_EXTEND_S,
+            max_value=self._TEXT_BATCH_MAX_PRESENCE_EXTEND_S)
+        self._text_batch_hard_cap_seconds = self._coerce_float_extra(
+            "text_batch_hard_cap_seconds", max(self._TEXT_BATCH_DEFAULT_HARD_CAP_S, self._text_batch_delay_seconds),
+            min_value=self._text_batch_delay_seconds, max_value=self._TEXT_BATCH_MAX_HARD_CAP_S)
+        self._multimodal_batching = bool((getattr(self.config, "extra", None) or {}).get("multimodal_batching", False))
+
+    def _should_batch_event(self, event: MessageEvent) -> bool:
+        from gateway.platforms.helpers import should_batch_inbound_event
+        return should_batch_inbound_event(self, event)
+
+    async def _is_sender_composing(self, event: MessageEvent) -> bool:
+        """Overridable hook: True when the platform reports the sender is actively typing/recording."""
+        return False
 
     def _event_session_key(self, event: MessageEvent) -> str:
         """Adapter-level session key for ``event``, profile-namespaced like the agent run."""
@@ -2568,21 +2569,19 @@ class BasePlatformAdapter(ABC):
         return self._event_session_key(event)
 
     def _enqueue_text_event(self, event: MessageEvent) -> None:
-        """Buffer a text event (merging into a pending one) and restart the flush timer."""
+        """Buffer a text/multimodal event (merging into a pending one) and restart the flush timer."""
         if self._drop_unresolved(event):
             return
+        from gateway.platforms.helpers import merge_inbound_batch_event
         key = self._text_batch_key(event)
         existing = self._pending_text_batches.get(key)
         if existing is None:
             existing = self._pending_text_batches[key] = event
+            existing._batch_first_ts = time.monotonic()  # type: ignore[attr-defined]
+            existing._batch_chunk_count = 1  # type: ignore[attr-defined]
+            existing._last_chunk_len = len(event.text or "")  # type: ignore[attr-defined]
         else:
-            if event.text:
-                existing.text = _append_text(existing.text, event.text)
-            if event.media_urls:
-                existing.media_urls.extend(event.media_urls)
-                existing.media_types.extend(event.media_types)
-            existing.absorb_reply_expected(event)
-        existing._last_chunk_len = len(event.text or "")  # type: ignore[attr-defined]
+            merge_inbound_batch_event(existing, event, _append_text)
         prior_task = self._pending_text_batch_tasks.get(key)
         if prior_task and not prior_task.done():
             prior_task.cancel()
@@ -2590,8 +2589,10 @@ class BasePlatformAdapter(ABC):
 
     def _text_batch_delay_for(self, pending: Optional[MessageEvent]) -> float:
         """Quiet period before ``pending`` is dispatched; near-split chunks wait longer."""
+        from gateway.platforms.helpers import resolve_batch_params_for_event
+        params = resolve_batch_params_for_event(self, pending)
         last_len = getattr(pending, "_last_chunk_len", 0) if pending is not None else 0
-        return self._text_batch_split_delay_seconds if last_len >= self._SPLIT_THRESHOLD else self._text_batch_delay_seconds
+        return float(params["split_delay"] if last_len >= self._SPLIT_THRESHOLD else params["delay"])
 
     def _pop_text_batch(self, key: str) -> Optional[MessageEvent]:
         """Remove and return the pending batch for ``key`` (adapters with side tables override)."""
@@ -2608,25 +2609,19 @@ class BasePlatformAdapter(ABC):
             await self._dispatch_text_batch(event)
 
     async def _flush_text_batch(self, key: str) -> None:
-        """Wait for the quiet period, then dispatch the batch for ``key``.
-
-        Two races share this body. (1) ``_enqueue_text_event`` cancels the prior flush task
-        on each new chunk; when ``Task.cancel()`` lands after ``sleep()`` already completed,
-        CancelledError is delivered at the *next* await — after a superseded task would have
-        popped the event, so the successor finds nothing and the message is lost. The identity
-        check therefore runs synchronously between the sleep and the pop. (2) A cancel that
-        lands while the dispatch is in flight would abort the agent turn (#12444), so the
-        dispatch is shielded and the outer CancelledError swallowed."""
+        """Wait for the quiet period (plus optional composing presence extension), then dispatch ``key``."""
+        from gateway.platforms.helpers import await_batch_quiet_and_presence
         current_task = asyncio.current_task()
         try:
-            await asyncio.sleep(self._text_batch_delay_for(self._pending_text_batches.get(key)))
+            if not await await_batch_quiet_and_presence(self, key, current_task):
+                return
             owner = self._pending_text_batch_tasks.get(key)
             if owner is not None and owner is not current_task:
                 return
             event = self._pop_text_batch(key)
             if event is None:
                 return
-            logger.info("[%s] Flushing text batch %s (%d chars)", self.name, key, len(event.text or ""))
+            logger.info("[%s] Flushing text batch %s (%d chars, %d media)", self.name, key, len(event.text or ""), len(event.media_urls or ()))
             await asyncio.shield(self._dispatch_text_batch(event))
         except asyncio.CancelledError:
             pass

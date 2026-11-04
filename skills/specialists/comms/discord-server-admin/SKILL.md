@@ -56,6 +56,15 @@ El gateway de Hermes enruta por **canal** (`thread > chat_id > guild > default`)
 - `scripts/discord_list_channels.py` — lista guilds/canales con token+UA correctos.
 - `scripts/discord_create_channels.py` — crea N canales de texto bajo una categoría; devuelve IDs.
 
+## Foros e hilos (verificado 03/11/2026)
+
+Un foro (type 15) se crea igual que un canal de texto: `POST /guilds/{guild_id}/channels` con `{"name":"digital-expressions","type":15,"parent_id":"<category>"}`. Los hilos de un foro son "posts":
+
+1. **Crear hilo/post:** `POST /channels/{forum_id}/threads` con `{"name":"🛒 ventas","message":{"content":"descripción"},"auto_archive_duration":10080}` → devuelve el thread object con su `id`. Si `available_tags` está vacío (foro recién creado), no enviar `applied_tags`.
+2. **Evitar duplicados:** listar primero con `GET /guilds/{guild_id}/threads/active` y filtrar `parent_id == forum_id` en Python.
+3. **Postear dentro de un hilo:** el `thread_id` funciona como cualquier channel_id — `POST /channels/{thread_id}/messages`. Así un cron/watcher escribe en hilos específicos (ventas, devoluciones) sin pasar por el canal general.
+4. Archivar 10080 = 7 días.
+
 ## Limpieza masiva de mensajes (borrado retroactivo, verificado 26/10/2026)
 
 Para pedidos tipo "limpia los mensajes de X en este canal":
@@ -65,6 +74,24 @@ Para pedidos tipo "limpia los mensajes de X en este canal":
 3. **Borrado en lotes paralelos:** `tool_call` con ~8-10 invocaciones por lote. Los 429 (rate-limit, `retry_after` < 1s) NO son fallo: reencolar esos message_id en un lote siguiente y reintentar hasta 0 pendientes. Llevar contador exacto borrados/pendientes.
 4. **Verificación final obligatoria:** refetch del canal completo y confirmar 0 coincidencias restantes antes de reportar "limpio". Contar y clasificar (autor, rango de fechas) en el reporte.
 5. Mensajes >14 días no son borrables vía API (Discord lo impone) — verificar fechas antes de prometer limpieza total.
+
+## Identidad y permisos del bot ANTES de tocar canales (verificado 03/11/2026, Fase 0)
+
+El token disponible en el entorno o en un proceso del gateway puede pertenecer a **otro bot distinto** (p.ej. se extrajo `DISCORD_BOT_TOKEN` de un MCP supervisor y era de `Bob-adminprod`, no de Ragnar). Un 403 por esto NO significa token inválido. Protocolo previo obligatorio a cualquier borrado/archivado de hilos:
+
+1. Identidad: `GET /users/@me` → confirmar username esperado antes de ejecutar.
+2. Permisos: `GET /guilds/{guild_id}/members/@me` + `GET /guilds/{guild_id}/roles` → OR de `permissions` de sus roles y verificar bits: `MANAGE_THREADS = 1<<34`, `MANAGE_CHANNELS = 1<<4`, `ADMINISTRATOR = 1<<3`.
+3. Distinción de errores: `403 code 50013 Missing Permissions` = sin permiso de gestión en el guild; `403 code 50001 Missing Access` = sin acceso al canal/hilo. Ninguno se arregla reintentando: resolver token/permisos primero.
+
+## Higiene de hilos muertos: matriz archivar vs borrar (verificado 03/11/2026)
+
+`message_count` del objeto thread puede devolver 0 aunque el hilo tenga mensajes — el conteo real es `GET /channels/{id}/messages?limit=100` y contar la lista. Decisión por hilo:
+
+- **Duplicado exacto** (comparar `content` completo byte a byte; suelen crearse en el mismo segundo): borrar UNO, conservar el de ID menor.
+- **Evento único huérfano** (1 mensaje, productor ya vencido): borrar.
+- **Alimentado por webhook vivo** (hilo con nombre dinámico tipo `vigia-report-2026-11-03`): **archivar, NO borrar** — el webhook crea uno nuevo por corrida y borrar el existente no lo impide, pero archivar lo saca de la vista sin riesgo. Ver `/hermes-cron-ops` gotcha 15 para el fix de raíz.
+
+Ejecución: `DELETE /channels/{id}` y `PATCH /channels/{id}` con `{"archived": true, "locked": false}`. Verificación obligatoria: borrados → `GET` devuelve `404`; archivados → `thread_metadata.archived == true`.
 
 ## Pitfalls
 

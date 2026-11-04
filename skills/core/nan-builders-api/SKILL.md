@@ -96,10 +96,27 @@ Runner generico (streaming obligatorio): `python3 /opt/data/scripts/nan_reviewer
 
 **Medido 11-sep-2026:** 3 revisiones en 218/250/112 s con veredictos **5/10, 6/10 y 6,5/10** -> 1 bug CRITICO, 5 ALTO y 13 MEDIO/BAJO que el autor no habia visto. Corregirlos subio la suite de 656 a 660 tests sin fallos reales. Leccion: un revisor sin herramientas encuentra bugs reales por LECTURA si le das el codigo y las afirmaciones.
 
+## Rerank: POST /v1/rerank — receta verificada 03-nov-2026 (20/20 HTTP 200)
+
+Modelo: `"rerank"` (Qwen3-Reranker-8B). Ordena documentos por relevancia a una query; NO genera respuestas.
+
+```python
+payload = {"model": "rerank", "query": q, "documents": docs, "top_n": len(docs)}
+# Response 200: {"results": [{"index": <pos original>, "relevance_score": float, "document": {"text": ...}}, ...],
+#                "meta": {"tokens": {"input_tokens": N}}}
+# results ya viene ordenado por relevance_score desc; `index` mapea de vuelta a la lista original.
+```
+
+Invariantes a validar en cada respuesta: `len(results) == len(documents)`, `sorted(r['index']) == range(n)` (permutación válida) y scores finitos. Requiere el mismo header User-Agent de navegador que el resto de la API (Cloudflare 403/1010 sin él). Riesgo de 524 si la tanda es grande: dividir en tandas de ≤20 documentos. Medido en piloto v2 (04-nov-2026): 20 tandas de 20 docs → 20/20 HTTP 200, mediana 1,28 s/tanda, ~9,6k input tokens/tanda (191k totales), sin 524. Pricing: la web declara rerank incluido sin cobro por token; no verificar contra factura — reportarlo como claim del proveedor, no como hecho facturado.
+
+Resolución de credencial reutilizable: `load_key()` de `/opt/data/tools/embed_brain.py` (ejecutar ese módulo con `/usr/bin/python3`, no con el python del runtime — necesita `yaml`).
+
+Recipe de evaluación A/B contra el ordenamiento actual: ver `rag-architect` → `references/reranker_ab_pilot_protocol.md`.
+
 ## Modelos disponibles
 
 - **Chat:** deepseek-v4-flash, qwen3.6, mimo-v2.5, gemma4
 - **Imagen:** flux-2-klein, flux
 - **TTS:** kokoro (⚠️ 500 en español — usar edge-tts)
 - **STT:** whisper
-- **Embeddings:** qwen3-embedding, rerank
+- **Embeddings/Rerank:** qwen3-embedding, rerank (receta arriba)
