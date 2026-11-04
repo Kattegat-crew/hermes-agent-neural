@@ -1,7 +1,12 @@
-"""Independent reviewer probe: S1 prefilter (stream anchors) vs detector patterns."""
-import sys
+"""Independent reviewer probe: S1 prefilter (stream anchors) vs detector patterns.
 
-sys.path.insert(0, "/opt/hermes-agent-data/fleet/worktrees/hermes-agent/capability-claim-guard")
+Usage: python .specs/capability-claim-guard/probes/ccg_probe_s1.py [repo_root]
+"""
+import sys
+from pathlib import Path
+
+ROOT = Path(sys.argv[1]).resolve() if len(sys.argv) > 1 else Path(__file__).resolve().parents[3]
+sys.path.insert(0, str(ROOT))
 
 from agent.capability_claim_guard import (
     CapabilityEvidence,

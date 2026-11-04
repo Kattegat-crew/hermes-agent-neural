@@ -177,12 +177,16 @@ Diff of this round: 4 files, +71 / −2 (2 code, 2 tests). State: branch
 `feat/capability-claim-guard`, HEAD `0a619a2544e4bb3b9f86ca2349e751196086f416`, changes
 UNCOMMITTED in the worktree (no commit/push is authorised on this card).
 
-Re-runnable evidence kept next to this record (`probes/`, plain python, no network):
+Re-runnable evidence kept next to this record (`probes/`, plain python, no network). Each probe
+resolves the tree to import as `Path(sys.argv[1])` or, with no argument, `parents[3]` of its own file
+— i.e. the checkout that contains it, never a hardcoded path to some other worktree — so the same
+commands work from the integrated worktree and from a release:
 
 ```
 python .specs/capability-claim-guard/probes/ccg_probe_s1.py          # prefilter vs detector
 python .specs/capability-claim-guard/probes/ccg_probe_fix.py         # before/after anchors
 python .specs/capability-claim-guard/probes/ccg_probe_seal_memo.py   # seal vs per-turn memo
+python .specs/capability-claim-guard/probes/ccg_probe_profile_scope.py [root]   # per-profile gate
 ```
 
 ```

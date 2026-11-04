@@ -46,10 +46,11 @@ During this run another actor added 3 more foreign `skills/` entries (`diff` = 3
 
 No conflict markers were produced; `git cherry-pick` reported auto-merge only on
 `agent/agent_runtime_helpers.py`. The reviewed branch was 27 files, +4206 / −14 against its own base;
-this branch is 30 files, +4603 / −14 against `9daf7b8fae` (the 27 plus these three documents), and no
-root feature is dropped. Round 2 (§8) added the isolation probe, two code commits and one doc commit
-(31 files, +4885 / −14); round 3 (§9) is documentation-only, so the delivered diffstat is **31 files,
-+4928 / −14**.
+this branch is 31 files against `9daf7b8fae` (the 27 plus 4 documents and the probes), and no root
+feature is dropped. The **file count and split are stable** (31 = 9 code + 8 tests + 14 spec, §3-V-2);
+the inserted-line count is not pinned on purpose: it grows with every documentation commit, so it is
+read from `git diff --stat 9daf7b8fae..HEAD` at the head being examined rather than quoted (it was
+`+4603` after the first round, `+4885` after round 2).
 
 ## 4. Invariants checked by reading, not by assumption
 
@@ -234,8 +235,8 @@ executing card must hold root or stop as `needs_input`. Order changed accordingl
 
 ### N1 / N2 — cosmetic
 
-`+4581` in §3 was wrong; the measured diff was `+4603` (now `+4928` after rounds 2–3 — see the
-diffstat in §3 of this document). `agent/stream_delivery.py` had two consecutive `if not text: return`; the
+`+4581` in §3 was wrong; the measured diff was `+4603` (see the diffstat rule in §3 — the line count
+is read from `git diff --stat`, not pinned). `agent/stream_delivery.py` had two consecutive `if not text: return`; the
 first was dead (`_ccg_stream_gate` returns `""` on empty input and the text unchanged when disabled), so
 it was removed and the remaining check documented as the single emptiness gate.
 
@@ -258,3 +259,57 @@ Dry-run re-executed in a throwaway detached worktree at `ca2f01b5d6`: 9 reverts 
 `6203d2d111`, `HEAD^{tree}` == `9daf^{tree}` == `61ee4dd8c2`, `git diff --stat 9daf..HEAD` = 0 lines,
 `git status --porcelain` = 0 entries, worktree removed; the same range command was re-run at the
 delivered head before review.
+
+## 10. Round 4 — probes detached from the old worktree, evidence regenerated
+
+The round-3 review of `a16f9a69a5` found one blocking defect and two documentation defects. Code,
+tests and the plan sections §3-E/§5 were already accepted and are untouched: the delta of this round
+is the four probe files plus `07`, `08` and `09`.
+
+- **Blocking — three probes imported from a foreign, mutable worktree.** `ccg_probe_fix.py`,
+  `ccg_probe_s1.py` and `ccg_probe_seal_memo.py` did
+  `sys.path.insert(0, "/opt/hermes-agent-data/fleet/worktrees/hermes-agent/capability-claim-guard")`,
+  whose checkout sits at `ce34c19c5c` (pre-fix code, without the round-2 fail-closed gate), while
+  `07-checkpoint.md` documents them as re-runnable commands — so re-running the recipe today measured
+  the old code, not the delivered integration. All four probes now resolve the tree the same way the
+  scope probe already did: `Path(sys.argv[1])` if given, else `Path(__file__).resolve().parents[3]`,
+  i.e. the checkout that contains the probe. No path to another worktree remains anywhere under
+  `probes/`.
+- **Blocking (same file) — `ccg_probe_fix.py` was the only file this branch adds that the ruff gate
+  rejects.** Two `RUF010` ("use explicit conversion flag") on `{str(t):6s}`; both are now `{t!s:6s}`.
+  Measured A/B with the repo's own gate (`python scripts/check --only ruff`), base `9daf7b8fae` in a
+  throwaway detached worktree versus the delivered head, counting distinct files with findings:
+  base **159 files / 1054 errors**, branch **159 / 1054**, delta **0 added, 0 removed**
+  (`comm -13`/`comm -23` both empty). Round 3 measured 160 on the branch; that one file was the whole
+  delta.
+- **Doc — §4/§6 quoted the 9-commit run.** §4 now prints the block measured at the delivered head
+  (`COMMITS_IN_RANGE`/`REVERTS_APPLIED` = 11, tree `61ee4dd8c2` on both sides, diff 0, dirty 0) and
+  states that neither field is evidence: both are just `git rev-list --count 9daf7b8fae..HEAD`
+  measured *before* reverting (it grows with each documentation commit, and measured after the revert
+  it doubles because every revert is a commit), and `REVERT_HEAD` depends on committer and date — two
+  runs of the same command over the same tree produced `e0f00d5f96` and `92e110df15`. The acceptance
+  invariant is the tree equality (`HEAD^{tree}` == `9daf^{tree}` == `61ee4dd8c2`) plus a clean status.
+- **Doc — the gateway rollback range was open-ended.** `$(cat "$B/root.head")..HEAD` reverts whatever
+  `HEAD` is at rollback time, on a live shared branch whose foreign dirty tree drifted 64 → 69 entries
+  in ~30 min. E1 now records `git rev-parse HEAD > "$B/root.merged"` right after the merge and the
+  rollback row reverts `$(cat "$B/root.head")..$(cat "$B/root.merged")`.
+- §3 no longer pins the inserted-line count (it changes with every documentation commit); the file
+  count and the 9+8+14 split are the stable facts.
+
+Verification of this round (executed, not asserted): all four probes exit 0 from the integrated
+worktree with no argument (`s1`, `fix`, `seal_memo` print their comparison, `profile_scope` reports
+`6/6 expectations hold`); ruff A/B delta 0 as above; guard suites `8 files, 147 passed, 0 failed`;
+`scripts/check --only health --base 9daf7b8fae` 0 blocking / 0 advisory; rollback dry-run on the
+delivered head in a throwaway detached worktree gives `HEAD^{tree}` == `9daf^{tree}` == `61ee4dd8c2`
+with `git diff --stat 9daf..HEAD` = 0 lines and an empty `status --porcelain`.
+
+Live state at the close of this round (measured, not assumed): root `/opt/hermes-agent` still on
+`9daf7b8fae2d84afae81033cf37403a04b9f35a5`, branch `feat/ephemeral-progress-heartbeat-cleanup`, with
+foreign dirty entries drifting continuously (69 → 72 across the round; that count is a live drift, not
+a pinned fact), intersection with the branch's 31 paths = **0**, `agent/capability_claim_guard.py`
+absent. `/opt/hermes-agent-data/config.yaml` was rewritten by another actor at 21:37 (only change vs the
+19:14 backup: a `coalesce` block under a cron delivery), so its sha256 is no longer the
+`8dd245e9a382…` quoted in earlier rounds — the guard key is still absent
+(`grep -c capability_claim_guard` = 0) and **0 of 12** profile configs carry it. No push: `ls-remote
+github` still lists only `ce34c19c5c refs/heads/feat/capability-claim-guard`, never
+`feat/capability-claim-guard-ragnar`.

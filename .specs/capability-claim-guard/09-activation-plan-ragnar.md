@@ -6,7 +6,12 @@ activación la ejecuta el card siguiente **solo tras review PASS**. Medido el 20
 ## 1. Alcance y autorización
 
 - Perfil objetivo: **Ragnar = profile `default`**, home `/opt/hermes-agent-data`, config
-  `/opt/hermes-agent-data/config.yaml` (sha256 `8dd245e9a382c0fa42b11e802b1db849e81553308da7ef50755ae6e40faaf582`, 600 `hermes:hermes`).
+  `/opt/hermes-agent-data/config.yaml` (600 `hermes:hermes`). El sha256 no se cita como precondición:
+  al escribir este plan era `8dd245e9a382c0fa42b11e802b1db849e81553308da7ef50755ae6e40faaf582`, y a las
+  21:37 del mismo día el archivo ya había sido reescrito por el gateway en vivo (drift ajeno: un bloque
+  `coalesce` bajo la entrega de un cron) — el ejecutor toma el hash fresco en §I (`$B/config.sha256`) y
+  lo que sí debe comprobar es que la clave `agent.capability_claim_guard` **no** aparece
+  (`grep -c capability_claim_guard` = 0, verificado también tras ese drift).
 - Los otros 12 homes (`/opt/hermes-agent-data/profiles/*/config.yaml`) **no** reciben la clave:
   sin clave la guarda queda OFF por defecto (verificado por test y por `config get` real).
 - **No se toca** `hermes-agent-roshi.service` ni la sesión de WhatsApp.
@@ -101,6 +106,7 @@ ajenos al diff; `hermes_cli/web_dist/` está en `.gitignore:93`, así que el bui
 NEW=$(git -C /opt/hermes-agent rev-parse feat/capability-claim-guard-ragnar)
 git -C /opt/hermes-agent merge --ff-only feat/capability-claim-guard-ragnar
 git -C /opt/hermes-agent rev-parse HEAD | grep -qx "$NEW"
+git -C /opt/hermes-agent rev-parse HEAD > "$B/root.merged"   # extremo superior del rango de rollback (§4)
 git -C /opt/hermes-agent status --porcelain | diff - "$B/root.status"   # solo el drift ajeno previo
 ```
 
@@ -169,11 +175,11 @@ git -C "$WT" status --porcelain                        # debe salir vacío
 git -C "$SRC" worktree remove --force "$WT"
 ```
 
-Medido sobre el head `ca2f01b5d6` (9 commits, 2026-11-03):
+Medido sobre el head entregado de esta ronda (11 commits sobre `9daf7b8fae`, 2026-11-03):
 
 ```
-COMMITS_REVERTED=9
-REVERT_HEAD=6203d2d111
+COMMITS_IN_RANGE=11     # git rev-list --count 9daf7b8fae..HEAD, medido ANTES de revertir
+REVERTS_APPLIED=11      # un revert limpio por commit del rango
 TREE_HEAD=61ee4dd8c2 == TREE_BASE=61ee4dd8c2
 DIFF_VS_BASE=0          # git diff --stat 9daf..HEAD → 0 líneas
 DIRTY=0                 # git status --porcelain vacío
@@ -181,17 +187,23 @@ worktree_removed=YES    # git worktree list vuelve a sus 5 entradas
 ```
 
 El invariante de aceptación es la **igualdad de árbol** (`HEAD^{tree}` == `9daf^{tree}` =
-`61ee4dd8c2`) más el árbol limpio, **no** el sha del commit de revert (depende de committer y fecha).
-El commit de documentación de esta corrección alarga el rango a 10 commits y cambia `REVERT_HEAD`, pero
-el árbol resultante sigue siendo `61ee4dd8c2`: re-verificado sobre el head entregado con el mismo
-comando de rango antes de pasar a review.
+`61ee4dd8c2`) más el árbol limpio. Ni `COMMITS_IN_RANGE`/`REVERTS_APPLIED` ni `REVERT_HEAD` son
+evidencia: los dos primeros son `git rev-list --count 9daf7b8fae..HEAD` medido antes de revertir (sube
+con cada commit de documentación — medido después del revert el count se duplica, un commit por revert)
+y `REVERT_HEAD` depende de committer y fecha: dos corridas del mismo comando sobre el mismo árbol dieron
+`e0f00d5f96` y `92e110df15`. Lo único comparable entre corridas son `HEAD^{tree}` y `9daf^{tree}`.
 
 | Origen | Acción | Efecto |
 |---|---|---|
 | Falso positivo / latencia | `HERMES_HOME=/opt/hermes-agent-data hermes config unset agent.capability_claim_guard.enabled` | OFF en el siguiente turno, **sin reinicio**, sin tocar código |
 | Dashboard | Repuntar `current` al target guardado en `dashboard-current.path` con swap atómico (`ln -sfn "$(cat "$B/dashboard-current.path")" .../.current.tmp && mv -T .../.current.tmp .../current`) + `sudo systemctl restart hermes-dashboard.service` | vuelve a `cd397afc64`; verificar `/api/health` → `commit` = `cd397afc64c91e…` |
-| Código gateway | `git -C /opt/hermes-agent revert --no-edit "$(cat "$B/root.head")"..HEAD` (rango, no lista: los paths del revert son disjuntos del árbol sucio ajeno) + `systemctl restart hermes-agent` | árbol idéntico al base registrado (`9daf`, probado); `reset --hard` sigue prohibido por el árbol sucio ajeno |
+| Código gateway | `git -C /opt/hermes-agent revert --no-edit "$(cat "$B/root.head")".."$(cat "$B/root.merged")"` (rango cerrado al merge, no lista ni `..HEAD`: los paths del revert son disjuntos del árbol sucio ajeno) + `systemctl restart hermes-agent` | árbol idéntico al base registrado (`9daf`, probado); `reset --hard` sigue prohibido por el árbol sucio ajeno |
 | Release nuevo | tras repuntar `current`, `sudo rm -rf /opt/hermes-agent-data/releases/dashboard/releases/<sha10>` | libera ~771 MB (medido en el release actual); los commits siguen en la rama |
+
+Nota (rango del rollback del gateway): la rama viva del root es **compartida**; su árbol sucio ajeno
+derivó de 64 a 68 entradas en ~20 min durante la integración. Por eso el extremo superior del rango no
+es `HEAD` sino `$B/root.merged`, el SHA que E1 escribe justo después del merge: con `..HEAD`, cualquier
+commit que otro actor aterrice entre E1 y el rollback se revertiría también.
 
 Nota: tras un rollback por revert, reactivar exige revertir los reverts (o un merge nuevo); no se
 reutiliza el SHA viejo porque el árbol ya no coincide.
@@ -241,14 +253,17 @@ medido y registrado, y `git status` del root solo con el drift ajeno previo.
 
 ## 6. Evidencia que este card deja lista (sin ejecutar)
 
-- Rama `feat/capability-claim-guard-ragnar` (10 commits: 4 cherry-picks, 2 de código y 4 de
+- Rama `feat/capability-claim-guard-ragnar` (11 commits: 4 cherry-picks, 2 de código y 5 de
   documentación), 147 tests de guarda + 997 del slice streaming/turnos en verde sobre el código final,
   RED 44 fallos en base `9daf`, ruff y health limpios, canario 31/31.
 - Ronda 2 (hallazgos del review cerrados, detalle en §8 de `08-integration-ragnar.md`): scope fail-closed
-  con RED→GREEN propio, probe de runtime `6/6` contra el fix y `4/6` contra `ce34c19c5c`, rollback
-  por rango sobre el head integrado (9 reverts limpios → árbol `61ee4dd8c2` == `9daf`, diff 0, dirty 0)
-  re-verificado en el head entregado, y §3-E replanteado sobre `promote-release` con la aserción de
-  commit servido que el script no hace.
+  con RED→GREEN propio, probe de runtime `6/6` contra el fix y `4/6` contra `ce34c19c5c`, y §3-E
+  replanteado sobre `promote-release` con la aserción de commit servido que el script no hace.
+- Rondas 3 y 4 (sólo documentación y probes, detalle en §9 y §10 de `08-integration-ragnar.md`):
+  rollback por rango sobre el head integrado (un revert limpio por commit del rango,
+  árbol `61ee4dd8c2` == `9daf`, diff 0, dirty 0), rango del rollback del gateway
+  cerrado en `$B/root.merged`, y los cuatro probes resolviendo la raíz por argv
+  (`Path(__file__).resolve().parents[3]`) en vez de una ruta fija al worktree viejo.
 - Comandos de §3 verificados en seco: `curl` dashboard = 302 real; `hermes gateway status` exit 0
   real; `config set/unset` probado contra home desechable (no el real).
 - Nada de §3-E se ejecutó: el root sigue en `9daf7b8fae`, sin merge, sin reinicio, sin flag.

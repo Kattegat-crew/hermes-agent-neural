@@ -2,10 +2,14 @@
 
 ``apply_llm_output_transform`` memoizes per turn_id. The CCG repair nudge re-runs the
 model inside the SAME turn, so attempt #2 hits the memo branch and may bypass the seal.
+
+Usage: python .specs/capability-claim-guard/probes/ccg_probe_seal_memo.py [repo_root]
 """
 import sys
+from pathlib import Path
 
-sys.path.insert(0, "/opt/hermes-agent-data/fleet/worktrees/hermes-agent/capability-claim-guard")
+ROOT = Path(sys.argv[1]).resolve() if len(sys.argv) > 1 else Path(__file__).resolve().parents[3]
+sys.path.insert(0, str(ROOT))
 
 from agent.capability_claim_guard import CapabilityEvidence, scan_published_text
 from agent.turn_finalizer import apply_llm_output_transform

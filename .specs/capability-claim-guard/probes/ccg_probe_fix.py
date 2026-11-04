@@ -1,7 +1,12 @@
-"""Reviewer probe 3: candidate fix for the S1 anchor gap + bare English variant."""
-import sys
+"""Reviewer probe 3: candidate fix for the S1 anchor gap + bare English variant.
 
-sys.path.insert(0, "/opt/hermes-agent-data/fleet/worktrees/hermes-agent/capability-claim-guard")
+Usage: python .specs/capability-claim-guard/probes/ccg_probe_fix.py [repo_root]
+"""
+import sys
+from pathlib import Path
+
+ROOT = Path(sys.argv[1]).resolve() if len(sys.argv) > 1 else Path(__file__).resolve().parents[3]
+sys.path.insert(0, str(ROOT))
 
 from agent import capability_claim_guard as ccg
 
@@ -51,10 +56,10 @@ def run(denial):
 print("== CURRENT anchors ==")
 for label, denial in CASES:
     d, t, dumped = run(denial)
-    print(f"  {label:38s} detector={d:20s} tainted={str(t):6s} RAW_PUBLISHED={dumped}")
+    print(f"  {label:38s} detector={d:20s} tainted={t!s:6s} RAW_PUBLISHED={dumped}")
 
 ccg._STREAM_ANCHORS = ccg._STREAM_ANCHORS + ("no me es posible", "we don't", "we do not")
 print("\n== WITH proposed anchors (+ 'no me es posible', 'we don't', 'we do not') ==")
 for label, denial in CASES:
     d, t, dumped = run(denial)
-    print(f"  {label:38s} detector={d:20s} tainted={str(t):6s} RAW_PUBLISHED={dumped}")
+    print(f"  {label:38s} detector={d:20s} tainted={t!s:6s} RAW_PUBLISHED={dumped}")
