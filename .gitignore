@@ -1,0 +1,23 @@
+# Repo whitelist estricto: SOLO archivos ops específicos quedan versionados.
+# Todo lo demás (secrets, crons, DBs, binarios, repos de clientes, media) fuera.
+/*
+!/.gitignore
+!/scripts/
+/scripts/*
+!/scripts/brain_graph_update_inner.sh
+!/scripts/brain_graph_update_wrapper.sh
+!/scripts/run_brain_graph.sh
+!/scripts/nan_reviewer.py
+!/scripts/nan_quota_watch.py
+!/tools/
+/tools/*
+!/tools/embed_brain.py
+!/tools/memory_graph.py
+!/tools/robust_fetch.py
+!/tools/web_search.py
+!/skills/
+/skills/*
+!/skills/core/
+/skills/core/*
+!/skills/core/memory-compaction/
+__pycache__/
