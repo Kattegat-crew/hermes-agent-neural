@@ -2096,8 +2096,10 @@ class GatewayTurnMixin(GatewayBackgroundMixin, GatewayTurnPrepareMixin, GatewayT
             return
         source, session_key, agent_holder = turn_ctx.source, turn_ctx.session_key, turn_ctx.agent_holder
         _status_thread_metadata = turn_ctx._status_thread_metadata
-        if not turn_ctx.progress_queue:
+        _notify_adapter = self._delivery_adapter_for(source) if not turn_ctx.progress_queue else None
+        if not turn_ctx.progress_queue and not _notify_adapter:
             return
+        _heartbeat_msg_id: Optional[str] = None
         while True:
             await asyncio.sleep(_NOTIFY_INTERVAL)
             if not self._should_emit_long_running_notification(
@@ -2135,7 +2137,31 @@ class GatewayTurnMixin(GatewayBackgroundMixin, GatewayTurnPrepareMixin, GatewayT
             metadata = _interim_metadata(
                 _non_conversational_metadata(_status_thread_metadata, platform=source.platform)
             )
-            turn_ctx.progress_queue.put(_ProgressStatusUpdate(_heartbeat_text, metadata))
+            if turn_ctx.progress_queue is not None:
+                turn_ctx.progress_queue.put(_ProgressStatusUpdate(_heartbeat_text, metadata))
+            elif _notify_adapter is not None:
+                try:
+                    _notify_res = None
+                    if _heartbeat_msg_id:
+                        try:
+                            _notify_res = await _notify_adapter.edit_message(source.chat_id, _heartbeat_msg_id, _heartbeat_text)
+                        except Exception as _ee:
+                            logger.debug("Heartbeat edit failed: %s", _ee)
+                            _notify_res = None
+                    if not (_notify_res and getattr(_notify_res, "success", False)):
+                        if not self._should_emit_long_running_notification(
+                            session_key, agent_holder[0], _executor_task_holder[0]
+                        ):
+                            break
+                        _notify_res = await _notify_adapter.send(
+                            source.chat_id,
+                            _heartbeat_text,
+                            metadata=metadata,
+                        )
+                        if _notify_res and getattr(_notify_res, "success", False) and getattr(_notify_res, "message_id", None):
+                            _heartbeat_msg_id = _notify_res.message_id
+                except Exception as _e:
+                    logger.debug("Heartbeat delivery failed: %s", _e)
 
     async def _run_agent_inner(
         self, message: str, context_prompt: str, history: list[dict[str, Any]],
