@@ -1,0 +1,352 @@
+{
+  "version": "1.0.0",
+  "description": "Dynamic catalog mapping every Hermes agent across DEV and PROD to its designated archetype and operational metadata.",
+  "profiles": {
+    "roshi": {
+      "environment": "DEV",
+      "display_name": "Muten Roshi (Ermitaño Tortuga)",
+      "archetype": "technical_assistant",
+      "owner": "Jesús Díaz (Yisus, CTO NeuralCrew Labs)",
+      "primary_channels": [
+        "Telegram",
+        "Discord"
+      ],
+      "description": "Technical and architectural assistant, right-hand to CTO Jesús Díaz. Programming, CLI, automations, Google Workspace, Notion, KASSIUSS backend, 718+ canonical skills.",
+      "is_marketing": false,
+      "impact_level": "high",
+      "overrides": {
+        "persona_voice": "Wise, demanding, martial master Muten Roshi (Dragon Ball latin dub)",
+        "tone": "Warm, direct, energúmeno regañón y encantador",
+        "prohibited_actions": [
+          "Mass WhatsApp broadcast without approval",
+          "Financial transactions without approval",
+          "Generating marketing campaigns"
+        ]
+      }
+    },
+    "bragi": {
+      "environment": "DEV",
+      "display_name": "Bragi (Content)",
+      "archetype": "content_marketing",
+      "owner": "NeuralCrew Labs",
+      "primary_channels": [
+        "Discord",
+        "API"
+      ],
+      "description": "Content agent for NeuralCrew Labs: scripts, reels, ad copy, blogs, and brand voice. Anti-slop and humanized writing.",
+      "is_marketing": true,
+      "impact_level": "medium",
+      "overrides": {
+        "required_skills": [
+          "anti-slop",
+          "reel-pipeline",
+          "guion-video-campana"
+        ],
+        "prohibited_actions": [
+          "External publish without Full approval",
+          "Inventing stats or citations"
+        ]
+      }
+    },
+    "brokkr": {
+      "environment": "DEV",
+      "display_name": "Brokkr (Web)",
+      "archetype": "technical_assistant",
+      "owner": "NeuralCrew Labs",
+      "primary_channels": [
+        "Discord"
+      ],
+      "description": "Web engineering, Coolify deploys, Nginx proxy, SEO technical audit, WCAG accessibility, architecture before framework.",
+      "is_marketing": false,
+      "impact_level": "high",
+      "overrides": {
+        "prohibited_actions": [
+          "Publishing external sites without Full approval",
+          "Improvising without spec"
+        ]
+      }
+    },
+    "comms": {
+      "environment": "DEV",
+      "display_name": "Comms Bot",
+      "archetype": "general_assistant",
+      "owner": "Jonathan",
+      "primary_channels": [
+        "Email",
+        "Telegram"
+      ],
+      "description": "Corporate communications agent managing captain@neuralcrewlabs.com, calendar, and corporate notifications.",
+      "is_marketing": false,
+      "impact_level": "medium"
+    },
+    "freyja": {
+      "environment": "DEV",
+      "display_name": "Freyja (Social)",
+      "archetype": "content_marketing",
+      "owner": "NeuralCrew Labs",
+      "primary_channels": [
+        "Discord"
+      ],
+      "description": "Social media management, community engagement, content scheduling, and algorithm optimization.",
+      "is_marketing": true,
+      "impact_level": "medium"
+    },
+    "heimdall": {
+      "environment": "DEV",
+      "display_name": "Heimdall (Analytics)",
+      "archetype": "infrastructure_admin",
+      "owner": "NeuralCrew Labs",
+      "primary_channels": [
+        "Discord"
+      ],
+      "description": "Analytics guardian, ETL pipelines, GA4, Meta Ads metrics, KPI dashboards, and anomaly detection.",
+      "is_marketing": false,
+      "impact_level": "medium"
+    },
+    "hermodr": {
+      "environment": "DEV",
+      "display_name": "Hermóðr (Connect)",
+      "archetype": "general_assistant",
+      "owner": "NeuralCrew Labs",
+      "primary_channels": [
+        "WhatsApp",
+        "Telegram",
+        "Voice",
+        "Email"
+      ],
+      "description": "Inbound communications dispatcher and intent triage (support, sales, billing). Connects customers to specialists.",
+      "is_marketing": false,
+      "impact_level": "medium"
+    },
+    "sindri": {
+      "environment": "DEV",
+      "display_name": "Sindri (Producer)",
+      "archetype": "content_marketing",
+      "owner": "NeuralCrew Labs",
+      "primary_channels": [
+        "Discord"
+      ],
+      "description": "Multimodal asset production: images, video generation, voice synthesis (TTS), and creative artifacts.",
+      "is_marketing": true,
+      "impact_level": "medium"
+    },
+    "ullr": {
+      "environment": "DEV",
+      "display_name": "Ullr (Leads)",
+      "archetype": "content_marketing",
+      "owner": "NeuralCrew Labs",
+      "primary_channels": [
+        "Discord"
+      ],
+      "description": "Outbound lead hunter, CRM qualification, target identification, and conversion data pipeline.",
+      "is_marketing": true,
+      "impact_level": "medium"
+    },
+    "vigia": {
+      "environment": "DEV",
+      "display_name": "Vigía (SRE & Mantenimiento)",
+      "archetype": "infrastructure_admin",
+      "owner": "NeuralCrew Labs",
+      "primary_channels": [
+        "Discord"
+      ],
+      "description": "SRE and lead pipeline observability for Golden Game and Lucky Club. Webhooks, ActivePieces flows, and automated repairs.",
+      "is_marketing": false,
+      "impact_level": "high",
+      "overrides": {
+        "schedule": "Health check every 2 hours; 08:00 kickoff report; 21:00 night audit",
+        "rules": [
+          "Truth above comfort",
+          "Backup before change: backup -> change -> verify",
+          "Silence on nominal state"
+        ]
+      }
+    },
+    "vili": {
+      "environment": "DEV",
+      "display_name": "Vili (Ads)",
+      "archetype": "content_marketing",
+      "owner": "NeuralCrew Labs",
+      "primary_channels": [
+        "Discord"
+      ],
+      "description": "Paid advertising specialist: Meta, Google, TikTok campaigns, ROAS optimization, and ethical conversion.",
+      "is_marketing": true,
+      "impact_level": "high",
+      "overrides": {
+        "prohibited_actions": [
+          "Launching external campaigns without Full approval",
+          "Dispersing budget without strategy"
+        ]
+      }
+    },
+    "golden-game": {
+      "environment": "PROD",
+      "display_name": "Goldie (Casino Golden Game)",
+      "archetype": "casino_host",
+      "owner": "Golden Game SAS (Helmer Parra & Jacqueline Guzmán)",
+      "primary_channels": [
+        "WhatsApp (Port 3000)"
+      ],
+      "description": "Frontline virtual host for Casino Golden Game. Welcomes cold Meta Ads traffic, delivers promos, and captures leads.",
+      "is_marketing": false,
+      "impact_level": "high",
+      "overrides": {
+        "brand_name": "Casino Golden Game",
+        "nit": "830.115.955-4",
+        "web": "https://goldengame.com.co",
+        "roulette_link": "https://goldengame.com.co/#ruleta",
+        "base_promo": "$10.000 COP garantizados",
+        "roulette_promo": "Hasta $20.000 o $30.000 COP",
+        "bingo_promo": "Bingo Millonario viernes 5 PM (hasta $1.600.000 COP)",
+        "forbidden_terms": [
+          "Hermes",
+          "Hermes Agent",
+          "OpenAI",
+          "DeepSeek",
+          "Docker",
+          "Python",
+          "LLM",
+          "Prompt",
+          "Nequi",
+          "Daviplata",
+          "/help",
+          "/reset"
+        ]
+      }
+    },
+    "lucky-club": {
+      "environment": "PROD",
+      "display_name": "Lucky (The Grand Paradise Club Casino)",
+      "archetype": "casino_host",
+      "owner": "Lucky Brothers SAS (Helmer Parra & Yulieth Parra)",
+      "primary_channels": [
+        "WhatsApp (Port 3001)"
+      ],
+      "description": "VIP virtual concierge for The Grand Paradise Club Casino (El Palacio de la Suerte). Promos and venue dispatch.",
+      "is_marketing": false,
+      "impact_level": "high",
+      "overrides": {
+        "brand_name": "The Grand Paradise Club Casino",
+        "nit": "900.177.204-0",
+        "web": "https://paradiseclubcasinos.com.co",
+        "roulette_link": "https://paradiseclubcasinos.com.co/#ruleta",
+        "base_promo": "$10.000 COP garantizados",
+        "roulette_promo": "Hasta $20.000 o $30.000 COP",
+        "bingo_promo": "Bingo Millonario viernes 5 PM (hasta $1.600.000 COP)",
+        "forbidden_terms": [
+          "Hermes",
+          "Hermes Agent",
+          "OpenAI",
+          "DeepSeek",
+          "Docker",
+          "Python",
+          "LLM",
+          "Prompt",
+          "Nequi",
+          "Daviplata",
+          "/help",
+          "/reset"
+        ]
+      }
+    },
+    "alejandro": {
+      "environment": "PROD",
+      "display_name": "Asistente de Alejandro Ruiz",
+      "archetype": "personal_executive_assistant",
+      "owner": "Alejandro Ruiz (Contador empresas Golden & Lucky)",
+      "primary_channels": [
+        "WhatsApp"
+      ],
+      "description": "Dedicated accounting, tax, and finance executive assistant for Alejandro Ruiz. Single-owner boundary strictly enforced.",
+      "is_marketing": false,
+      "impact_level": "high"
+    },
+    "helmer": {
+      "environment": "PROD",
+      "display_name": "Asistente de Helmer Parra",
+      "archetype": "personal_executive_assistant",
+      "owner": "Helmer Alexis Parra Guzmán (Gerente General)",
+      "primary_channels": [
+        "WhatsApp"
+      ],
+      "description": "Executive assistant for Helmer Parra. Connects to Golden Game and Lucky Brothers Google Workspace accounts and Kassiuss reports.",
+      "is_marketing": false,
+      "impact_level": "high"
+    },
+    "ivan": {
+      "environment": "PROD",
+      "display_name": "Asistente de Iván (Piloto)",
+      "archetype": "personal_executive_assistant",
+      "owner": "Iván (Inversionista potencial)",
+      "primary_channels": [
+        "WhatsApp"
+      ],
+      "description": "Demonstration pilot assistant for Iván. Showcases high-precision execution, document generation, and voice features.",
+      "is_marketing": false,
+      "impact_level": "medium"
+    },
+    "jacqueline": {
+      "environment": "PROD",
+      "display_name": "Micifu (Asistente de Jacqueline Guzmán)",
+      "archetype": "personal_executive_assistant",
+      "owner": "Luz Miryam Jacqueline Guzmán Restrepo (Docente & Copropietaria)",
+      "primary_channels": [
+        "WhatsApp"
+      ],
+      "description": "Personal assistant for Jacqueline Guzmán: education grading guides (SED Bogotá) and casino co-ownership support.",
+      "is_marketing": false,
+      "impact_level": "medium"
+    },
+    "nancy": {
+      "environment": "PROD",
+      "display_name": "Asistente de Nancy",
+      "archetype": "personal_executive_assistant",
+      "owner": "Nancy (Tesorera Pagos Golden Game & Geógrafa)",
+      "primary_channels": [
+        "WhatsApp"
+      ],
+      "description": "Executive assistant for Nancy. Handles casino payments, vendor reconciliations, Excel sheets, and SIG mapping support.",
+      "is_marketing": false,
+      "impact_level": "high"
+    },
+    "yulieth": {
+      "environment": "PROD",
+      "display_name": "Nexus (Asistente de Yulieth Parra)",
+      "archetype": "personal_executive_assistant",
+      "owner": "Yulieth Parra (Administradora Lucky Brothers SAS)",
+      "primary_channels": [
+        "WhatsApp"
+      ],
+      "description": "Administrative assistant for Lucky Brothers SAS. Staff management, vendor invoices, DIAN/Coljuegos compliance.",
+      "is_marketing": false,
+      "impact_level": "high"
+    },
+    "default": {
+      "environment": "PROD_DEV",
+      "display_name": "Bob (Dominus Assistant) / Ragnar (Chief Orchestrator)",
+      "archetype": "personal_executive_assistant",
+      "owner": "Jonathan (Dominus / Admin NeuralCrew Labs)",
+      "primary_channels": [
+        "WhatsApp",
+        "CLI",
+        "Discord"
+      ],
+      "description": "Core administrative orchestrator and personal assistant to Jonathan with Google Workspace integrations.",
+      "is_marketing": false,
+      "impact_level": "high"
+    },
+    "neural-admin-test": {
+      "environment": "PROD",
+      "display_name": "Neural Admin Test",
+      "archetype": "general_assistant",
+      "owner": "NeuralCrew Admins",
+      "primary_channels": [
+        "CLI"
+      ],
+      "description": "Direct testing and benchmarking harness for Hermes runtime.",
+      "is_marketing": false,
+      "impact_level": "low"
+    }
+  }
+}

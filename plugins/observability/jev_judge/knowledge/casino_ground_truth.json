@@ -1,0 +1,249 @@
+{
+  "casinos": {
+    "golden_game": {
+      "brand_name": "Casino Golden Game",
+      "legal_entity": "Golden Game SAS",
+      "nit": "830.115.955-4",
+      "regulator": "Coljuegos",
+      "license_status": "Vigente",
+      "management": {
+        "general_manager": "Helmer Alexis Parra Guzmán",
+        "legal_representative": "Luz Miryam Jacqueline Guzmán Restrepo",
+        "head_of_payments": "Nancy"
+      },
+      "virtual_host": {
+        "name": "Goldie",
+        "emoji": "🎰",
+        "role": "Anfitrión Virtual Oficial",
+        "profile_key": "golden-game"
+      },
+      "web_portal": "https://goldengame.com.co",
+      "roulette_portal": "https://goldengame.com.co/#ruleta",
+      "active_slot_machines": "500+ máquinas tragamonedas",
+      "promotions": {
+        "base_bonus": {
+          "amount_cop": 10000,
+          "name": "Bono Base Garantizado de Bienvenida",
+          "description": "$10.000 COP asegurados de cortesía para jugar en salas físicas.",
+          "qualification_requirement": "Completar registro con 3 datos: nombre y apellido, correo electrónico y sede elegida."
+        },
+        "virtual_roulette": {
+          "max_amount_cop": 30000,
+          "potential_values_cop": [10000, 20000, 30000],
+          "name": "Ruleta Virtual de la Suerte",
+          "url": "https://goldengame.com.co/#ruleta",
+          "description": "Giro virtual previo a la visita para subir el bono de bienvenida hasta $20.000 o $30.000 COP."
+        },
+        "friday_bingo": {
+          "name": "Bingo Millonario",
+          "schedule": "Todos los viernes a partir de las 5:00 PM",
+          "frequency": "2 a 3 bingos por noche con escalera de premios",
+          "max_jackpot_cop": 1600000,
+          "description": "Acumulados millonarios presenciales de hasta $1.600.000 COP por sala."
+        }
+      },
+      "redemption_rules": {
+        "additive": false,
+        "policy": "Los bonos NO se acumulan ni se suman. En sala física se entrega el mayor valor obtenido (si sacó $30k en ruleta reclama $30k; si sacó $10k o no giró reclama $10k base).",
+        "collection_mode": "Presencial exclusiva en caja física de la sede elegida.",
+        "id_requirement": "Cédula de Ciudadanía física original colombiana (+18 obligatorio).",
+        "digital_money_prohibition": "TERMINANTEMENTE PROHIBIDO transferencias, giros virtuales, Nequi o Daviplata. Todo pago y cobro se realiza físicamente en sala."
+      },
+      "branches": [
+        {
+          "city": "Tunja",
+          "department": "Boyacá",
+          "sector": "Centro Histórico",
+          "address": "Calle 18 # 11-45, Centro Histórico",
+          "google_maps_url": "https://www.google.com/maps/search/?api=1&query=Casino+Golden+Game+Tunja+Boyaca"
+        },
+        {
+          "city": "Pacho",
+          "department": "Cundinamarca",
+          "sector": "Zona Centro",
+          "address": "Carrera 16 # 7-32, Zona Centro",
+          "google_maps_url": "https://www.google.com/maps/search/?api=1&query=Casino+Golden+Game+Pacho+Cundinamarca"
+        },
+        {
+          "city": "El Carmen de Apicalá",
+          "department": "Tolima",
+          "sector": "Avenida Principal",
+          "address": "Avenida Principal # 8-90",
+          "google_maps_url": "https://www.google.com/maps/search/?api=1&query=Casino+Golden+Game+El+Carmen+de+Apicala"
+        },
+        {
+          "city": "Agua de Dios",
+          "department": "Cundinamarca",
+          "sector": "Zona Centro",
+          "address": "Calle del Comercio, Zona Centro",
+          "google_maps_url": "https://www.google.com/maps/search/?api=1&query=Casino+Golden+Game+Agua+de+Dios+Cundinamarca"
+        },
+        {
+          "city": "Anolaima",
+          "department": "Cundinamarca",
+          "sector": "Centro",
+          "address": "Carrera 4 # 5-67, Centro",
+          "google_maps_url": "https://www.google.com/maps/search/?api=1&query=Casino+Golden+Game+Anolaima+Cundinamarca"
+        },
+        {
+          "city": "Cachipay",
+          "department": "Cundinamarca",
+          "sector": "Calle Principal",
+          "address": "Calle Principal # 12-34",
+          "google_maps_url": "https://www.google.com/maps/search/?api=1&query=Casino+Golden+Game+Cachipay+Cundinamarca"
+        },
+        {
+          "city": "San Francisco",
+          "department": "Cundinamarca",
+          "sector": "Plaza Principal",
+          "address": "Plaza Principal, San Francisco",
+          "google_maps_url": "https://www.google.com/maps/search/?api=1&query=Casino+Golden+Game+San+Francisco+Cundinamarca"
+        }
+      ]
+    },
+    "lucky_club": {
+      "brand_name": "The Grand Paradise Club Casino",
+      "legal_entity": "Lucky Brothers SAS",
+      "nit": "900.177.204-0",
+      "slogans": [
+        "Donde la diversión y la suerte se encuentran",
+        "El Palacio de la Suerte"
+      ],
+      "regulator": "Coljuegos",
+      "license_status": "Vigente",
+      "management": {
+        "general_manager": "Helmer Alexis Parra Guzmán",
+        "administrator": "Yulieth Parra",
+        "accounting_auxiliary": "Auxiliar Contable Lucky"
+      },
+      "virtual_host": {
+        "name": "Lucky",
+        "emoji": "🍀",
+        "role": "Anfitrión VIP Oficial",
+        "profile_key": "lucky-club",
+        "twenty_crm_workspace": "workspace_7dtp2prh0e101x15n8lo2kjl3"
+      },
+      "web_portal": "https://paradiseclubcasinos.com.co",
+      "roulette_portal": "https://paradiseclubcasinos.com.co/#ruleta",
+      "promotions": {
+        "base_bonus": {
+          "amount_cop": 10000,
+          "name": "Bono Base Garantizado de Bienvenida",
+          "description": "$10.000 COP asegurados de cortesía para jugar en salas físicas.",
+          "qualification_requirement": "Completar registro con 3 datos: nombre y apellido, correo electrónico y sede elegida."
+        },
+        "virtual_roulette": {
+          "max_amount_cop": 30000,
+          "potential_values_cop": [10000, 20000, 30000],
+          "name": "Ruleta Virtual de la Suerte",
+          "url": "https://paradiseclubcasinos.com.co/#ruleta",
+          "description": "Giro virtual previo a la visita para subir el bono hasta $20.000 o $30.000 COP."
+        },
+        "friday_bingo": {
+          "name": "Bingo Millonario",
+          "schedule": "Todos los viernes desde las 5:00 PM",
+          "frequency": "2 a 3 bingos por noche con escalera de premios",
+          "max_jackpot_cop": 1600000,
+          "description": "Acumulados millonarios presenciales de hasta $1.600.000 COP por sede."
+        }
+      },
+      "redemption_rules": {
+        "additive": false,
+        "policy": "Los bonos NO se acumulan ni se suman. En sala física se entrega el mayor valor obtenido.",
+        "collection_mode": "Presencial exclusiva en caja física de la sede elegida.",
+        "id_requirement": "Cédula de Ciudadanía física original colombiana (+18 obligatorio).",
+        "digital_money_prohibition": "TERMINANTEMENTE PROHIBIDO transferencias, giros virtuales, Nequi o Daviplata. Todo pago y cobro se realiza físicamente en sala."
+      },
+      "branches": [
+        {
+          "name": "Chiquinquirá 1",
+          "subtitle": "Sede Principal",
+          "city": "Chiquinquirá",
+          "department": "Boyacá",
+          "address": "Cra 10 # 17-34, Chiquinquirá, Boyacá",
+          "google_maps_url": "https://www.google.com/maps/search/?api=1&query=Casino+The+Grand+Paradise+Chiquinquira+1+Boyaca"
+        },
+        {
+          "name": "Chiquinquirá 2",
+          "subtitle": "Plaza de La Libertad",
+          "city": "Chiquinquirá",
+          "department": "Boyacá",
+          "address": "Cra 11 # 17-44, Plaza de La Libertad, Chiquinquirá, Boyacá",
+          "google_maps_url": "https://www.google.com/maps/search/?api=1&query=Casino+The+Grand+Paradise+Chiquinquira+2+Boyaca"
+        },
+        {
+          "name": "La Calera",
+          "subtitle": "Tradición y Suerte",
+          "city": "La Calera",
+          "department": "Cundinamarca",
+          "address": "Calle Central, La Calera, Cundinamarca",
+          "google_maps_url": "https://www.google.com/maps/search/?api=1&query=Casino+The+Grand+Paradise+La+Calera+Cundinamarca"
+        },
+        {
+          "name": "Calera Gardens",
+          "subtitle": "Centro Comercial",
+          "city": "La Calera",
+          "department": "Cundinamarca",
+          "address": "C.C. Calera Gardens, Local 102, La Calera, Cundinamarca",
+          "google_maps_url": "https://www.google.com/maps/search/?api=1&query=Casino+The+Grand+Paradise+Calera+Gardens+Cundinamarca"
+        },
+        {
+          "name": "Tunja",
+          "subtitle": "Capital Boyacense",
+          "city": "Tunja",
+          "department": "Boyacá",
+          "address": "Centro Histórico, Tunja, Boyacá",
+          "google_maps_url": "https://www.google.com/maps/search/?api=1&query=Casino+The+Grand+Paradise+Tunja+Boyaca"
+        }
+      ]
+    }
+  },
+  "global_guardrails": {
+    "prohibited_platform_terms": [
+      "Hermes",
+      "Hermes Agent",
+      "OpenAI",
+      "DeepSeek",
+      "Docker",
+      "Python",
+      "LLM",
+      "Prompt",
+      "Skill",
+      "IA",
+      "Inteligencia Artificial",
+      "/help",
+      "/reset"
+    ],
+    "prohibited_financial_terms": [
+      "Nequi",
+      "Daviplata",
+      "Bancolombia",
+      "Transferencia",
+      "Consignación",
+      "Giro virtual",
+      "Dinero digital",
+      "Criptomoneda"
+    ],
+    "mandatory_lead_fields": [
+      "nombre",
+      "correo",
+      "sede"
+    ],
+    "escalation_trigger_keywords": [
+      "humano",
+      "asesor",
+      "gerente",
+      "persona",
+      "reclamo",
+      "queja",
+      "máquina trabada",
+      "pago no entregado",
+      "fraude"
+    ],
+    "escalation_target": {
+      "system": "Twenty CRM",
+      "status": "escalado_humano",
+      "immediate_action": "Pausar ofertas comerciales y empatizar con el cliente asegurando contacto por la dirección o gerencia de sala."
+    }
+  }
+}
