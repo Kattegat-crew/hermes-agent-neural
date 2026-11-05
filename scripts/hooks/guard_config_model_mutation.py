@@ -14,7 +14,11 @@ Escapadera del operador (D-I-V-E): /opt/data/state/config_guard_override.json
   [{"objetivo": "config.yaml", "expira": "2026-11-05T23:59:00-05:00", "nota": "..."}]
 Log: /opt/data/state/config_guard.jsonl
 Protocolo: stdin JSON {tool_name, tool_input, session_id} · exit 0 permite ·
-{"action":"block","message":...} + exit 2 bloquea · fallo interno = bloquear.
+{"decision":"block","reason":...} + exit 2 bloquea · fallo interno = bloquear.
+
+Nota de rutas: /opt/data es symlink de /opt/hermes-agent-data. Toda comparación
+normaliza ambos lados (resolve + alias) porque comparar strings crudos deja
+pasar writes a /opt/data/config.yaml (bug real detectado 04-nov-2026).
 """
 import json
 import os
@@ -24,6 +28,7 @@ import time
 from pathlib import Path
 
 HOME = Path('/opt/hermes-agent-data')
+ALIAS = '/opt/data'
 STATE = Path('/opt/data/state')
 LOG = STATE / 'config_guard.jsonl'
 OVERRIDE = STATE / 'config_guard_override.json'
@@ -61,15 +66,35 @@ def log(reg):
 
 
 def bloquear(msg):
-    print(json.dumps({'action': 'block', 'message': msg}, ensure_ascii=False))
+    print(json.dumps({'decision': 'block', 'reason': msg,
+                      'action': 'block', 'message': msg}, ensure_ascii=False))
     sys.exit(2)
+
+
+def _formas(ruta):
+    """Devuelve todas las formas equivalentes de una ruta (symlink /opt/data incluido)."""
+    formas = {ruta}
+    try:
+        formas.add(str(Path(ruta).resolve()))
+    except Exception:
+        pass
+    for f in list(formas):
+        if f == ALIAS:
+            formas.add(str(HOME))
+        elif f.startswith(ALIAS + '/'):
+            formas.add(str(HOME) + f[len(ALIAS):])
+        elif f.startswith(str(HOME) + '/'):
+            formas.add(ALIAS + f[len(str(HOME)):])
+    return formas
 
 
 def protegido(ruta):
     ruta = str(ruta).strip()
+    if not ruta:
+        return False
     if not ruta.startswith('/'):
-        ruta = str((HOME / ruta).resolve())
-    return any(re.match(p, ruta) for p in PROTEGIDOS_RE)
+        ruta = str(HOME / ruta)
+    return any(re.match(p, f) for f in _formas(ruta) for p in PROTEGIDOS_RE)
 
 
 def overrides_vigentes():
@@ -100,17 +125,20 @@ def main():
 
     if tool in ('write_file', 'patch', 'edit_file'):
         objetivo = str(ti.get('path') or ti.get('file_path') or ti.get('target') or '')
-        muto = True
+        if not objetivo:
+            return 0
+        if not protegido(objetivo):
+            return 0
     elif tool in ('terminal', 'execute_code'):
         cmd = json.dumps(ti, ensure_ascii=False)
         objetivo = str(ti.get('command') or ti.get('code') or '')[:300]
-        muto = any(re.search(p, cmd, re.I) for p in CMD_MUTA_RE)
+        # Los patrones de CMD_MUTA_RE ya son específicos (config/.env/CLI sancionada):
+        # el comando se bloquea por patrón, no por ser una ruta.
+        if not any(re.search(p, cmd, re.I) for p in CMD_MUTA_RE):
+            return 0
+        if not objetivo:
+            return 0
     else:
-        return 0
-
-    if not muto or not objetivo:
-        return 0
-    if not protegido(objetivo):
         return 0
 
     for o in overrides_vigentes():
@@ -139,9 +167,10 @@ if __name__ == '__main__':
         raise
     except Exception as exc:
         try:
-            print(json.dumps({'action': 'block', 'message':
-                              'GUARD DE CONFIG/MODELO con fallo interno (%s). Mutación no '
-                              'evaluada; reporta al dueño.' % exc}, ensure_ascii=False))
+            print(json.dumps({'decision': 'block',
+                              'reason': 'GUARD DE CONFIG/MODELO con fallo interno (%s). '
+                                        'Mutación no evaluada; reporta al dueño.' % exc},
+                             ensure_ascii=False))
         except Exception:
             pass
         sys.exit(2)
