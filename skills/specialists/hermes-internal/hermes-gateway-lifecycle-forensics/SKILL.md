@@ -101,6 +101,29 @@ Desktop usa, o moverla a otro puerto; añadir `StartLimitIntervalSec=60` +
 - Cerrar con la decisión pendiente real (p.ej. "¿quieres monitor de RAM?") en vez de
   ejecutar cambios sin OK — los cambios de infra requieren confirmación (D-I-V-E).
 
+## Downgrade de checkout: auto-exit + crash-loop por dependencia faltante
+Síntoma distintivo: `gateway.log` termina con
+`gateway.runtime_downgrade_exit: This gateway loaded <hash_nuevo>, but its checkout is
+now at <hash_viejo>, a release that predates the gateway runtime...` y luego el unit
+systemd crash-loopea cada RestartSec con `ModuleNotFoundError` (p.ej. `yaml` en
+`hermes_cli/config.py:423`).
+
+- Causa: `/opt/hermes-agent` es el checkout DE PRODUCCIÓN que el gateway corre en vivo.
+  Un `git checkout`/cherry-pick que mueva el árbol a una rama con base anterior a la
+  release desplegada dispara el auto-exit; al reiniciar, el launcher
+  (`~/.local/bin/hermes` → `.hermes/bin/hermes`, runtime `python-3.14.x` con
+  `sys.path=/opt/hermes-agent`) no encuentra las deps del árbol viejo → crash-loop
+  (~5 s/ciclo) → TODOS los canales caídos sin error de LLM ni de token.
+- Recuperación verificada (04-nov-2026): respaldar HEAD+status a un manifest, luego
+  `git checkout <rama de producción>` (el commit de la feature queda a salvo en su
+  rama). NO hace falta `systemctl restart`: el próximo intento de systemd arranca solo.
+  Verificar con `systemctl is-active` + `journalctl -u hermes-agent.service` (ojo:
+  `gateway.log` puede quedarse sin escrituras nuevas tras el shutdown del proceso
+  viejo; el log vivo del proceso nuevo está en journal).
+- Prevención dura: el trabajo de features sobre `/opt/hermes-agent` se hace SOLO vía
+  `git worktree` (los de la flota viven en `/opt/hermes-agent-data/fleet/worktrees/`).
+  Nunca cambiar el checkout de producción de rama: el gateway corre desde ese directorio.
+
 ## Skills relacionadas (user-owned, no editar)
 - `hermes-multiprofile-gateway-ops`: leyes 1-4 del gateway multiperfil (servicio s6
   real, config cacheada, canales Discord, sesiones por perfil). Esta skill la
