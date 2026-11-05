@@ -150,6 +150,32 @@ shutdown: muere en el bootstrap, antes de levantar adaptadores.
 - Prevención: no lanzar `gateway run` a mano (deja PPID 1 que roban el lock); una sola ruta canónica
   de HERMES_HOME; y el servicio debe estar arriba antes de que un cliente pida runtime.
 
+## Bucle de reinicios invisible: StartLimit mal calibrado
+Síntoma: el unit se reinicia cada ~20-25 s sin parar y nadie se entera; `NRestarts` sube sin techo
+(44 en el incidente del 04-nov) y el gateway "parece funcionar" porque un proceso unmanaged atiende
+los canales mientras tanto.
+
+- Causa: `StartLimitBurst=5` con `StartLimitIntervalSec=10s` (el default del unit). Un ciclo de
+  20-25 s **no cabe** en una ventana de 10 s, así que el límite nunca se alcanza y systemd reintenta
+  para siempre. `Restart=on-failure` sin límite útil = bucle silencioso.
+- Fix verificado (04-nov-2026), drop-in `60-startlimit-alert.conf`:
+  ```ini
+  [Unit]
+  StartLimitIntervalSec=300
+  StartLimitBurst=5
+  OnFailure=hermes-gateway-failed.service
+  ```
+  Con `StartLimitBurst` en `[Unit]` (en `[Service]` systemd lo acepta con warning por compatibilidad).
+- Alerta: unit oneshot `hermes-gateway-failed.service` →
+  `/usr/local/bin/hermes-service-notify.sh failed 0 0 onfailure hermes-agent.service` →
+  `profiles/vigia/scripts/vigia_post_discord.py` → **hilo de Vigía** (`VIGIA_DISCORD_THREAD_ID`,
+  añade `?thread_id=` al webhook). **No usar Telegram para avisos de infraestructura.**
+- Verificación de entrega sin token: el notificador escribe
+  `profiles/vigia/logs/discord_post_error.log` **solo cuando falla**; ausencia de entrada == entrega OK
+  (confirmado visualmente por el Admin en el hilo de Vigía, 04-nov-2026).
+- Rollback: `tar -xzf /opt/hermes-backups/gateway-alert-<stamp>.tar.gz -C /` + `systemctl daemon-reload`.
+- Artefactos versionados (copia de trabajo): `/opt/data/brain/ops/2026-11-04-gateway-alert/`.
+
 ## Skills relacionadas (user-owned, no editar)
 - `hermes-multiprofile-gateway-ops`: leyes 1-4 del gateway multiperfil (servicio s6
   real, config cacheada, canales Discord, sesiones por perfil). Esta skill la
