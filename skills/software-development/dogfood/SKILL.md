@@ -1,7 +1,6 @@
 ---
 name: dogfood
-description: "Use when doing exploratory QA of a web app in a browser."
-tags: [qa, testing, browser, exploratory, bug-report]
+description: "Exploratory QA of web apps: find bugs, evidence, reports."
 version: 1.0.0
 author: Teknium (teknium1), Hermes Agent
 license: MIT
@@ -163,3 +162,4 @@ Save the report to `{output_dir}/report.md`.
 - **Check responsive behavior** by noting any layout issues visible in screenshots.
 - **Don't forget edge cases**: empty states, very long text, special characters, rapid clicking.
 - When reporting screenshots to the user, include `MEDIA:<screenshot_path>` so they can see the evidence inline.
+- **Need hard evidence without the browser toolset** (SSO walls, sub-500px viewports, proof a meta-refresh/JS redirect navigates)? See `references/headless-chrome-surface-verification.md` — headless-Chrome harnesses with server request-log proof, iframe viewports, and deployed-byte visual checks (grep green is NOT surface verification).

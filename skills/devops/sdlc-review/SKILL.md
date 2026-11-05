@@ -1,7 +1,6 @@
 ---
 name: sdlc-review
-description: "Use when reviewing a Kanban handoff and verdicting."
-tags: [kanban, review, verificacion, calidad, handoff, sdlc]
+description: Review Kanban handoffs and route verified outcomes.
 version: 1.1.0
 author: Jakub Wolniewicz (@frizikk) + Hermes Agent
 license: MIT
@@ -166,6 +165,7 @@ Do not edit the implementation while acting as reviewer. Request changes and let
 - **Skipping prior rounds:** Re-review must confirm both the requested corrections and preservation of previously passing behavior.
 - **Using blockers for ordinary rework:** Correctable defects belong in `kanban_request_changes`; reserve `kanban_block` for genuine external blockers or human decisions.
 - **Completing without evidence:** Every approval summary must name the checks or artifacts actually inspected.
+- **Assuming a worker can close a sibling card:** a worker is fenced. `agent/delegation_context.py::kanban_path_is_fenced()` returns True for every dispatcher descendant (`HERMES_DELEGATED_CHILD_CONTEXT` + pinned `HERMES_KANBAN_DB`), `hermes_cli/kanban.py::_is_delegated_child_cli_mutation()` denies `complete`/`comment`/`edit`/`unblock` through the CLI, and `tools/kanban_tools.py::_assert_own_task` rejects a foreign `task_id`. Every newly created card inherits the fence, so delegating the transition to the owning profile does not work either (that worker blocks it too). When a coordination card is asked to close a sibling: record the verdict with `kanban_comment` on the target card, then `kanban_block(kind="needs_input")` on your own card carrying the exact one-line `hermes kanban complete <target> --summary ... --metadata ...` for an unfenced operator session (Desktop/CLI), plus the board state you expect afterwards. Never route the same mutation through a cron job or an env-unset trick: that fence is the boundary being protected, not a bug to work around.
 
 ## Verification
 
