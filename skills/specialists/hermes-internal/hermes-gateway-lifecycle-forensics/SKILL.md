@@ -124,6 +124,28 @@ systemd crash-loopea cada RestartSec con `ModuleNotFoundError` (p.ej. `yaml` en
   `git worktree` (los de la flota viven en `/opt/hermes-agent-data/fleet/worktrees/`).
   Nunca cambiar el checkout de producción de rama: el gateway corre desde ese directorio.
 
+## gateway_replace_ownership_unproven: el symlink /opt/data rompe el --replace
+Síntoma: el unit arranca, carga código y plataformas, pero sale con código 1 y systemd lo
+releva cada ~20 s indefinidamente. `gateway_state.json` queda con
+`"exit_reason": "gateway_replace_ownership_unproven"` y `"gateway_state": "startup_failed"`.
+Los logs del gateway NO muestran SIGTERM ni shutdown: muere antes.
+
+- Causa: `/opt/data` es symlink de `/opt/hermes-agent-data`. El `--replace` prueba propiedad
+  comparando el `hermes_home` del lock contra el propio **como string**: el servicio normaliza
+  a `/opt/data` y el lock del gateway vivo dice `/opt/hermes-agent-data` → "ownership unproven"
+  → se niega a desalojarlo y aborta.
+- Quién tiene el lock: `cat /opt/hermes-agent-data/gateway.lock` (pid + argv + hermes_home).
+  Quién sirve los puertos: `ss -ltnp | grep -E ':8642|:8644|:9900'`.
+- Recuperación verificada (04-nov-2026): matar el gateway que retiene el lock. Si no muere con
+  SIGTERM en ~10 s (se queda en su propio drain), **SIGKILL**. En cuanto el lock queda libre,
+  el siguiente intento de systemd arranca, escribe su propio lock y abre los puertos.
+- Verificación: `ss -ltnp` owner == `systemctl show -p MainPID hermes-agent.service`,
+  `NRestarts` congelado, `gateway_state.json` con `gateway_state: running` y las 6 plataformas
+  con `writer_pid` == ese MainPID.
+- Prevención: nunca lanzar `gateway run` a mano (deja procesos PPID 1 que roban el lock);
+  los clientes que piden runtime durante una ventana de arranque crean gateways "unmanaged"
+  (`--idle-exit`) que compiten con el servicio. Una sola ruta canónica de HERMES_HOME.
+
 ## Skills relacionadas (user-owned, no editar)
 - `hermes-multiprofile-gateway-ops`: leyes 1-4 del gateway multiperfil (servicio s6
   real, config cacheada, canales Discord, sesiones por perfil). Esta skill la
