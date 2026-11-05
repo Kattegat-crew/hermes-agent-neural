@@ -215,6 +215,8 @@ task graphs. See **[references/examples.md](references/examples.md)**.
    CHILD of the spend task so the pipeline cannot proceed on unverified audio.
    Never let a worker self-unblock or run retries beyond the authorized count.
 
+10. **Boards never merge — reorganize with an index card.** Hermes kanban has no supported way to move tasks between two EXISTING boards: `hermes kanban boards export <slug>` + `import` always lands as a NEW board (never overwrites or merges), recreating cards by hand loses `task_events`/`task_runs`/IDs, and moving a subset strands parent links in the source DB. If the user asks to "move tasks to board X" (verified 4-nov-2026, El Aguinaldo: documentation cluster on the default board vs. production board), keep originals in place and create ONE blocked index card on the target board (`initial_status="blocked"`) whose body names the source board, tenant, gate task id, and the reason — no automatic cross-board dependencies. Record the decision for the user; never attempt raw SQL between board SQLite files (dispatcher locks + WAL make it unsafe).
+
 ## File map
 
 ```

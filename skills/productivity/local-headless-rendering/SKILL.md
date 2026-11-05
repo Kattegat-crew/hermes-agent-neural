@@ -60,13 +60,54 @@ correcto en un flujo «paso a paso» donde el usuario no firma gasto hasta ver a
 
 - El **MP4** (o PNG) y el **keyframe** (frame t=1 s): el keyframe suele reutilizarse como imagen base de la
   etapa siguiente (refiner/upscale), así que se guarda junto al vídeo, no en `/tmp`.
+- Verifica el MP4 con `ffprobe` (resolución, fps, duración, tamaño) y adjúntalo al chat antes de declarar
+  entregado: «build exit 0» no prueba que el vídeo se vea bien ni que tenga las dimensiones pedidas.
+- Tras verificar el MP4, borra los directorios de frames intermedios (`frames_render/`, `frames_golden/`,
+  `frames_lucky/`, `qa/`): a 1080p+ son gigabytes por proyecto, 100% regenerables desde el compose/build, y
+  son el mayor consumidor de disco del workspace. El entregable vive en `entrega/` o `out/` y no se toca.
+- En 9:16 (1080×1920) deja libres los últimos ~330 px verticales: la UI de Instagram (caption, botones) tapa
+  esa franja. El pie de marca va alrededor de y≈1586, no pegado al borde inferior.
+
+## Fuentes web en el compose: precarga explícita, nunca confíes en `document.fonts.ready`
+
+Síntoma real (rendición oct-2026): «la tipografía cambia a mitad del video».
+Causa raíz: los `@font-face` con `data:` URI cargan **lazy al primer uso** — `document.fonts.ready`
+se resuelve ANTES de que el canvas pida la primera fuente, así que los primeros frames de cada
+sesión de navegador se pintan con la fallback y, cuando las fuentes terminan de activar, el resto
+de frames cambia de tipografía. Si el render reabre el navegador por chunks, la carrera se repite.
+
+Fix verificado: en el HTML del compose, en vez de `fonts.ready.then(...)`, precargar cada cara usada
+y verificar con check duro:
+```js
+const FACES = ['400 16px "DM Sans"', '500 16px "DM Sans"', '700 16px "DM Sans"', '400 16px "DM Serif Display"'];
+window.ready = (async () => {
+  await Promise.all(FACES.map(f => document.fonts.load(f)));
+  await document.fonts.ready;
+  window.__fontsOK = FACES.every(f => document.fonts.check(f));
+})();
+```
+y en el renderer, tras `await page.evaluate(() => window.ready)`, abortar si `window.__fontsOK !== true`
+(no seguir con la fallback silenciosamente).
+
+Corolario: si el fix cambia cómo se pintan las fuentes, **invalida TODO el caché de frames** — apartar
+los directorios `frames_*` (con `mv`, ver pitfall de `rm -rf`) y re-renderizar completo; reusar frames
+con la fallback contamina el video entero.
 
 ## Pitfalls
 
+- `rm -rf` recursivo sobre rutas `/opt` está bloqueado por la regla de deny del Admin (approvals.deny).
+  Para descartar cachés regenerables gigantes (frames), apartarlos con `mv` a un nombre `.bak-*` y que el
+  render escriba directorio nuevo; nunca intentar burlar la regla reformulando el comando.
+- Antes de correr el `build.sh` de un proyecto, mira qué variable de entorno espera su binario de navegador:
+  algunos pipelines de esta casa leen `CHROME_BIN` y otros `CHROMIUM_BIN`. Exportar la equivocada hace que el
+  script caiga al stub del snap o falle en silencio.
 - No concluyas «el navegador no funciona» por un `--version` exitoso: mide el artefacto.
 - No bajes el primer binario de una lista de descargas sin filtrar por plataforma (ver referencia).
 - Presupuesta minutos por frame, no segundos: subestimar convierte un render en un timeout aparente.
 - Si el render alimenta un pipeline pago, verifica el resultado **antes** de encadenar el paso que cuesta.
+- Correr el mismo build varias veces (retries, segundas pasadas) deja procesos background duplicados que
+  notifican después: al recibir la notificación, compara con lo ya entregado antes de re-enviar archivos —
+  si es una versión superada (v1 cuando ya salió v2), responde «sin cambios» en una línea.
 
 ## Soporte
 

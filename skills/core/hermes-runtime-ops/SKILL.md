@@ -51,3 +51,33 @@ Esta skill opera como despacho unificado. El detalle procedural y gotchas espec�
 - **hermes-session-organization**: Ver [references/hermes-session-organization.md](file:///root/hermes-agent-legacy-docker/skills/core/hermes-runtime-ops/references/hermes-session-organization.md)
 - **hermes-usage-cost-audit**: Ver [references/hermes-usage-cost-audit.md](file:///root/hermes-agent-legacy-docker/skills/core/hermes-runtime-ops/references/hermes-usage-cost-audit.md)
 - **hermes-workspace-setup**: Ver [references/hermes-workspace-setup.md](file:///root/hermes-agent-legacy-docker/skills/core/hermes-runtime-ops/references/hermes-workspace-setup.md)
+
+
+---
+
+## admission_conflict en WhatsApp: rutas duplicadas por persona (verificado 04-nov-2026)
+
+Síntoma: el bridge conecta y recibe mensajes, pero cada mensaje muere con
+`Error handling message: admission_conflict` y el usuario ve error en WhatsApp.
+
+Causa: varias `profile_routes` para la misma persona (`<n>@lid`, `<n>@s.whatsapp.net` y `<n>`).
+El matcher compara WhatsApp **entre formatos**, así que las tres coinciden con el mismo mensaje, empatan
+en especificidad y `_runtime_profile` levanta `admission_conflict` antes de entregar.
+
+Diagnóstico reproducible sin arrancar el gateway:
+
+```python
+from gateway.profile_routing import ProfileRoute
+# construir las rutas sospechosas y contar coincidencias por chat_id
+[r.name for r in rutas if r.matches("whatsapp", chat_id="<chat>", adapter_profile=None, user_id="<num>")]
+```
+
+Si devuelve más de una, es esto. Regla: **una sola ruta por persona**; el cross-format ya cubre lid, jid y número.
+
+Corrección: `config.yaml` está protegido contra escritura del agente. Usar `hermes config set gateway.profile_routes '<json>'`
+(el valor se parsea con `yaml.safe_load`, así que un array JSON es válido). Respaldo antes, y verificar después que
+cada chat resuelve a exactamente una ruta y que las rutas de otras plataformas siguen ahí.
+
+Reinicio: no se puede reiniciar el gateway desde dentro de sí mismo (SIGTERM mata el comando).
+Lanzarlo desde el host: `ssh root@127.0.0.1 'setsid bash -c "sleep 20; systemctl restart hermes-agent.service" &'`
+y confirmar en el log `✓ whatsapp connected` + un mensaje real respondido.

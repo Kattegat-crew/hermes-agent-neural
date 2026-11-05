@@ -47,6 +47,16 @@ gateway:
 - Clarificación de latencia: `profile_routes` = UN salto LLM (el del perfil destino). Un "orquestador-puente" custom = DOS saltos (puente decide + bot responde) — desaconsejado salvo necesidad real.
 - Sin conflicto de sesión: a diferencia de dos bridges sobre el mismo número (Baileys → `440 conflict loop`), el routing es lógico dentro del mismo gateway.
 
+## Mantener rutas en caliente (mutar + reiniciar sin romper el turno)
+
+Procedimiento verificado para cambiar `profile_routes` en un gateway en producción:
+
+1. **Respaldo:** copia `config.yaml` a `config.yaml.bak-<fecha>` antes de tocar nada.
+2. **Mutar por CLI, no a mano:** el guard de Hermes bloquea la edición directa de `config.yaml` desde una sesión de agente. Usa `hermes config set gateway.profile_routes '<json>'` — el valor se parsea con `yaml.safe_load`, así que un array JSON de dicts queda como lista YAML real. Para construir el array, parsea el bloque existente del archivo (no lo reescribas de memoria).
+3. **Sin hot-reload:** `profile_routes` se carga solo al arrancar el gateway (`gateway/config.py`); cualquier cambio exige reinicio.
+4. **Reiniciar desde fuera del gateway:** el gateway no puede reiniciarse desde su propio turno — `hermes gateway restart` lanzado desde dentro muere con el proceso (SIGTERM se propaga a los hijos). Lánzalo desde el host: `ssh -o BatchMode=yes root@127.0.0.1 'systemctl restart hermes-agent.service'` (el gateway corre como servicio systemd del host).
+5. **No perder la respuesta en vuelo:** programa el reinicio detached con un `sleep` inicial (15–20 s) para que la respuesta del turno se entregue antes del corte, y que el mismo comando de host escriba un post-check (`systemctl is-active` + grep de `whatsapp connected` / `admission_conflict` en el log) en un archivo bajo `/opt/hermes-agent-data/logs/` — camino compartido con el contenedor — para verificar al reconectar.
+
 ## Limitaciones honestas (verificar antes de prometer)
 
 - La allowlist del bridge (`WHATSAPP_ALLOWED_USERS`) sigue siendo global al número; el routing decide perfil, no autorización.
@@ -56,6 +66,7 @@ gateway:
 ## Pitfalls
 
 - No prometer "un número por bot" ni "bridge por perfil" sin haber evaluado `profile_routes` primero — es la respuesta con evidencia a esa pregunta frecuente.
+- Deja UNA sola entrada de `profile_routes` por persona y canal. Si la misma persona tiene varias rutas cuyos `chat_id` representan el mismo remitente en formatos distintos (`@lid`, `@s.whatsapp.net`, número crudo), cada mensaje entrante matchea todas las rutas empatadas y muere con `admission_conflict` en el log del gateway. Ante "no responde en WhatsApp", grep del log por `admission_conflict` ANTES de sospechar de la sesión del bridge o el emparejamiento Baileys — la sesión puede estar perfectamente sana.
 - Al buscar recursos del equipo sobre este tema, distinguir lo creado internamente (repos Kattegat-crew, scripts onboard-agent) de lo compartido externamente (canales "Links de X" / "Repos Git", Notion) — el Admin distingue ambos y espera precisión.
 
 ## Referencias

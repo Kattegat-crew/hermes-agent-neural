@@ -97,8 +97,27 @@ contra el WAV original), **no hay que remezclar voz**: se recorta y se concatena
   (`clips/S1-mix.mp4`) junto al `S1-seedance.mp4`, con tarjeta que explica qué es cada uno.
 - Cada escena necesita su propia calibración de atempo (la brecha varía por frase).
 
+## SFX repetidos (whoosh por transición): UN input POR copia, nunca `aloop`+`asplit`
+
+Síntoma real (rendición oct-2026): un ruido rítmico tipo «raspar/corazón» a lo largo de TODO el
+video, aunque se pidiera 1 whoosh por transición. Causa raíz: fan-out de un solo input con
+`aloop=loop=n-1:size=...,asetpts=N/SR/TB,asplit=n` — el loop PISA cada copia con los `n-1`
+ciclos anteriores → `n*(n-1)` whooshes solapados (con n=9 beats: 64 sonidos superpuestos,
+repetidos cada `size/SR` segundos = latido constante).
+
+Fix verificado: pasar el SFX **n veces como input independiente** (`-i whoosh` por cada
+transición) y a cada uno `atrim=0:<dur>,adelay=<ms>|<ms>` antes del `amix` del bus. Los índices
+de input posteriores (chime, etc.) dependen de ese conteo — calcularlos como `n_sfx + offset`,
+nunca hardcodearlos.
+
+QA que lo habría atrapado antes: escuchar/inspeccionar el mix SOLO (sin video) o espectralmente;
+el ruido del fan-out es inconfundible como pulsación regular.
+
 ## Pitfalls
 
+- `bash -c "..."` con variables `$b`/`$f` dentro de comillas dobles las expande el shell EXTERIOR
+  (vacías) → el script interno recibe cero argumentos (IndexError). Para rebuilds multi-capa,
+  escribir el script a disco (`rebuild.sh`) y ejecutar `bash rebuild.sh`.
 - `--speed` de ElevenLabs NO estira el audio (verificado 29/08: `--speed 0.75` devolvió la
   misma cadencia, Δ +1.28s persistente). El timing SIEMPRE se corrige con atempo de ffmpeg
   post-grabación.

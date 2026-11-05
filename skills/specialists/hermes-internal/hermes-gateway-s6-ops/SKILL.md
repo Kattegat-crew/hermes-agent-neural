@@ -95,3 +95,31 @@ Confirmación rápida del supervisor: `ls -la /run/service/` + `ps -eo pid,cmd |
 - `devops:whatsapp-bridge-operations` (user-owned) tiene el resto del manual del bridge
   (allowlist, grupos, voz) — la sección de "reinicio" de esa skill es la que está
   equivocada; adoptarla para corregirla.
+
+## Por qué reiniciar tras cada update: skew gateway/código (verificado 04-nov-2026)
+
+El gateway NO tiene hot-reload de código: si `/opt/hermes-agent` se actualiza sin reiniciar
+los gateways, la flota queda un tier por detrás del árbol. Síntoma característico: TODOS los
+workers kanban mueren deterministamente con `Hermes no pudo iniciar la conexión con el modelo:
+invalid_params` (exit 1, pid gone) en oleadas que empiezan justo después del update. Causa:
+el worker client (`-m hermes_cli.kanban_worker_client`) corre con el árbol nuevo y envía RPC
+con campos nuevos (ej. `kanban.run` con `db=db`), pero el dispatcher del contrato del
+tui_gateway del gateway VIEJO rechaza claves desconocidas con `invalid_params` bare.
+
+Diagnóstico en vivo (comparar sha del proceso vivo vs HEAD del árbol):
+
+```bash
+python3 -c "import json;d=json.load(open('/opt/hermes-agent-data/.hermes/gateway_state.json'));print(d.get('code_sha'),d.get('pid'))"
+git -C /opt/hermes-agent rev-parse HEAD
+git -C /opt/hermes-agent log --oneline <code_sha>..HEAD -- gateway/ hermes_cli/kanban* tui_gateway/
+```
+
+Si `code_sha != HEAD` y el rango toca kanban/gateway/contratos, es esto. Ver también el
+per-profile `/opt/hermes-agent-data/profiles/<name>/gateway_state.json`.
+
+Pitfall de diagnóstico: `hermes -p <perfil> chat -q "test"` PASA aunque el gateway esté
+en skew — auto-arranca un gateway propio con el código nuevo. **Una prueba CLI manual NO es
+repro válido de fallos en la ruta gateway**; reproduce siempre vía el dispatcher kanban o el
+gateway en ejecución. El warning cosmético de config (ej. `voice.stop_phrases` quoted-string)
+NO es la causa aunque aparezca en el output del worker. Prevención: agendar el reinicio
+(`gateway_restart_once.sh` vía cron `no_agent`) como paso final de CUALQUIER update del árbol.

@@ -189,6 +189,46 @@ Tras un upgrade fallido en DEV y un deploy exitoso de Roshi en PROD, los dos hos
 
 Y no presentar una conclusión vieja como actual: si el deploy de terceros ocurrió DESPUÉS del último chequeo, re-auditar antes de responder (un «PROD está intacto» previo al deploy miente después del deploy).
 
+## Smoke test pre-cutover (validar el build nuevo SIN tocar el gateway vivo)
+
+Antes de mover el árbol vivo a la rama de upgrade, validar el build en un
+worktree con un home aislado y la `state.db` REAL. Detecta tracebacks, errores
+de migración SQL y falta de módulos sin exponer el gateway de producción:
+
+```bash
+W=/opt/hermes-agent-data/cache/scratch/upgrade-wt
+git -C /opt/hermes-agent worktree add -q $W upgrade/vX.Y.Z
+S=/opt/hermes-agent-data/cache/scratch/smoke-upgrade
+rm -rf $S && mkdir -p $S
+cp /opt/data/config.yaml $S/config.yaml
+sed -i -E 's/^( *)enabled: true/\1enabled: false/' $S/config.yaml   # mata todas las plataformas
+cp /opt/hermes-agent-data/state.db $S/state.db
+cp /opt/data/.env $S/.env
+cd $W && HERMES_HOME=$S timeout 45 python3 -u -m gateway.run > /tmp/smoke.log 2>&1 || true
+# verde = 0 tracebacks y 0 errores SQL; los warnings `profile_mismatch` de
+# session_local_recovery son artefacto del home aislado (otro profile_id), no del build
+```
+
+- **El `.venv/bin/python` del repo puede producir cero salida** (ni error, ni
+  log, exit silencioso). Si el log queda en 0 líneas, repetir con el `python3`
+  del runtime (`which python3` → venv bajo `installs/…/venv/bin/python3`).
+- **El worktree bloquea el checkout del árbol vivo**: si la rama objetivo está
+  montada en un worktree, `git checkout` falla con `fatal: '<rama>' is already
+  used by worktree at '…'`. Liberar con `git worktree remove --force <ruta>`
+  antes del checkout.
+- **Llevar el trabajo sin commitear a la rama nueva**: commit convencional en
+  la rama actual + `git cherry-pick -x <hash>` tras el checkout (el flag `-x`
+  deja trazabilidad del origen).
+- **Ruido en el diff de ramas**: comparar qué falta entre ramas vieja/nueva
+  arroja decenas de scripts one-off de migración (`f4_*`, `f5_*`, `f6_*`,
+  censo). Filtrar por prefijos de runtime (`agent/ gateway/ tools/ plugins/
+  hermes_cli/`) para aislar lo que de verdad importa; los renames upstream
+  (p.ej. `tools/browser_tool_cdp.py` → `browser_cdp_tool.py`) no son huecos.
+- **Reinicio con retardo y desligado**: al desplegar desde la propia sesión
+  que se va a reiniciar, programar `setsid nohup bash -c 'sleep 75; hermes
+  gateway restart >> /tmp/deploy.log 2>&1' &` para que el informe llegue antes
+  de que el reinicio corte la sesión.
+
 ## Salida
 
 - Archivos tocados y estado post-verificación.

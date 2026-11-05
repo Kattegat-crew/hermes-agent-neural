@@ -166,6 +166,7 @@ hermes send -t 'discord:<channel_id>' -m 'Mensaje'
 - **Límite duro de 2000 chars** por mensaje (`50035 Invalid Form Body`): dividir el contenido por líneas en chunks ≤1900 y postear el resto con `POST /channels/{thread_id}/messages` (multipart si hay media).
 - **Verificar leyendo de vuelta**: `GET /channels/{thread_id}` (confirma name/tags/owner) y `GET /channels/{thread_id}/messages` (confirma el número de mensajes) — nunca declarar el ticket abierto solo por el 2xx del POST.
 - Tras crear el hilo, enviar el `token` como variable efímera de shell (`$(...)`) — nunca escribirlo a disco ni imprimirlo.
+- **Regla dura de entrega:** cuando el trabajo implementado pertenece a un ticket YA abierto, el reporte del entregable se publica EN ese hilo (`POST /channels/{thread_id}/messages`, chunks ≤1900) y se verifica por los `id` del response — nunca solo en el chat de origen. Un entregable reportado solo en chat el Admin lo cuenta como no entregado.
 
 ## Publicar COMO el bot correcto (cada perfil tiene su propio token)
 
