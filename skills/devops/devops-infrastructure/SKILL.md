@@ -66,6 +66,14 @@ When a new CVE or CA compromise breaks, map exposure FIRST (live, never from mem
 - Python bundles are SEPARATE from the system store: get the bundle path from `python3 -c 'import certifi; print(certifi.where())'`, grep it for the root name, and check `certifi.__version__`. Upgrade with `uv pip install --python python3 --upgrade certifi` (2026.05.20 → 2026.10.19 here). After upgrading, re-grep and confirm the exact dangerous root is GONE — the fixed bundle keeps other roots of the same vendor (benign C1/C3/G1 remained; the compromised ECC Root CA - G3 and AAA Certificate Services were removed), so a vendor-name grep count greater than 0 is NOT proof of failure.
 - grep -c exits 1 on zero matches: append `|| true` or the `&&`/`||` chain prints both the 0 and a fallback message, confusing the output.
 
+## Container Privilege Audit (docker.sock)
+A container with `docker.sock` mounted is root-of-host by proxy: anyone controlling it can run a privileged container with `/` mounted. Always-on rules:
+- Inventory mounts in one pass (`docker inspect -f '{{range .Mounts}}{{.Source}} {{end}}'` per container, flag sock matches) and confirm each suspect from inside (`docker exec <c> test -S /var/run/docker.sock`) before acting on inspect output.
+- Classify before touching: structural holders stay, documented as accepted residual risk; convenience mounts come out (backup compose first, `up -d --force-recreate`, verify socket gone from inside AND service still answers). Removal kills every Kuma `docker`-type monitor (ENOENT) — plan the coverage replacement BEFORE recreating.
+- Coverage without the socket: HTTP/port monitors + a Push monitor fed by a host-side cron checking unhealthy/restarting/policy-stopped containers. Full recipe, self-test protocol, kuma.db write cycle and by-design deactivation rules → `references/docker-socket-hardening.md`.
+- Report honestly: a Tailscale-only socket means the app login is the single barrier to root — state residual risk + the `docker-socket-proxy` option, never "fixed".
+- Scope the severity honestly: a socket holder bound only to the Tailscale IP is not internet-exposed, but the app's own login becomes the single barrier between a compromised account and root of the host. Report it as residual risk with the mitigation option (read-only `docker-socket-proxy`), not as "fixed".
+
 ## Cloudflare via MCP (tooling pitfall, validated 23/10/2026)
 - `mcp__cloudflare__execute` only accepts a **JavaScript async arrow function** as `code`: `async () => { ... }` (sandbox provides `headers` + `fetch`; return a value). Top-level statements (`const ...`, IIFE, `return ...`) all fail with `Unexpected token ...`.
 - After 3 rejected calls the MCP server pauses ~50s and refuses more — never loop retries; check the calling convention first (`mcp__cloudflare__search`'s schema says "JavaScript async arrow function").
