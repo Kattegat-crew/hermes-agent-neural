@@ -124,27 +124,31 @@ systemd crash-loopea cada RestartSec con `ModuleNotFoundError` (p.ej. `yaml` en
   `git worktree` (los de la flota viven en `/opt/hermes-agent-data/fleet/worktrees/`).
   Nunca cambiar el checkout de producción de rama: el gateway corre desde ese directorio.
 
-## gateway_replace_ownership_unproven: el symlink /opt/data rompe el --replace
-Síntoma: el unit arranca, carga código y plataformas, pero sale con código 1 y systemd lo
-releva cada ~20 s indefinidamente. `gateway_state.json` queda con
-`"exit_reason": "gateway_replace_ownership_unproven"` y `"gateway_state": "startup_failed"`.
-Los logs del gateway NO muestran SIGTERM ni shutdown: muere antes.
+## gateway_replace_ownership_unproven: guard fail-closed del --replace
+Síntoma: el unit arranca (aplica secrets, imprime el banner), sale con código 1 y systemd lo releva
+cada ~20 s indefinidamente. `gateway_state.json` queda `startup_failed` +
+`exit_reason: gateway_replace_ownership_unproven`, y el log del gateway NO muestra SIGTERM ni
+shutdown: muere en el bootstrap, antes de levantar adaptadores.
 
-- Causa: `/opt/data` es symlink de `/opt/hermes-agent-data`. El `--replace` prueba propiedad
-  comparando el `hermes_home` del lock contra el propio **como string**: el servicio normaliza
-  a `/opt/data` y el lock del gateway vivo dice `/opt/hermes-agent-data` → "ownership unproven"
-  → se niega a desalojarlo y aborta.
-- Quién tiene el lock: `cat /opt/hermes-agent-data/gateway.lock` (pid + argv + hermes_home).
-  Quién sirve los puertos: `ss -ltnp | grep -E ':8642|:8644|:9900'`.
-- Recuperación verificada (04-nov-2026): matar el gateway que retiene el lock. Si no muere con
-  SIGTERM en ~10 s (se queda en su propio drain), **SIGKILL**. En cuanto el lock queda libre,
-  el siguiente intento de systemd arranca, escribe su propio lock y abre los puertos.
-- Verificación: `ss -ltnp` owner == `systemctl show -p MainPID hermes-agent.service`,
-  `NRestarts` congelado, `gateway_state.json` con `gateway_state: running` y las 6 plataformas
-  con `writer_pid` == ese MainPID.
-- Prevención: nunca lanzar `gateway run` a mano (deja procesos PPID 1 que roban el lock);
-  los clientes que piden runtime durante una ventana de arranque crean gateways "unmanaged"
-  (`--idle-exit`) que compiten con el servicio. Una sola ruta canónica de HERMES_HOME.
+- Dónde: `gateway/run_bootstrap.py::_start_gateway_replace_existing_instance` →
+  `gateway/run.py::_replace_target_belongs_to_other_profile`. Es un guard anti cross-profile:
+  **nunca señaliza un PID que no pueda probar como suyo**; si no puede probarlo, falla cerrado.
+- Qué exige probar (lee `$HERMES_HOME/gateway.pid`): (1) el registro nombra **el mismo PID** que la
+  instancia viva; (2) **mismo `start_time`**; (3) mismo `hermes_home`, comparado con
+  `_canonical_hermes_home` → `Path.resolve()`, así que `/opt/data` y `/opt/hermes-agent-data`
+  **sí** son equivalentes (el symlink no es la causa). Cualquier desajuste = refuse.
+- Causa típica: varios gateways compitiendo por el mismo home (unmanaged `--idle-exit` lanzados por
+  workers kanban, dashboard o CLI durante una ventana de arranque). El registro queda apuntando a un
+  PID/start-time que ya no es el vivo → "ownership unprovable" → el `--replace` se niega a desalojar
+  → el servicio muere y systemd lo reintenta en bucle.
+- Recuperación verificada (04-nov-2026): eliminar al competidor que retiene el lock
+  (`cat $HERMES_HOME/gateway.lock` te da pid + start_time). SIGTERM y, si se queda en su drain
+  (SIGTERM ignorado ~10 s), **SIGKILL**. Sin instancia viva el guard no se ejecuta: el siguiente
+  intento de systemd arranca, reescribe `gateway.pid`/`gateway.lock` y abre 8642/8644/9900.
+- Verificación: owner de los puertos == `systemctl show -p MainPID hermes-agent.service`,
+  `NRestarts` congelado, y `gateway.pid` con ese PID + su `start_time` + `hermes_home`.
+- Prevención: no lanzar `gateway run` a mano (deja PPID 1 que roban el lock); una sola ruta canónica
+  de HERMES_HOME; y el servicio debe estar arriba antes de que un cliente pida runtime.
 
 ## Skills relacionadas (user-owned, no editar)
 - `hermes-multiprofile-gateway-ops`: leyes 1-4 del gateway multiperfil (servicio s6
