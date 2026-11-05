@@ -9,6 +9,7 @@
 !/scripts/run_brain_graph.sh
 !/scripts/nan_reviewer.py
 !/scripts/nan_quota_watch.py
+!/scripts/rendicion-mensual/
 !/tools/
 /tools/*
 !/tools/embed_brain.py
@@ -20,4 +21,10 @@
 !/skills/core/
 /skills/core/*
 !/skills/core/memory-compaction/
+!/skills/specialists/
+/skills/specialists/*
+!/skills/specialists/rendicion-mensual-golden-lucky/
+!/skills/operations/
+/skills/operations/*
+!/skills/operations/estructura-drive-neuralcrew/
 __pycache__/
