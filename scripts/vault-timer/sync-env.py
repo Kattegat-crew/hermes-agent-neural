@@ -1,0 +1,314 @@
+#!/usr/bin/env python3
+"""Sync vault items into .env files — SSOT de la Política de Secretos (Fase 1).
+
+Llamado por /opt/vault/timer/vault-sync.sh con SESSION como argv[1].
+
+Spec: .specs/politica-secretos-vault-sync/01-spec.md  ·  Design: 02-design.md
+
+Diseño (ver 02-design.md):
+  * MERGE PRESERVATIVO a nivel de línea (RF-1..RF-4): solo cambian las líneas
+    cuya clave esta en ``mappings``; comentarios, lineas en blanco, claves ajenas,
+    prefijos ``export`` y estilos de fin de linea se conservan byte a byte.
+  * PARIDAD DEV/PROD (RF-5): guard de directorio padre (SKIPPED), captura de
+    OSError por target (FAILED), SUMMARY final, ``owner`` con aviso si no existe,
+    restart SOLO si el contenido cambio y fallback ``notes`` del secure note.
+  * ESCRITURA ATOMICA (RF-6): temporal en el mismo directorio + os.replace; si
+    falla, el .env original queda intacto y el target cuenta FAILED.
+  * Exit 1 solo si failed>0 and ok==0 (RF-7); bw list items con timeout 30s (RF-8).
+
+Contrato de log (sin cambios, lo usa /var/log/vault-sync.log):
+  Processing: <file> | WARNING: ... | Updated: KEY | SKIPPED: ... | FAILED: ...
+  DONE:<file> | SUMMARY: ok=N skipped=N failed=N
+"""
+from __future__ import annotations
+
+import json
+import os
+import re
+import subprocess
+import sys
+import tempfile
+
+DEFAULT_MAPFILE = "/opt/vault/timer/vault-to-env-map.json"
+
+_KV_RE = re.compile(
+    r"^(?P<prefix>\s*(?:export\s+)?)(?P<key>[A-Za-z_][A-Za-z0-9_.\-]*)\s*=(?P<rest>.*)$"
+)
+
+
+class VaultFetchError(RuntimeError):
+    """bw no devolvio el listado de items (RC!=0 o JSON invalido)."""
+
+
+# ----------------------------------------------------------------- RF-1..RF-4
+def split_eol(line: str) -> tuple[str, str]:
+    """(cuerpo, terminador) conservando '\\n', '\\r\\n', '\\r' o ''."""
+    for eol in ("\r\n", "\n", "\r"):
+        if line.endswith(eol):
+            return line[: -len(eol)], eol
+    return line, ""
+
+
+def split_value_comment(rest: str) -> tuple[str, str]:
+    """(valor, comentario_en_linea) consciente de comillas: ' #' dentro de
+    comillas NO es comentario; ' #' (espacio + #) fuera de comillas si lo es."""
+    quote = None
+    i = 0
+    while i < len(rest):
+        c = rest[i]
+        if quote:
+            if c == quote:
+                quote = None
+        elif c in ('"', "'"):
+            quote = c
+        elif c == "#" and i > 0 and rest[i - 1] in (" ", "\t"):
+            # el comentario conserva el espacio/tab que lo precede
+            return rest[:i].rstrip(), rest[i - 1 :]
+        i += 1
+    return rest, ""
+
+
+def merge_env_text(text: str, updates: dict) -> str:
+    """RF-1..RF-4: solo sustituye valores de claves mapeadas; el resto es literal."""
+    lines = text.splitlines(keepends=True) if text else []
+    seen = set()
+    out = []
+    for line in lines:
+        body, eol = split_eol(line)
+        if body.strip() and not body.lstrip().startswith("#"):
+            m = _KV_RE.match(body)
+            if m:
+                key = m.group("key")
+                if key in updates:
+                    seen.add(key)
+                    _, comment = split_value_comment(m.group("rest"))  # el valor viejo se descarta
+                    out.append(f"{m.group('prefix')}{key}={updates[key]}{comment}{eol}")
+                    continue
+        out.append(line)
+
+    for key in updates:
+        if key in seen:
+            continue
+        if out and out[-1] and not out[-1].endswith(("\n", "\r")):
+            out[-1] += "\n"
+        out.append(f"{key}={updates[key]}\n")
+    return "".join(out)
+
+
+# ----------------------------------------------------------------------- RF-5
+def extract_field_value(item: dict, field: str):
+    """Valor de un campo del item: login / custom / notes (+fallback env) / card / identity."""
+    item_type = item.get("type")
+    if item_type == 1:  # login
+        login = item.get("login", {})
+        if field == "username":
+            return login.get("username")
+        if field == "password":
+            return login.get("password")
+        for cf in item.get("fields", []):
+            if cf.get("name") == field:
+                return cf.get("value")
+        if field == "url":
+            uris = login.get("uris", []) or []
+            if uris:
+                return uris[0].get("uri")
+        return None
+    if item_type == 2:  # secure note
+        if field == "notes":
+            return item.get("notes")
+        for cf in item.get("fields", []):
+            if cf.get("name") == field:
+                return cf.get("value")
+        # Fallback PROD: tratar el contenido del note como .env
+        for nline in (item.get("notes") or "").splitlines():
+            nline = nline.strip()
+            if nline and not nline.startswith("#") and "=" in nline:
+                nk, nv = nline.split("=", 1)
+                if nk == field:
+                    return nv
+        return None
+    if item_type == 4:  # card
+        card = item.get("card", {})
+        for k in ("cardholderName", "number", "expMonth", "expYear", "code", "brand"):
+            if field.lower() == k.lower():
+                return card.get(k)
+        return None
+    if item_type == 5:  # identity
+        ident = item.get("identity", {})
+        for k in (
+            "firstName", "lastName", "email", "phone", "address1", "city",
+            "state", "postalCode", "country", "ssn", "username",
+        ):
+            if field.lower() == k.lower():
+                return ident.get(k)
+        return None
+    for cf in item.get("fields", []):
+        if cf.get("name") == field:
+            return cf.get("value")
+    return None
+
+
+def build_updates(target: dict, item_map: dict, warn) -> dict:
+    updates = {}
+    for m in target.get("mappings", []):
+        item_name, field, env_key = m.get("item"), m.get("field"), m.get("env")
+        item = item_map.get(item_name)
+        if not item:
+            warn(f"  WARNING: Item not found in vault: {item_name}")
+            continue
+        value = extract_field_value(item, field)
+        if value is None:
+            warn(f"  WARNING: Field '{field}' not found in item '{item_name}'")
+            continue
+        updates[env_key] = value.rstrip("\n")
+        warn(f"  Updated: {env_key}")
+    return updates
+
+
+# ----------------------------------------------------------------------- RF-6
+def atomic_write(path: str, text: str, mode="0600", owner=None, warn=None):
+    """Temporal en el mismo directorio + os.replace. El original solo se pierde
+    si el reemplazo tuvo exito (RF-6).
+
+    Politica de codificacion del repo (check-windows-footguns): lecturas con
+    utf-8-sig, ESCRITURAS con utf-8. Un BOM que traiga el archivo original se
+    elimina en la primera escritura (los parsers dotenv/JSON lo rechazan)."""
+    import pwd  # import local: el modulo es POSIX-only (guard footguns)
+
+    warn = warn or (lambda msg: None)
+    dirname = os.path.dirname(path) or "."
+    fd, tmp = tempfile.mkstemp(prefix=".env-sync-", dir=dirname)
+    try:
+        with os.fdopen(fd, "w", encoding="utf-8") as f:
+            f.write(text)
+        os.chmod(tmp, int(str(mode), 8))
+        if owner:
+            try:
+                pw = pwd.getpwnam(owner)
+                os.chown(tmp, pw.pw_uid, pw.pw_gid)
+            except KeyError:
+                warn("  WARNING: owner '%s' does not exist, ownership unchanged" % owner)
+        os.replace(tmp, path)
+    except BaseException:
+        try:
+            os.unlink(tmp)
+        except OSError:
+            pass
+        raise
+
+
+def read_text(path: str) -> str:
+    """Lectura BOM-tolerante (utf-8-sig). Un archivo sin cambios no se reescribe,
+    por lo que un BOM preexistente solo desaparece en la primera escritura real
+    (los parsers lo rechazan de todos modos). Devuelve "" si no existe."""
+    if not os.path.exists(path):
+        return ""
+    with open(path, "rb") as f:
+        raw = f.read()
+    return raw.decode("utf-8-sig")
+
+
+def sync_target(target: dict, item_map: dict, warn=None, out=None, restart_fn=None) -> str:
+    """Un target -> 'ok' | 'skipped' | 'failed'. Nunca levanta excepcion por target."""
+    warn = warn or (lambda msg: print(msg, file=sys.stderr))
+    out = out or print
+    restart_fn = restart_fn or os.system
+
+    env_file = target.get("file")
+    parent = os.path.dirname(env_file or "")
+    if not env_file or (parent and not os.path.isdir(parent)):
+        warn(f"  SKIPPED: parent dir does not exist: {parent}")
+        return "skipped"
+
+    try:
+        original = read_text(env_file)
+    except (OSError, UnicodeDecodeError) as e:
+        warn(f"  FAILED: could not read {env_file}: {e}")
+        return "failed"
+    updates = build_updates(target, item_map, warn)
+    merged = merge_env_text(original, updates)
+
+    changed = merged != original or not os.path.exists(env_file)
+    if changed:
+        try:
+            atomic_write(
+                env_file, merged, target.get("mode", "0600"),
+                target.get("owner"), warn,
+            )
+        except OSError as e:
+            warn(f"  FAILED: could not write {env_file}: {e}")
+            return "failed"
+        restart = target.get("restart")
+        if restart:
+            warn(f"  Changed, restarting: {restart}")
+            restart_fn(restart)
+    else:
+        warn("  No changes, skipping restart")
+
+    out(f"DONE:{env_file}")
+    return "ok"
+
+
+# ----------------------------------------------------------------------- RF-8
+def fetch_items(session: str, runner=None) -> dict:
+    runner = runner or subprocess.run
+    try:
+        result = runner(
+            ["bw", "list", "items", "--session", session],
+            capture_output=True, text=True, timeout=30,
+        )
+    except Exception as e:  # timeout, binario ausente, etc.
+        raise VaultFetchError(f"bw list items failed: {e}") from e
+    if result.returncode != 0:
+        raise VaultFetchError(f"bw list items failed: {result.stderr}")
+    try:
+        raw = json.loads(result.stdout) if result.stdout.strip() else []
+    except Exception as e:
+        raise VaultFetchError(f"bw list items returned invalid JSON: {e}") from e
+    return {item.get("name"): item for item in raw}
+
+
+def main(argv, mapfile=DEFAULT_MAPFILE, fetch=None, err=None, out=None, restart_fn=None) -> int:
+    err = sys.stderr if err is None else err
+    out = sys.stdout if out is None else out
+    fetch = fetch or fetch_items
+
+    if len(argv) < 1:
+        print("ERROR: Usage: sync-env.py <SESSION>", file=err)
+        return 1
+
+    try:
+        with open(mapfile, encoding="utf-8-sig") as f:
+            data = json.load(f)
+    except Exception as e:
+        print(f"ERROR: cannot read map {mapfile}: {e}", file=err)
+        return 1
+
+    try:
+        item_map = fetch(argv[0])
+    except VaultFetchError as e:
+        print(f"ERROR: {e}", file=err)
+        return 1
+
+    ok = skipped = failed = 0
+    for target in data.get("targets", []):
+        print(f"Processing: {target.get('file')}", file=err)
+        outcome = sync_target(
+            target, item_map,
+            warn=lambda msg: print(msg, file=err),
+            out=lambda msg: print(msg, file=out),
+            restart_fn=restart_fn,
+        )
+        if outcome == "ok":
+            ok += 1
+        elif outcome == "skipped":
+            skipped += 1
+        else:
+            failed += 1
+
+    print(f"SUMMARY: ok={ok} skipped={skipped} failed={failed}", file=err)
+    return 1 if (failed and not ok) else 0
+
+
+if __name__ == "__main__":
+    sys.exit(main(sys.argv[1:]))
