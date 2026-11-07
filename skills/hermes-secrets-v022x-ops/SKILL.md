@@ -216,6 +216,23 @@ donde `bw` y ese `.env` sí existen. Vía probada end-to-end (key de billing de 
 - Residencia: el `.env` local (0600) queda como caché de lectura para scripts; el vault es
   la fuente canónica.
 
+## Acceso al CLI `vw`: siempre con sudo
+La sesión del bot vive en `/root/.bw-bot.env` (root-owned): invocar `vw` a secas falla
+con `Permission denied` sobre ese archivo. NO interpretar ese fallo como "no tengo acceso
+al vault" ni reportarlo al Admin — probar `sudo vw ...` (o `sudo -n vw`) ANTES de declarar
+un bloqueo. Regla general: un fallo de permisos en la primera invocación de una CLI es
+una pista de contexto de ejecución (uid, env), no una incapacidad de la herramienta.
+
+Extracción directa de un campo de un item: `sudo vw get "<item>" -f <FIELD>` devuelve solo
+el valor (sin el prefijo `label: `), útil para piping a una variable. Sin `-f`, la salida
+es `campo: valor` por línea.
+
+## Item de Telegram (bot NCA PROD)
+Vault item `Telegram NCA - bot+webhook - prod`, campos: `TELEGRAM_BOT_TOKEN`,
+`TELEGRAM_WEBHOOK_SECRET`, `TELEGRAM_ALLOWED_CHATS` (lista de chat IDs CSV).
+Verificar el token sin exponerlo: `curl -s "https://api.telegram.org/bot$T/getMe"`
+→ `ok:true` + `result.username`. Longitud esperada del token ≈ 46 chars.
+
 ## vw dice "Item not found" para TODO → sesión cacheada podrida (03-nov-2026)
 `vw` cachea la sesión de Bitwarden CLI en `/tmp/.bw_session_cache`. Cuando esa sesión muere,
 `bw list items --search` devuelve vacío y `vw` responde "Item not found" para ítems que sí

@@ -26,6 +26,21 @@ Reglas para reportar al Admin (Jonathan) en crons, informes de estado, y cualqui
 5. **No catalogar el estado de la flota desde memoria: verificar contra los artefactos de planificación.** Cuando el Admin pregunta "¿ya tenemos X?" o corrige con "revisa lo que hicimos ayer", la respuesta se arma leyendo en vivo: `~/planes/*.md` (planes con sección de estado de ejecución), `/opt/data/kanban.db` (tabla `tasks`, no `cards`; abrir en modo ro) y `/opt/data/cron/jobs.json` (schedule como objeto `{kind, expr|minutes}`). Corrección del 24/10/2026: respondí que los crons eran polling por categorías de memoria y el Admin me señaló que el plan crons-evento (23-oct) ya tenía buzon-bob y leads en webhooks de evento con sus tarjetas Kanban en `done`. Nunca describir capacidades por categorías mentales: citar plan + evidencia viva.
 
 6. **Entrega de cron = resumen diagnosticado, nunca volcado crudo.** Un log sin procesar (tracebacks, líneas `==` técnicas) llega al Admin como "formato extraño" — no informa. El stdout de un job `--no-agent` ES el mensaje: cabecera (qué es + cuándo), UNA línea por paso con estado (✓/❌/⚠️), estado final (OK / PARCIAL / FALLIDO + duración) y la ruta del log completo en disco para quien quiera el detalle. Tracebacks y logs van SOLO al archivo citado; jamás al chat.
+## Inventario completo de pendientes (cuando el Admin pide "la lista completa")
+
+Una lista de pendientes NO se arma solo desde el store: el Admin espera el barrido de TODAS las fuentes en una sola pasada.
+
+1. Store de pendientes: `python3 /opt/hermes-agent-data/scripts/pending_tasks.py list` (pending.md es una vista regenerada; el store es la fuente).
+2. Kanban (readonly): `select tenant, status, count(*) from tasks where status != 'done' group by 1` + las tarjetas abiertas por tenant.
+3. Repo de campañas: árbol `planning/<campana>/` — piezas en `04-aprobadas/`, estados del calendario (`a_producir` vs producido), especificaciones pendientes de pie legal o aprobación documental.
+4. Crons: `jobs.json` (jobs con failure_streak > 0 o last_status != ok).
+5. Infra viva: `df -h` en DEV y PROD, health de servicios críticos.
+6. state.db de sesiones: búsqueda full-text en mensajes del Admin por las palabras clave del pedido (ej. "cotización", "perifoneo") — hay pedidos que nunca se convirtieron en tarea y solo viven en el historial.
+
+Reglas de presentación:
+- **Deduplicar el ruido de patrulla:** los crons nocturnos crean una tarea nueva por cada detección ("actualizar Hermes a vX"); colapsar los repetidos en UNA entrada antes de reportar.
+- **Ítems con fecha vencida:** marcarlos como "decidir: reprogramar o descartar", no listarlos como si estuvieran vigentes.
+- Cerrar con una recomendación priorizada de orden de ejecución (opinión, no inventario crudo) y preguntar por dónde empezar.
 
 ## Reglas de envío multi-remitente (WhatsApp, 27-28/08)
 - El puente WhatsApp es UN solo remitente para todos los perfiles ruteados: SIEMPRE etiquetar quién firma ("— Ragnar" / "— Roshi") en informes proactivos, o enviar al grupo oficial DE. Chucho reclamó un informe "de Roshi" que era de Ragnar (27/08).

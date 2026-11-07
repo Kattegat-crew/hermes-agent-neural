@@ -1,6 +1,7 @@
 ---
 name: hermes-gateway-lifecycle-forensics
 description: "Use when the Hermes gateway crashes or its config corrupts."
+description: "Use when the Hermes gateway appears to crash or restart."
 tags: [gateway, s6, incidente, oom, reinicios, forense, disponibilidad]
 version: "1.0.0"
 author: Ragnar
@@ -20,6 +21,9 @@ gateway", esta es la secuencia verificada (caso 2026-09-14).
 s6 revive los gateways en <2 segundos: cuando llega el reporte humano, lo más probable
 es que YA esté arriba. Primero confirmar estado vivo, después reconstruir causa.
 Nunca iniciar la respuesta asumiendo que sigue caído.
+Matiz: "revivir" no es "saludable". s6-svstat puede decir `up` mientras el gateway
+sigue en boot y sin bindear su puerto de health; la prueba viva es `curl` al
+`/health` del perfil, no el estado de s6.
 
 ## Secuencia de triage (barato → profundo)
 
@@ -53,6 +57,7 @@ Nunca iniciar la respuesta asumiendo que sigue caído.
 ## Guardrail de plataforma
 Las tools bloquean físicamente reiniciar/parar el gateway desde una sesión servida POR
 eso gateway (tool_executor: "Blocked: command or referenced script cannot restart,
+ese gateway (tool_executor: "Blocked: command or referenced script cannot restart,
 stop, or uninstall the gateway from inside the gateway process", exit 1). Vía válida:
 cron one-shot futuro o `s6-svc` desde fuera del proceso gateway. Ver
 `hermes-multiprofile-gateway-ops` (Ley 1) para detectar el servicio s6 padre real vía
@@ -158,10 +163,72 @@ perdedora (`systemctl disable --now hermes-dashboard.service`) dejando la que el
 Desktop usa, o moverla a otro puerto; añadir `StartLimitIntervalSec=60` +
 `StartLimitBurst=5` para que un fallo no se vuelva bucle infinito.
 
+## Auto-heal que mata un boot lento (bucle caído-arrancando)
+Síntoma: el watchdog marca el perfil DOWN ciclo tras ciclo, relanza el gateway, y
+nunca llega a servir `/health`. Causa: el gateway multiperfil (`gateway-default`)
+multiplexa ~13 perfiles y decenas de servidores MCP; el arranque completo tarda 3-4
+minutos y el puerto HTTP de health bindea al FINAL del boot (:3000 default;
+:3001/:3002 son los standalone golden-game/lucky-club). Un auto-heal que reinicia al
+primer `/health` fallido convierte un boot lento en un bucle infinito.
+
+Reglas para el watchdog y para el diagnóstico:
+- Antes de auto-heal, leer el uptime del proceso con `s6-svstat`: si lleva menos de
+  ~300s vivo es boot, no caída — esperar y re-chequear en vez de relanzar.
+- Exigir 2 fallos consecutivos de `/health` antes de reiniciar; el umbral de
+  "caído" debe medirse desde el arranque del proceso, no por sondeo aislado.
+- Verificar la recuperación con `curl http://127.0.0.1:<puerto>/health` DENTRO del
+  contenedor hermes-agent: el mismo puerto desde el host puede dar exit 7 si no está
+  publicado, lo que simula una caída que no existe.
+
+Toolbox de diagnóstico dentro del contenedor (s6, sin tooling de red):
+- `s6-svstat` no está en PATH: usar `/command/s6-svstat /run/service/gateway-<perfil>`.
+- No hay `ss`/`netstat`/`lsof`: probar si un puerto local escucha con un one-liner de
+  python que haga connect a 127.0.0.1:<puerto> y lea el errno (0 = escuchando,
+  111 = rechazado).
+- `ps aux | grep 'hermes gateway'` puede no matchear por el launcher de site-packages;
+  el cmdline real vive en `/proc/<pid>/cmdline` usando el pid que da `s6-svstat`.
+- Zonas horarias: `/opt/data/logs/gateway.log` escribe en hora LOCAL;
+  `gateway-exit-diag.log` y `gateway-shutdown-diag.log` en UTC. No mezclar
+  timestamps al reconstruir la secuencia del incidente. `docker logs hermes-agent`
+  solo trae el preinit de s6-overlay, nunca el ciclo del gateway.
+- Warning NO fatal de boot: `AttributeError: partially initialized module
+  'tools.terminal_tool_sudo' ... has no attribute '_sudo_password_cache_lock'` en
+  `gateway/turn_thread_reset.py` (import circular) — el reset de hilos falla y retira
+  un thread, pero el gateway queda arriba y sirve tráfico. No tratarlo como causa
+  raíz de una caída.
+
+## Proceso vivo pero colgado (hang silencioso, sin crash ni reinicio)
+Síntoma: el humano reporta el bot "desconectado" en Discord, pero NO hay crash,
+ni ledger entry, ni bucle de reinicios. El estado intermedio que la secuencia de
+arriba no detecta porque nada murió.
+
+Test de vida real: la edad de la ÚLTIMA escritura de logs, no el estado del proceso.
+```bash
+# proceso vivo + lock sostenido
+ls -l --time-style=+%H:%M /opt/data/logs/agent.log /opt/data/logs/gateway.log
+cat /opt/data/gateway.lock   # pid, kind, argv, start_time
+ls -l /proc/<pid>            # existe? threads en /proc/<pid>/status
+```
+Diagnóstico = proceso vivo (lock vigente, cientos de threads) + logs sin una línea
+nueva durante horas + contenedor Up con RestartCount=0 → hang, no caída. Para Discord
+el socket muerto es indistinguible de un bot apagado; el humano ve lo mismo.
+
+- Correlar la última actividad con el primer evento anómalo del día en agent.log
+  (p.ej. un adaptador que falla y dispara un ciclo de reconexión) ANTES de nombrar
+  causa; marcar la causa como hipótesis si no hay reproducción.
+- Reinicio por hang: `s6-svc -r /run/service/gateway-<perfil>` desde fuera del
+  proceso gateway (ver guardrail de plataforma) y SOLO con OK del Admin en PROD.
+- Verificación post-restart: línea nueva `[Discord] Connected as <bot>#<disc>` en
+  agent.log. Proceso vivo o exit de s6-svc NO prueban reconexión; un boot que toma
+  el lock y no completa adaptadores reproduce el hang (mirar sección de boot lento).
+
 ## Convención de reporte al Admin
 - Título: qué pasó + que ya está arriba (no alarmar con lo ya resuelto).
 - Evidencia: hora exacta, señal (SIGTERM/s6), PIDs nuevos, canales verificados.
 - Separar SIEMPRE lo medido (ledger, logs) de lo inferido (causa probable).
+- Cada hallazgo lleva su dato concreto: valores exactos, alcance y qué NO se pudo
+  comprobar. Un reporte que solo nombra categorías sin las cifras que las sostienen
+  el Admin lo lee como ambiguo y lo rechaza — la cifra es la evidencia, no el adjetivo.
 - Cerrar con la decisión pendiente real (p.ej. "¿quieres monitor de RAM?") en vez de
   ejecutar cambios sin OK — los cambios de infra requieren confirmación (D-I-V-E).
 
