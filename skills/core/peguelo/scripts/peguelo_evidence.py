@@ -46,7 +46,8 @@ CMD_KEYS = ("command", "cmd", "script", "code")
 VERIFY_RE = re.compile(
     r"(pytest|npm (run )?test|pnpm test|yarn test|go test|cargo test|ruff|flake8|eslint|tsc\b|mypy|"
     r"make test|shellcheck|python3? -m (pytest|unittest)|curl\s|git diff|git status|git log|"
-    r"psql|sqlite3|sha256sum|md5sum|--version|--help)", re.I)
+    r"git ls-remote|git rev-parse|cmp\s|diff\s|systemctl\s+is-active|"
+    r"psql|sqlite3|sha256sum|md5sum|stat\s|find\s|jq\b|--version|--help)", re.I)
 DESTRUCTIVE_RE = re.compile(
     r"(rm\s+-rf|git reset --hard|git clean -fd|git push[^\n]*--force|drop\s+(table|database)|"
     r"truncate\s+table|delete\s+from|docker\s+(rm|rmi)|systemctl\s+(stop|restart|disable)|"
@@ -386,10 +387,14 @@ def analyze_session(con, sid, cap=4000):
     creates = [w for w in writes if w["path"] and w["created"]]
 
     verify_calls = []
-    last_write_idx = max([w["idx"] for w in writes], default=None)
-    if last_write_idx is not None:
+    write_idxs = sorted({w["idx"] for w in writes if w["idx"] is not None})
+    last_write_idx = write_idxs[-1] if write_idxs else None
+    if write_idxs:
         for c in calls:
-            if c["idx"] <= last_write_idx:
+            # Verificar "después de ALGÚN write", no solo del último: la última
+            # escritura de una sesión suele ser un cp/instalación y la prueba
+            # real vino antes, lo que producía falsos negativos.
+            if not any(c["idx"] > wi for wi in write_idxs):
                 continue
             blob = c["name"] + " " + summarize_args(c["name"], c["args"])
             if VERIFY_RE.search(blob) or (c["name"] in READ_TOOLS and pick(c["args"], PATH_KEYS) in [w["path"] for w in writes]):

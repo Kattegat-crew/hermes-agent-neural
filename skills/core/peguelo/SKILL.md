@@ -2,7 +2,7 @@
 name: peguelo
 description: "Use when the user writes peguelo: session autopsy."
 tags: [autoevaluacion, retrospectiva, postmortem, state-db, autocritica, mejora-continua, evidencia]
-version: "1.3"
+version: "1.4"
 license: Apache-2.0
 author: Ragnar (default)
 platforms: [linux]
@@ -137,6 +137,12 @@ python3 /opt/data/skills/core/peguelo/scripts/peguelo_ledger.py add \
   - `hygiene.writes_without_prior_read` ya no cuenta archivos nuevos: `write_file` sobre un path inexistente va a `creates`, y sobre uno existente sin lectura previa va a `ambiguous_writes` (no se acusa sin poder probarlo). Solo `patch`/`edit_file` sin lectura previa cuenta como violación, porque editar exige que el archivo exista.
   - `user.corrections` ya no matchea preguntas: exige marcador de rechazo («no,», «está mal», «así no», «corrige»…) y descarta interrogativas salvo rechazo explícito. Para auditar el recall está `user.turns_text` (todas las intervenciones, sin filtro).
   - `--last N` omite por defecto las sesiones sin mensajes y reporta `sessions_skipped_empty`; `--include-empty` recupera el comportamiento antiguo para auditoría.
+- **Corregido en v1.4 (07-nov, verificado con `--selftest` 19/19):**
+  - El detector de verificación solo miraba llamadas **posteriores al ÚLTIMO write**, y su regex no
+    cubría `cmp`, `diff`, `git ls-remote`, `git rev-parse`, `systemctl is-active`, `stat`, `find` ni `jq`.
+    Una sesión que verifica con `cmp` y compara hashes remotos salía con `verificacion_post=False`
+    (falso negativo). Ahora cuenta la verificación posterior a **cualquier** write y reconoce esos comandos.
+    Si el check 3 falla, comprueba primero si el comando de prueba estaba fuera del regex.
 - **Corregido en v1.2 (04-nov):**
   - `peguelo_ledger.py` acepta `--ledger` antes o después del subcomando, y tiene su propio `--selftest` (4 comprobaciones: flag global, flag post-subcomando, `count` post-subcomando, destino inválido rechazado). Mecanismo para reproducir el fix: el flag se declara en el parser raíz Y en cada subparser con `default=argparse.SUPPRESS`; si se declara solo en la raíz, el default del subparser lo pisa y el flag post-subcomando falla; si se repite con default normal, el subparser pisa el valor global. Se resuelve después en `main` leyendo `args.ledger` una sola vez.
   - `--patrones [N]` ya existe: agrupa por sesión distinta (no por aparición) y colapsa runs consecutivos de la misma tool, porque `terminal,terminal,terminal` es un run, no un procedimiento. Umbral por defecto: 3 sesiones.
