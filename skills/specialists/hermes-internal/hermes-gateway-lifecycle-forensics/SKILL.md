@@ -1,6 +1,6 @@
 ---
 name: hermes-gateway-lifecycle-forensics
-description: "Use when the Hermes gateway appears to crash or restart."
+description: "Use when the Hermes gateway crashes or its config corrupts."
 tags: [gateway, s6, incidente, oom, reinicios, forense, disponibilidad]
 version: "1.0.0"
 author: Ragnar
@@ -52,11 +52,75 @@ Nunca iniciar la respuesta asumiendo que sigue caído.
 
 ## Guardrail de plataforma
 Las tools bloquean físicamente reiniciar/parar el gateway desde una sesión servida POR
-ese gateway (tool_executor: "Blocked: command or referenced script cannot restart,
+eso gateway (tool_executor: "Blocked: command or referenced script cannot restart,
 stop, or uninstall the gateway from inside the gateway process", exit 1). Vía válida:
 cron one-shot futuro o `s6-svc` desde fuera del proceso gateway. Ver
 `hermes-multiprofile-gateway-ops` (Ley 1) para detectar el servicio s6 padre real vía
 ps-tree antes de reiniciar.
+
+**Excepción útil: reinicio CRUZADO entre perfiles.** Desde una sesión servida por otro
+perfil, `hermes --profile <p> gateway restart` sí funciona: drena las corridas en vuelo y
+el supervisor lo relanza (`✓ Gateway relaunched by its supervisor (PID n)`). Es la vía a
+usar cuando `systemctl restart` pide autenticación interactiva dentro del contenedor o el
+host no es alcanzable — no bloquea el trabajo. Verificación obligatoria después (las 4,
+en este orden): `systemctl is-active <unit>`, `ExecMainStartTimestamp`/`NRestarts`
+cambiados, líneas `✓ <adaptador> connected` en `gateway.log` (telegram, discord,
+whatsapp, webhook, api_server, a2a), y `grep -c 'cannot parse'` del log = 0 tras el
+arranque nuevo.
+
+## config.yaml corrupto: gateway vivo pero degradado
+
+Síntoma distintivo (no hay caída): el proceso sigue `active`, pero funciones que releen
+config en cada uso fallan — `WARNING gateway.run: Session hygiene auto-compress failed:
+terminal policy unavailable for this profile: cannot parse <ruta>/config.yaml: while
+parsing a block mapping`. Lo que se rompe no es el gateway entero sino las lecturas
+nuevas (política de terminal, auto-compress, listas de plugins).
+
+- **El daemon no relee plugins/hooks hasta reiniciar**: un fix en disco no cambia la
+  config viva. Si el YAML se corrompió DESPUÉS del arranque, el reinicio es parte del fix;
+  si estaba roto ANTES, el arranque habría fallado en bootstrap.
+- **Validar TODOS los perfiles en un solo barrido, no solo el reportado.** Un script de
+  flota que añade un plugin suele haber tocado varios perfiles con el mismo error:
+  ```bash
+  for f in /opt/hermes-agent-data/config.yaml /opt/hermes-agent-data/profiles/*/config.yaml; do
+    echo "$(python3.12 -c "import yaml;yaml.safe_load(open('$f'));print('OK')" 2>&1 | tail -1) | $f"
+  done
+  ```
+  Validar con un intérprete que SÍ tenga PyYAML (`python3.12` en este host, o el del cron):
+  el python del kernel de `execute_code` puede no incluirlo.
+- **Pitfall que invalida el archivo completo:** una línea de lista añadida a mano con 2
+  espacios en vez de 4 dentro de `plugins.enabled:` (`  - <plugin>`) cierra el bloque y
+  rompe TODO el YAML. El mensaje de error apunta a la línea de la clave siguiente
+  (`entries:`), no a la culpable — leer las 5 líneas alrededor de la columna reportada.
+  Variante del mismo bug: la línea duplicada (una a 4 espacios y otra a 2) — se borra la
+  de 2 espacios, no se reindenta la buena.
+- **Reparar con respaldo, nunca reescribiendo el archivo:** copiar a
+  `<config>.bak-yamlfix-<timestamp>`, reindentar/eliminar la línea, revalidar el lote
+  completo y confirmar la lista efectiva con `hermes --profile <p> plugins list | grep
+  <plugin>`. `write_file`/`patch` del agente se rechazan sobre config de Hermes
+  ("Refusing to write to Hermes config file"): usar `hermes config set` o edición por
+  línea con respaldo previo.
+
+## Silenciar los avisos de ciclo de vida (apagado / reinicio)
+
+"⚠️ Hermes se está apagando — tu tarea actual se interrumpirá" y el heads-up de
+auto-resume ("envía cualquier mensaje y continuaré") son notificaciones del gateway, NO
+crons ni scripts. Se gatean por plataforma con `gateway_restart_notification` (default
+`true`), que cubre también el aviso previo al shutdown:
+
+```bash
+hermes --profile <p> config set gateway.platforms.telegram.gateway_restart_notification false
+hermes --profile <p> config set gateway.platforms.whatsapp.gateway_restart_notification false
+```
+
+- El CLI avisa y **reubica la clave**: como el bloque top-level `platforms:` outranks
+  `gateway.platforms`, termina guardada como
+  `platforms.<plataforma>.gateway_restart_notification: false`. Verificar con
+  `grep -n gateway_restart_notification <config>` antes de decir que quedó.
+- Se aplica al SIGUIENTE apagado/reinicio de ese perfil (el aviso se emite al apagar).
+  Primera prueba real = el próximo restart del propio perfil: si hay silencio, aplicó.
+- `langfuse` y `langfuse-fleet` son plugins distintos: deshabilitar uno no toca al otro;
+  confirmar cuál se quería con `plugins list` antes de "arreglar" el YAML.
 
 ## Bucle de reinicios: dashboard duplicado del HOST (no es el gateway)
 

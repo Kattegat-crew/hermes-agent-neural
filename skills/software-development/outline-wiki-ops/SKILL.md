@@ -140,3 +140,9 @@ snippets en `references/2026-08-27-wiki-diario-auto-publicacion.md`.
   no buscar en su filesystem; ir al source de la versión en GitHub.
 - Un `pg_dump` del contenedor postgres requiere ejecutarse DENTRO del contenedor
   (`docker exec outline-postgres pg_dump …`), no en el host.
+- Al EDITAR scripts que usan la key: la lectura del archivo devuelve
+  `Authorization: Bearer <token>` redactado como `Bearer ***` — pegar esa línea
+  en un write congela el placeholder en disco y rompe la API con 401
+  `Unable to decode token`. Armar el header en runtime
+  (`AUTH_HDR="$(printf 'Authorization: Bearer %s' "$KEY")"`) y verificar con
+  conteo de `***` en disco tras editar.

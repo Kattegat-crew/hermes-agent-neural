@@ -46,6 +46,25 @@ if not tok:
 - Variante del mismo patrón: secretos rotados en Bitwarden con valor viejo cacheado en
   config.yaml — al diagnosticar 401/403, comparar config.yaml contra la fuente siempre.
 
+## Pitfall: el texto REDACTADO de una lectura no se escribe de vuelta (placeholder congelado → 401)
+- Al leer un archivo que contiene una cabecera de auth, el runtime puede devolver el
+  valor oculto (p.ej. `Authorization: Bearer ***` donde el código real es `Bearer $KEY`).
+  Si ese texto leído se copia de vuelta con patch/write_file, el placeholder literal
+  queda CONGELADO en disco: el request envía `Bearer ***` y la API responde
+  `401 Unable to decode token` — parece key vencida, es el header corrupto.
+- Regla: NUNCA devuelvas al archivo texto que pudo venir redactado; re-deriva la línea
+  desde la intención del código (la referencia a la variable), no desde el transcript.
+  Si el patrón `Bearer <valor>` no puede escribirse seguro, que lo arme el runtime al
+  ejecutarse: `AUTH_HDR="$(printf 'Authorization: Bearer %s' "$KEY")"` — la secuencia
+  no existe nunca en el archivo y ningún filtro la reescribe.
+- Verificación obligatoria tras editar un archivo con secretos: aserción por CONTEOS,
+  no lectura visual (la relectura también viene redactada): `open(f).read()` y
+  `assert '***' not in s` + `assert '$KEY' in s` + `bash -n`/`py_compile`.
+- Diagnóstico de `401 Unable to decode token`: antes de declarar la key vencida, revisar
+  si el HEADER está malformado (placeholder literal, prefijo repetido `Bearer Bearer`,
+  salto de línea en el valor). Comparar con huella (`len` + `sha256[:16]` + máscara)
+  del valor actual tras `tr -d '\n'`, nunca con el valor en claro.
+
 ## Discord API — reglas duras
 - TODO request (urllib o curl) requiere User-Agent propio: 
   `DiscordBot (https://hermes-agent.nousresearch.com, 1)` — sin esto responde 403.
