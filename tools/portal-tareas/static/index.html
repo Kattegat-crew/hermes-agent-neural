@@ -15,7 +15,6 @@
 }
 *{box-sizing:border-box;margin:0;padding:0;-webkit-tap-highlight-color:transparent}
 body{background:var(--bg);color:var(--txt);font:15px/1.45 -apple-system,BlinkMacSystemFont,"Segoe UI",Roboto,sans-serif;padding-bottom:40px}
-a{color:var(--gold)}
 header{position:sticky;top:0;z-index:10;background:linear-gradient(180deg,#0E1420f2,#0E1420d9);backdrop-filter:blur(10px);border-bottom:1px solid var(--line);padding:14px 16px 10px}
 h1{font-size:16px;font-weight:600;letter-spacing:.2px;display:flex;align-items:center;gap:8px}
 h1 .dot{width:8px;height:8px;border-radius:50%;background:var(--gold);box-shadow:0 0 10px var(--gold)}
@@ -38,15 +37,11 @@ main{padding:12px 12px 0;display:grid;gap:12px;grid-template-columns:1fr}
 .col-h .n{font-size:11px;color:var(--dim);background:#0E1420;border:1px solid var(--line);border-radius:20px;padding:2px 8px}
 .owner-j .bar{background:var(--jona)} .owner-c .bar{background:var(--chucho)} .owner-s .bar{background:var(--shared)}
 ul{list-style:none}
-li.item{display:flex;gap:10px;padding:11px 14px;border-bottom:1px solid #1E2739;align-items:flex-start;position:relative}
+li.item{display:flex;gap:10px;padding:11px 14px;border-bottom:1px solid #1E2739;align-items:flex-start}
 li.item:last-child{border-bottom:none}
-li.item.done{opacity:.45}
-li.item.done .t{text-decoration:line-through}
 li.item.busy .t{color:var(--gold2)}
 .chk{flex:0 0 auto;width:22px;height:22px;border-radius:7px;border:1.6px solid #37445F;background:transparent;display:grid;place-items:center;cursor:pointer;transition:.15s;margin-top:1px}
 .chk:active{transform:scale(.9)}
-.chk.on{background:var(--chucho);border-color:var(--chucho)}
-.chk.on::after{content:"";width:9px;height:5px;border-left:2px solid #0E1420;border-bottom:2px solid #0E1420;transform:rotate(-45deg) translate(1px,-1px)}
 .body{flex:1;min-width:0}
 .t{font-size:14px;line-height:1.35;word-wrap:break-word;cursor:pointer}
 .badges{display:flex;gap:5px;flex-wrap:wrap;margin-top:6px}
@@ -63,18 +58,31 @@ li.item.open .acts{display:flex}
 .act{font-size:11.5px;padding:5px 10px;border-radius:8px;border:1px solid var(--line);background:#0E1420;color:var(--dim);cursor:pointer}
 .act:hover{color:var(--txt);border-color:#37445F}
 .act.danger{color:#C97A7A}
-.add{padding:11px 14px;border-top:1px solid var(--line);background:var(--panel2)}
+.add{padding:10px 12px 12px;border-top:1px solid var(--line);background:var(--panel2)}
 .add input{width:100%;background:#0E1420;border:1px solid var(--line);color:var(--txt);padding:9px 11px;border-radius:9px;font-size:13.5px;font-family:inherit}
 .add input:focus{outline:none;border-color:var(--gold)}
 .add input::placeholder{color:#5A6579}
+.opts{display:flex;gap:6px;margin-top:7px}
+.opts select,.opts input{flex:1;min-width:0;background:#0E1420;border:1px solid var(--line);color:var(--dim);padding:6px 8px;border-radius:8px;font-size:11.5px;font-family:inherit;-webkit-appearance:none;appearance:none}
+.opts select:focus,.opts input:focus{outline:none;border-color:var(--gold);color:var(--txt)}
 .tabs{display:flex;gap:6px;padding:10px 12px 0}
 @media(min-width:900px){.tabs{display:none}}
 .tab{flex:1;padding:8px;border-radius:9px;border:1px solid var(--line);background:var(--panel);color:var(--dim);font-size:12px;cursor:pointer;text-align:center}
 .tab.on{background:var(--panel2);color:var(--txt);border-color:var(--gold)}
-.empty{padding:22px 14px;color:#5A6579;font-size:12.5px;text-align:center}
-#toast{position:fixed;left:50%;bottom:24px;transform:translate(-50%,80px);background:var(--panel2);border:1px solid var(--line);color:var(--txt);padding:10px 16px;border-radius:10px;font-size:13px;opacity:0;transition:.25s;z-index:50;box-shadow:0 8px 30px #0008}
+.empty{padding:20px 14px;color:#5A6579;font-size:12.5px;text-align:center}
+.closed{border-top:1px solid var(--line);background:#121926}
+.closed>button{width:100%;background:none;border:none;color:var(--dim);font-size:11.5px;padding:9px 14px;text-align:left;cursor:pointer;font-family:inherit}
+.closed>button:hover{color:var(--txt)}
+.clist{display:none;max-height:300px;overflow-y:auto}
+.closed.open .clist{display:block}
+li.c{display:flex;gap:8px;padding:8px 14px;border-top:1px solid #1A2233;align-items:flex-start}
+li.c .ct{flex:1;font-size:12px;color:#7C879C;line-height:1.35;word-wrap:break-word}
+li.c .ct b{color:#9AA5BA;font-weight:500}
+li.c .re{flex:0 0 auto;font-size:10.5px;padding:3px 8px;border-radius:7px;border:1px solid var(--line);background:none;color:var(--dim);cursor:pointer;font-family:inherit}
+li.c .re:hover{color:var(--gold);border-color:var(--gold)}
+#toast{position:fixed;left:50%;bottom:24px;transform:translate(-50%,80px);background:var(--panel2);border:1px solid var(--line);color:var(--txt);padding:10px 16px;border-radius:10px;font-size:13px;opacity:0;transition:.25s;z-index:50;box-shadow:0 8px 30px #0008;display:flex;align-items:center;gap:10px;max-width:92vw}
 #toast.on{transform:translate(-50%,0);opacity:1}
-#toast button{background:none;border:none;color:var(--gold);margin-left:10px;font-size:13px;cursor:pointer}
+#toast button{background:none;border:none;color:var(--gold);font-size:13px;cursor:pointer;font-family:inherit;white-space:nowrap}
 </style>
 </head>
 <body>
@@ -102,27 +110,55 @@ li.item.open .acts{display:flex}
   <section class="col owner-j active" data-o="jonathan">
     <div class="col-h"><span class="bar"></span><h2>Jonathan</h2><span class="n" id="cj">0</span></div>
     <ul id="lj"></ul>
-    <div class="add"><input placeholder="+ añadir tarea a Jonathan" data-o="jonathan"></div>
+    <div class="add">
+      <input placeholder="+ añadir tarea a Jonathan" data-o="jonathan">
+      <div class="opts">
+        <select data-f="prioridad"><option value="alta">alta</option><option value="media" selected>media</option><option value="baja">baja</option></select>
+        <input data-f="area" list="areas" placeholder="área" value="general">
+      </div>
+    </div>
+    <div class="closed" data-o="jonathan"><button>▸ Cerradas (<span>0</span>)</button><ul class="clist"></ul></div>
   </section>
+
   <section class="col owner-c" data-o="chucho">
     <div class="col-h"><span class="bar"></span><h2>Chucho</h2><span class="n" id="cc">0</span></div>
     <ul id="lc"></ul>
-    <div class="add"><input placeholder="+ añadir tarea a Chucho" data-o="chucho"></div>
+    <div class="add">
+      <input placeholder="+ añadir tarea a Chucho" data-o="chucho">
+      <div class="opts">
+        <select data-f="prioridad"><option value="alta">alta</option><option value="media" selected>media</option><option value="baja">baja</option></select>
+        <input data-f="area" list="areas" placeholder="área" value="infra">
+      </div>
+    </div>
+    <div class="closed" data-o="chucho"><button>▸ Cerradas (<span>0</span>)</button><ul class="clist"></ul></div>
   </section>
+
   <section class="col owner-s" data-o="compartido">
     <div class="col-h"><span class="bar"></span><h2>Compartido</h2><span class="n" id="cs">0</span></div>
     <ul id="ls"></ul>
-    <div class="add"><input placeholder="+ añadir tarea compartida" data-o="compartido"></div>
+    <div class="add">
+      <input placeholder="+ añadir tarea compartida" data-o="compartido">
+      <div class="opts">
+        <select data-f="prioridad"><option value="alta">alta</option><option value="media" selected>media</option><option value="baja">baja</option></select>
+        <input data-f="area" list="areas" placeholder="área" value="general">
+      </div>
+    </div>
+    <div class="closed" data-o="compartido"><button>▸ Cerradas (<span>0</span>)</button><ul class="clist"></ul></div>
   </section>
 </main>
+
+<datalist id="areas">
+  <option>infra</option><option>contenido</option><option>ads</option><option>producto</option>
+  <option>automatizacion</option><option>hermes</option><option>general</option>
+</datalist>
 
 <div id="toast"><span id="toast-t"></span><button id="undo" hidden>Deshacer</button></div>
 
 <script>
 const LISTS = {jonathan:'lj', chucho:'lc', compartido:'ls'};
 const COUNTS = {jonathan:'cj', chucho:'cc', compartido:'cs'};
-let data = {items:[], meta:{}};
-let lastMtime = 0, undoBuf = null, undoId = null;
+let data = {items:[], cerradas:[], meta:{}};
+let lastMtime = 0, undoId = null;
 
 const esc = s => (s||'').replace(/[&<>"']/g, c => ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]));
 
@@ -133,7 +169,7 @@ function toast(msg, undoFn){
   if(undoFn){ b.onclick = () => { undoFn(); hideToast(); }; }
   t.classList.add('on');
   clearTimeout(undoId);
-  undoId = setTimeout(hideToast, undoFn ? 5000 : 2200);
+  undoId = setTimeout(hideToast, undoFn ? 6000 : 2400);
 }
 function hideToast(){ document.getElementById('toast').classList.remove('on'); clearTimeout(undoId); }
 
@@ -169,9 +205,22 @@ function row(it){
       </div>
     </div>`;
   li.querySelector('.t').onclick = () => li.classList.toggle('open');
-  li.querySelector('.chk').onclick = () => toggle(it, li);
+  li.querySelector('.chk').onclick = () => cerrar(it, li);
   li.querySelector('[data-a="curso"]').onclick = () => setEstado(it, it.estado==='en_curso'?'abierto':'en_curso');
   li.querySelector('[data-a="del"]').onclick = () => quitar(it);
+  return li;
+}
+
+function crow(it){
+  const li = document.createElement('li');
+  li.className = 'c';
+  li.innerHTML = `<div class="ct"><b>${esc(it.id)}</b> ${esc(it.tarea)}
+      <br><span style="color:#5E687C">${esc(it.cerrado_en||'')} · ${esc(it.dueno||'compartido')}</span></div>
+    <button class="re">Reabrir</button>`;
+  li.querySelector('.re').onclick = async () => {
+    try{ await api('PATCH', `api/tasks/${it.id}`, {estado:'abierto'}); toast(`Reabierta ${it.id}`); load(true); }
+    catch(e){ toast('No se pudo reabrir: '+e.message); }
+  };
   return li;
 }
 
@@ -192,6 +241,17 @@ function render(){
     by[o].forEach(it => ul.appendChild(row(it)));
     document.getElementById(COUNTS[o]).textContent = by[o].length;
   }
+
+  document.querySelectorAll('.closed').forEach(box => {
+    const o = box.dataset.o;
+    const ul = box.querySelector('.clist');
+    const grupo = (data.cerradas||[]).filter(i => (i.dueno||'compartido') === o);
+    ul.innerHTML = '';
+    if(!grupo.length) ul.innerHTML = '<li class="empty" style="padding:12px">Nada cerrado todavía</li>';
+    grupo.forEach(i => ul.appendChild(crow(i)));
+    box.querySelector('button span').textContent = grupo.length;
+  });
+
   const m = data.meta || {};
   document.getElementById('nj').textContent = (m.por_dueno?.jonathan?.total ?? 0);
   document.getElementById('nc').textContent = (m.por_dueno?.chucho?.total ?? 0);
@@ -211,18 +271,19 @@ async function load(force){
   }catch(e){ /* silencio: se reintenta en el próximo ciclo */ }
 }
 
-async function toggle(it, li){
-  const antes = {...it};
+async function cerrar(it, li){
+  li.style.transition = 'opacity .2s';
+  li.style.opacity = .35;
   try{
-    if(it.estado === 'cerrado') return;
     await api('POST', `api/tasks/${it.id}/close`, {evidencia:`Cerrada por ${whoami()} desde el portal`});
-    li.classList.add('done');
-    toast(`Cerrada ${it.id}`, async ()=>{
-      await api('PATCH', `api/tasks/${it.id}`, {estado: antes.estado || 'abierto'});
+    const box = document.querySelector(`.closed[data-o="${(it.dueno||'compartido')}"]`);
+    if(box) box.classList.add('open');
+    toast(`Cerrada ${it.id} · la moví a «Cerradas»`, async () => {
+      await api('PATCH', `api/tasks/${it.id}`, {estado: it.estado || 'abierto'});
       load(true);
     });
-    setTimeout(()=>load(true), 400);
-  }catch(e){ toast('No se pudo cerrar: '+e.message); load(true); }
+    setTimeout(()=>load(true), 350);
+  }catch(e){ li.style.opacity = 1; toast('No se pudo cerrar: '+e.message); load(true); }
 }
 
 async function setEstado(it, estado){
@@ -233,7 +294,7 @@ async function setEstado(it, estado){
 }
 
 async function quitar(it){
-  if(!confirm(`¿Quitar ${it.id}?\n\n${it.tarea}\n\nNo se borra: se cierra con registro.`)) return;
+  if(!confirm(`¿Quitar ${it.id}?\n\n${it.tarea}\n\nNo se borra: pasa a «Cerradas» y se puede reabrir.`)) return;
   try{
     await api('DELETE', `api/tasks/${it.id}`);
     toast(`Quitada ${it.id}`);
@@ -243,18 +304,29 @@ async function quitar(it){
 
 function whoami(){ return document.getElementById('who').textContent || 'portal'; }
 
-document.querySelectorAll('.add input').forEach(inp => {
+document.querySelectorAll('.add').forEach(box => {
+  const inp = box.querySelector('input[data-o]');
+  const prio = box.querySelector('select[data-f="prioridad"]');
+  const area = box.querySelector('input[data-f="area"]');
   inp.addEventListener('keydown', async ev => {
     if(ev.key !== 'Enter') return;
     const t = inp.value.trim(); if(!t) return;
     try{
-      const r = await api('POST','api/tasks',{tarea:t, dueno:inp.dataset.o});
+      const r = await api('POST','api/tasks', {
+        tarea: t, dueno: inp.dataset.o,
+        prioridad: prio.value,
+        area: (area.value || 'general').trim()
+      });
       if(r.status === 409){ toast(`Ya existe: ${r.id}`); return; }
       inp.value = '';
       toast(`Añadida ${r.item?.id||''}`);
       load(true);
     }catch(e){ toast('No se pudo añadir: '+e.message); }
   });
+});
+
+document.querySelectorAll('.closed>button').forEach(btn => {
+  btn.onclick = () => btn.parentElement.classList.toggle('open');
 });
 
 document.querySelectorAll('.tab').forEach(t => {

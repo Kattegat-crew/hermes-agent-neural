@@ -126,8 +126,11 @@ def payload(items: list[dict]) -> dict:
             "en_curso": sum(1 for i in propias if i.get("estado") == "en_curso"),
             "total": len(propias),
         }
+    cerradas = [i for i in items if i.get("estado") == "cerrado"]
+    cerradas.sort(key=lambda i: (str(i.get("cerrado_en") or ""), i["id"]), reverse=True)
     return {
         "items": abiertos,
+        "cerradas": cerradas[:40],
         "meta": {
             "actualizado": now_iso(),
             "total_store": len(items),
