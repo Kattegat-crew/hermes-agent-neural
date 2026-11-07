@@ -70,6 +70,10 @@ def split_value_comment(rest: str) -> tuple[str, str]:
 
 def merge_env_text(text: str, updates: dict) -> str:
     """RF-1..RF-4: solo sustituye valores de claves mapeadas; el resto es literal."""
+    if text.startswith("\ufeff"):
+        # BOM inicial: si no se descarta, la primera clave no matchea y RF-4
+        # crearia una DUPLICADA al final (revision adversarial, hallazgo H3).
+        text = text[1:]
     lines = text.splitlines(keepends=True) if text else []
     seen = set()
     out = []
@@ -86,12 +90,17 @@ def merge_env_text(text: str, updates: dict) -> str:
                     continue
         out.append(line)
 
+    append_eol = "\n"
+    if out:
+        _, last_eol = split_eol(out[-1])
+        if last_eol:
+            append_eol = last_eol  # hereda CRLF/CR del archivo (RF-3)
     for key in updates:
         if key in seen:
             continue
         if out and out[-1] and not out[-1].endswith(("\n", "\r")):
-            out[-1] += "\n"
-        out.append(f"{key}={updates[key]}\n")
+            out[-1] += append_eol
+        out.append(f"{key}={updates[key]}{append_eol}")
     return "".join(out)
 
 
@@ -215,24 +224,38 @@ def sync_target(target: dict, item_map: dict, warn=None, out=None, restart_fn=No
     restart_fn = restart_fn or os.system
 
     env_file = target.get("file")
-    parent = os.path.dirname(env_file or "")
-    if not env_file or (parent and not os.path.isdir(parent)):
+    if not env_file:
+        warn("  SKIPPED: target has no file")
+        return "skipped"
+
+    # H2: si el .env es un SYMLINK se escribe a traves del enlace (os.replace
+    # sobre el propio link lo reemplazaria por un archivo regular y romperia
+    # el mount de docker compose / bind mount).
+    resolved = os.path.realpath(env_file) if os.path.islink(env_file) else env_file
+    parent = os.path.dirname(resolved)
+    if parent and not os.path.isdir(parent):
         warn(f"  SKIPPED: parent dir does not exist: {parent}")
         return "skipped"
 
     try:
-        original = read_text(env_file)
-    except (OSError, UnicodeDecodeError) as e:
-        warn(f"  FAILED: could not read {env_file}: {e}")
+        original = read_text(resolved)
+        updates = build_updates(target, item_map, warn)
+        merged = merge_env_text(original, updates)
+    except Exception as e:  # H1: ninguna lectura/parsing puede tumbar la cola
+        warn(f"  FAILED: could not process {env_file}: {type(e).__name__}: {e}")
         return "failed"
-    updates = build_updates(target, item_map, warn)
-    merged = merge_env_text(original, updates)
 
-    changed = merged != original or not os.path.exists(env_file)
+    if not updates and not os.path.exists(resolved):
+        # H4: sin nada que escribir no se crea un .env vacio ni se reinicia.
+        warn("  WARNING: no vault updates resolved and file does not exist; nothing written")
+        out(f"DONE:{env_file}")
+        return "ok"
+
+    changed = merged != original or not os.path.exists(resolved)
     if changed:
         try:
             atomic_write(
-                env_file, merged, target.get("mode", "0600"),
+                resolved, merged, target.get("mode", "0600"),
                 target.get("owner"), warn,
             )
         except OSError as e:
@@ -241,7 +264,10 @@ def sync_target(target: dict, item_map: dict, warn=None, out=None, restart_fn=No
         restart = target.get("restart")
         if restart:
             warn(f"  Changed, restarting: {restart}")
-            restart_fn(restart)
+            rc = restart_fn(restart)
+            if isinstance(rc, int) and rc != 0:
+                # H5: un restart caido no cuenta como failed, pero queda visible.
+                warn(f"  WARNING: restart exited with {rc}: {restart}")
     else:
         warn("  No changes, skipping restart")
 
@@ -250,8 +276,9 @@ def sync_target(target: dict, item_map: dict, warn=None, out=None, restart_fn=No
 
 
 # ----------------------------------------------------------------------- RF-8
-def fetch_items(session: str, runner=None) -> dict:
+def fetch_items(session: str, runner=None, warn=None) -> dict:
     runner = runner or subprocess.run
+    warn = warn or (lambda msg: print(msg, file=sys.stderr))
     try:
         result = runner(
             ["bw", "list", "items", "--session", session],
@@ -265,7 +292,14 @@ def fetch_items(session: str, runner=None) -> dict:
         raw = json.loads(result.stdout) if result.stdout.strip() else []
     except Exception as e:
         raise VaultFetchError(f"bw list items returned invalid JSON: {e}") from e
-    return {item.get("name"): item for item in raw}
+    item_map = {}
+    for item in raw:
+        name = item.get("name")
+        if name in item_map:
+            # H9: el vault permite nombres repetidos; el ultimo gana, pero se avisa.
+            warn(f"  WARNING: duplicate vault item name '{name}' — last one wins")
+        item_map[name] = item
+    return item_map
 
 
 def main(argv, mapfile=DEFAULT_MAPFILE, fetch=None, err=None, out=None, restart_fn=None) -> int:

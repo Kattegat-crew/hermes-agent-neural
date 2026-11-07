@@ -252,6 +252,94 @@ class SyncTargetTests(Base):
         mode = stat.S_IMODE(os.stat(self.path()).st_mode)
         self.assertEqual(mode, 0o644)
 
+    def test_h1_target_directory_is_failed_not_fatal(self):
+        d = self.path("esdir")
+        os.mkdir(d)
+        outcome, warns, _ = self.run_target(self.target(file=d), {"Item A": login_item("Item A")})
+        self.assertEqual(outcome, "failed")
+        self.assertIn("IsADirectoryError", warns)
+
+    def test_h1_invalid_utf8_env_fails_without_touching_bytes(self):
+        p = self.path()
+        raw = b"K=old\nBIN=\xff\xfe\n"
+        with open(p, "wb") as f:
+            f.write(raw)
+        outcome, warns, _ = self.run_target(self.target(), {"Item A": login_item("Item A")})
+        self.assertEqual(outcome, "failed")
+        self.assertIn("UnicodeDecodeError", warns)
+        with open(p, "rb") as f:
+            self.assertEqual(f.read(), raw)
+
+    def test_h1_malformed_item_does_not_raise(self):
+        self.write(BASE_ENV)
+        # item que no es dict -> AttributeError dentro de build_updates
+        outcome, warns, _ = self.run_target(self.target(), {"Item A": "no-dict"})
+        self.assertEqual(outcome, "failed")
+        self.assertIn("FAILED", warns)
+
+    def test_h2_symlink_env_is_written_through(self):
+        real = os.path.join(self.tmp, "real.env")
+        with open(real, "w") as f:
+            f.write("MAPPED=old\n")
+        link = self.path("link.env")
+        os.symlink(real, link)
+        outcome, _, _ = self.run_target(self.target(file=link), {"Item A": login_item("Item A", password="new-1")})
+        self.assertEqual(outcome, "ok")
+        self.assertTrue(os.path.islink(link), "el symlink debe sobrevivir")
+        with open(real) as f:
+            self.assertIn("MAPPED=new-1", f.read())
+
+    def test_h3_leading_bom_does_not_duplicate_key(self):
+        merged = sync.merge_env_text("\ufeffMAPPED=old\nOTHER=1\n", {"MAPPED": "new"})
+        self.assertEqual(merged, "MAPPED=new\nOTHER=1\n")
+
+    def test_h4_missing_file_with_no_updates_is_not_created(self):
+        target = self.target(file=self.path("nuevo.env"), restart="svc restart")
+        calls = []
+        outcome, warns, _ = self.run_target(
+            target, {}, restart_fn=calls.append
+        )
+        self.assertEqual(outcome, "ok")
+        self.assertFalse(os.path.exists(target["file"]))
+        self.assertEqual(calls, [])
+
+    def test_h5_failed_restart_is_warned(self):
+        self.write(BASE_ENV)
+        target = self.target(restart="svc restart")
+        calls = []
+        outcome, warns, _ = self.run_target(
+            target, {"Item A": login_item("Item A", password="new-1")},
+            restart_fn=lambda cmd: calls.append(cmd) or 3,
+        )
+        self.assertEqual(outcome, "ok")
+        self.assertEqual(calls, ["svc restart"])
+        self.assertIn("restart exited with 3", warns)
+
+    def test_h6_append_inherits_crlf(self):
+        # la clave mapeada se reemplaza en sitio conservando su terminador
+        self.assertEqual(
+            sync.merge_env_text("A=1\r\nMAPPED=old\r\n", {"MAPPED": "new"}),
+            "A=1\r\nMAPPED=new\r\n",
+        )
+        # la clave ausente hereda el EOL del archivo (RF-3), no un \n fijo
+        self.assertEqual(
+            sync.merge_env_text("A=1\r\n", {"K": "new"}),
+            "A=1\r\nK=new\r\n",
+        )
+
+    def test_h9_fetch_items_warns_on_duplicate_names(self):
+        import types
+
+        payload = json.dumps([
+            {"name": "dup", "type": 1, "login": {"password": "v1"}},
+            {"name": "dup", "type": 1, "login": {"password": "v2"}},
+        ])
+        runner = lambda *a, **k: types.SimpleNamespace(returncode=0, stdout=payload, stderr="")
+        warns = []
+        items = sync.fetch_items("SESS", runner=runner, warn=warns.append)
+        self.assertEqual(set(items), {"dup"})
+        self.assertTrue(any("duplicate vault item name" in w for w in warns))
+
     def test_missing_owner_warns_but_writes(self):
         self.write(BASE_ENV)
         warns = []

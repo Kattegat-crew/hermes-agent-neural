@@ -38,7 +38,7 @@ en ambos hosts): se viola el protocolo de repositorios vivos. Además ninguna ha
 - **RF-4:** clave mapeada duplicada → todas sus ocurrencias con el valor nuevo (cero rastros viejos).
 - **RF-5 (paridad):** el canónico incluye las 6 capacidades: guard de padre, captura de `OSError`, `SUMMARY`, `owner` con aviso si no existe, restart solo si cambió, fallback `notes`.
 - **RF-6 (atómico):** temporal en el mismo directorio → `chmod` al modo del target → `chown` opcional → `os.replace`; ante fallo el original queda intacto y el target cuenta `FAILED`.
-- **RF-7:** exit `1` solo si `failed>0 and ok==0` (semántica actual).
+- **RF-7:** exit `1` solo si `failed>0 and ok==0`. **Nota de compatibilidad (hallazgo H8):** esa es la semántica del script actual de **DEV**; el de **PROD** hoy termina siempre en `0`, así que en PROD este exit 1 es **comportamiento nuevo**: aborta el wrapper `vault-sync.sh` antes de su `bw logout`, y el logout forzado ocurre al inicio del run siguiente (comportamiento aceptado y verificado en ambos wrappers).
 - **RF-8:** `bw list items` con timeout 30s; ante error exit 1 sin escribir nada.
 
 ## 4. Non-goals (Fases posteriores)

@@ -74,6 +74,8 @@ distinto    -> atomic_write -> FAILED si OSError -> restart_fn SOLO si cambió
 | DEV pasa de «reiniciar siempre» a «solo si cambió» | AC-5; menos reinicios = menos riesgo |
 | Heurística de comentario en línea dentro de comillas | scan consciente de comillas, testeado |
 | Secretos en fixtures | valores ficticios (02-vps-guardrails §2) |
+| **H7 (riesgo aceptado):** un valor que contenga ` # ` o espacios extremos se escribe SIN quoting: un parser dotenv aguabajo podria truncarlo. No es regresión (el script viejo escribía crudo igual) y ninguno de los .env reales de PROD tiene valores así hoy; si aparece, se cotiza quoting por target. |
+| **Symlink:** si el `.env` es un enlace, se escribe a través de él (`realpath`) — `os.replace` sobre el propio link lo reemplazaría por un archivo regular y rompería el mount (hallazgo H2, corregido con test `test_h2_symlink_env_is_written_through`). |
 
 ## 7. Observabilidad
 
