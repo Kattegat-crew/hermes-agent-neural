@@ -430,6 +430,22 @@ class MainTests(Base):
         self.assertEqual(code, 0)
         self.assertIn("SUMMARY: ok=0 skipped=1 failed=0", err)
 
+    def test_n1_non_dict_target_does_not_kill_summary(self):
+        # un target que no es objeto en el mapa: failed+SUMMARY, no traceback
+        bad = "esto-no-es-un-objeto"
+        good = self.target(os.path.join(self.tmp, "live.env"))
+        code, err, _ = self.call_main([bad, good])
+        self.assertEqual(code, 0)
+        self.assertIn("SUMMARY: ok=1 skipped=0 failed=1", err)
+        self.assertIn("<invalid target: str>", err)
+        self.assertNotIn("Traceback", err)
+        self.assertTrue(os.path.exists(good["file"]))
+
+    def test_n1_all_invalid_targets_exit_1_with_summary(self):
+        code, err, _ = self.call_main([None, "x"])
+        self.assertEqual(code, 1)
+        self.assertIn("SUMMARY: ok=0 skipped=0 failed=2", err)
+
     def test_usage_error_returns_1(self):
         err = io.StringIO()
         self.assertEqual(sync.main([], mapfile="/nonexistent", err=err), 1)

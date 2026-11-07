@@ -12,7 +12,7 @@ Verifier canónico de la fase:
 | T4 | `main` inyectable (`fetch`, `mapfile`, `err`, `restart_fn`) + exit code RF-7/RF-8 | `python-testing-patterns` | tests de fetch/exit | T3 | ☐ |
 | T5 | Lint: `python3 -m py_compile` + `git diff --check` | `code-review-and-quality` | exit 0 | T4 | ☐ |
 | T6 | Commit convencional sin atribución de IA en `feat/politica-secretos-vault-sync` | — | `git status` limpio + `git log -1 --stat` | T5 | ☐ |
-| T7 | **Review adversarial** (reviewer independiente) → hallazgos corregidos → re-run green | `code-review-and-quality` | veredicto `APROBADO` + suite en green | T6 | ☑ ronda 1: RECHAZADO (9 hallazgos) → H1-H6+H9 corregidos y probados (37 tests); ronda 2 en curso |
+| T7 | **Review adversarial** (reviewer independiente) → hallazgos corregidos → re-run green | `code-review-and-quality` | veredicto `APROBADO` + suite en green | T6 | ☑ ronda 1: RECHAZADO (9 hallazgos) → corregidos (37 tests) · ronda 2: **APROBADO** con 3 hallazgos no bloqueantes → N1 corregido (39 tests) y N2 documentado |
 
 ### Ronda 1 del reviewer (2026-11-07)
 RECHAZADO con 9 hallazgos. Corregidos y con test: H1 (lecturas/parsing por target no pueden tumbar la cola), H2 (symlink escrito a través del enlace), H3 (BOM inicial no duplica la clave), H4 (sin updates y archivo ausente no crea `.env` vacío ni reinicia), H5 (rc del restart visible como WARNING), H6 (append hereda el EOL del archivo), H9 (nombres duplicados en el vault → WARNING). Documentados como decisión: H7 (sin quoting en valores) y H8 (exit 1 es nuevo en PROD).

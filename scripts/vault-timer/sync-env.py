@@ -326,6 +326,20 @@ def main(argv, mapfile=DEFAULT_MAPFILE, fetch=None, err=None, out=None, restart_
 
     ok = skipped = failed = 0
     for target in data.get("targets", []):
+        if not isinstance(target, dict):
+            # N1 (review ronda 2): un target mal editado en el mapa no debe
+            # matar el run entero (sin SUMMARY) bajo `set -euo pipefail`.
+            # Solo se imprime el TIPO, nunca el contenido (puede contener rutas
+            # o nombres sensibles).
+            print(
+                f"Processing: <invalid target: {type(target).__name__}>", file=err
+            )
+            print(
+                "  FAILED: target in map is not an object; entry skipped",
+                file=err,
+            )
+            failed += 1
+            continue
         print(f"Processing: {target.get('file')}", file=err)
         outcome = sync_target(
             target, item_map,

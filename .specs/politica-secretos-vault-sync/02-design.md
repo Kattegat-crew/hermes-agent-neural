@@ -76,6 +76,7 @@ distinto    -> atomic_write -> FAILED si OSError -> restart_fn SOLO si cambió
 | Secretos en fixtures | valores ficticios (02-vps-guardrails §2) |
 | **H7 (riesgo aceptado):** un valor que contenga ` # ` o espacios extremos se escribe SIN quoting: un parser dotenv aguabajo podria truncarlo. No es regresión (el script viejo escribía crudo igual) y ninguno de los .env reales de PROD tiene valores así hoy; si aparece, se cotiza quoting por target. |
 | **Symlink:** si el `.env` es un enlace, se escribe a través de él (`realpath`) — `os.replace` sobre el propio link lo reemplazaría por un archivo regular y rompería el mount (hallazgo H2, corregido con test `test_h2_symlink_env_is_written_through`). |
+| **N2 (riesgo aceptado, revisión ronda 2):** un valor del vault con salto de línea INTERNO solo se recorta al final (`rstrip`); los saltos internos se escribirían crudos y romperían la estructura del `.env`. Mismo plan que H7: resolver con quoting/rechazo por target cuando aparezca un valor así (los valores reales de PROD son single-line). |
 
 ## 7. Observabilidad
 
