@@ -366,6 +366,23 @@ class MainTests(Base):
     def items(self):
         return {"Item A": login_item("Item A", password="fresh")}
 
+    def mapfile_raw(self, obj):
+        p = os.path.join(self.tmp, "map.json")
+        with open(p, "w") as f:
+            json.dump(obj, f)
+        return p
+
+    def call_main_raw(self, obj, fetch=None, restart_fn=None):
+        err, out = io.StringIO(), io.StringIO()
+        code = sync.main(
+            ["SESSION"],
+            mapfile=self.mapfile_raw(obj),
+            fetch=fetch or (lambda session: self.items()),
+            err=err, out=out,
+            restart_fn=restart_fn or (lambda c: None),
+        )
+        return code, err.getvalue(), out.getvalue()
+
     def call_main(self, targets, fetch=None, restart_fn=None):
         err = io.StringIO()
         out = io.StringIO()
@@ -445,6 +462,35 @@ class MainTests(Base):
         code, err, _ = self.call_main([None, "x"])
         self.assertEqual(code, 1)
         self.assertIn("SUMMARY: ok=0 skipped=0 failed=2", err)
+
+    def test_na_non_list_targets_exits_1_with_summary_no_traceback(self):
+        code, err, _ = self.call_main_raw({"targets": 5})
+        self.assertEqual(code, 1)
+        self.assertIn("ERROR: invalid map", err)
+        self.assertIn("'targets' must be a list (got int)", err)
+        self.assertIn("SUMMARY: ok=0 skipped=0 failed=0", err)
+        self.assertNotIn("Traceback", err)
+
+    def test_nb_missing_targets_key_is_loud_error_not_silent_noop(self):
+        called = []
+        code, err, _ = self.call_main_raw({"version": 1}, fetch=lambda s: called.append(s))
+        self.assertEqual(code, 1)
+        self.assertIn("missing 'targets'", err)
+        self.assertIn("SUMMARY: ok=0 skipped=0 failed=0", err)
+        # un mapa malo ni siquiera debe gastar una llamada a bw
+        self.assertEqual(called, [])
+
+    def test_nb_explicit_empty_targets_is_noop_warning(self):
+        code, err, _ = self.call_main_raw({"version": 1, "targets": []})
+        self.assertEqual(code, 0)
+        self.assertIn("map has no targets", err)
+        self.assertIn("SUMMARY: ok=0 skipped=0 failed=0", err)
+
+    def test_unreadable_map_still_prints_summary(self):
+        err = io.StringIO()
+        code = sync.main(["SESSION"], mapfile="/no/existe/mapa.json", err=err)
+        self.assertEqual(code, 1)
+        self.assertIn("SUMMARY: ok=0 skipped=0 failed=0", err.getvalue())
 
     def test_usage_error_returns_1(self):
         err = io.StringIO()

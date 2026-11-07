@@ -57,6 +57,8 @@ en ambos hosts): se viola el protocolo de repositorios vivos. Además ninguna ha
 
 ## 6. Casos límite
 
+- **Mapa malformado (gate ronda 3, N-a/N-b):** `targets` ausente o que no sea lista → `ERROR` + `SUMMARY` + `exit 1`, validado **antes** de llamar a `bw` (cero tracebacks bajo `set -euo pipefail`, cero no-op silenciosos); `targets: []` explícito → `WARNING` + `SUMMARY` + `exit 0`.
+
 Valor con `=`, comillas, `$`, espacios (split en el primer `=`); archivo sin `\n` final; archivo vacío/inexistente; `owner` inexistente → WARNING; comentario en línea ` #...` → **se conserva**; fin de línea `\r\n` → conservado por línea.
 
 ## 7. Skill audit

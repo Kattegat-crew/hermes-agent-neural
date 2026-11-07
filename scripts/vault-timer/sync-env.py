@@ -316,7 +316,25 @@ def main(argv, mapfile=DEFAULT_MAPFILE, fetch=None, err=None, out=None, restart_
             data = json.load(f)
     except Exception as e:
         print(f"ERROR: cannot read map {mapfile}: {e}", file=err)
+        print("SUMMARY: ok=0 skipped=0 failed=0", file=err)
         return 1
+
+    # N-a/N-b (gate ronda 3): estructura del mapa validada ANTES de tocar bw.
+    if "targets" not in data:
+        print(f"ERROR: invalid map {mapfile}: missing 'targets'", file=err)
+        print("SUMMARY: ok=0 skipped=0 failed=0", file=err)
+        return 1
+    if not isinstance(data["targets"], list):
+        print(
+            f"ERROR: invalid map {mapfile}: 'targets' must be a list "
+            f"(got {type(data['targets']).__name__})",
+            file=err,
+        )
+        print("SUMMARY: ok=0 skipped=0 failed=0", file=err)
+        return 1
+    targets = data["targets"]
+    if not targets:
+        print("  WARNING: map has no targets; nothing to sync", file=err)
 
     try:
         item_map = fetch(argv[0])
@@ -325,7 +343,7 @@ def main(argv, mapfile=DEFAULT_MAPFILE, fetch=None, err=None, out=None, restart_
         return 1
 
     ok = skipped = failed = 0
-    for target in data.get("targets", []):
+    for target in targets:
         if not isinstance(target, dict):
             # N1 (review ronda 2): un target mal editado en el mapa no debe
             # matar el run entero (sin SUMMARY) bajo `set -euo pipefail`.
