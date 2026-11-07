@@ -204,7 +204,7 @@ function render(){
 
 async function load(force){
   try{
-    const j = await fetch('/api/tasks', {cache:'no-store'}).then(r=>r.json());
+    const j = await fetch('api/tasks', {cache:'no-store'}).then(r=>r.json());
     if(!force && j.meta && j.meta.mtime === lastMtime) return;
     lastMtime = j.meta?.mtime ?? 0;
     data = j; render();
@@ -215,10 +215,10 @@ async function toggle(it, li){
   const antes = {...it};
   try{
     if(it.estado === 'cerrado') return;
-    await api('POST', `/api/tasks/${it.id}/close`, {evidencia:`Cerrada por ${whoami()} desde el portal`});
+    await api('POST', `api/tasks/${it.id}/close`, {evidencia:`Cerrada por ${whoami()} desde el portal`});
     li.classList.add('done');
     toast(`Cerrada ${it.id}`, async ()=>{
-      await api('PATCH', `/api/tasks/${it.id}`, {estado: antes.estado || 'abierto'});
+      await api('PATCH', `api/tasks/${it.id}`, {estado: antes.estado || 'abierto'});
       load(true);
     });
     setTimeout(()=>load(true), 400);
@@ -227,7 +227,7 @@ async function toggle(it, li){
 
 async function setEstado(it, estado){
   try{
-    await api('PATCH', `/api/tasks/${it.id}`, {estado});
+    await api('PATCH', `api/tasks/${it.id}`, {estado});
     load(true);
   }catch(e){ toast('No se pudo cambiar: '+e.message); }
 }
@@ -235,7 +235,7 @@ async function setEstado(it, estado){
 async function quitar(it){
   if(!confirm(`¿Quitar ${it.id}?\n\n${it.tarea}\n\nNo se borra: se cierra con registro.`)) return;
   try{
-    await api('DELETE', `/api/tasks/${it.id}`);
+    await api('DELETE', `api/tasks/${it.id}`);
     toast(`Quitada ${it.id}`);
     load(true);
   }catch(e){ toast('No se pudo quitar: '+e.message); }
@@ -248,7 +248,7 @@ document.querySelectorAll('.add input').forEach(inp => {
     if(ev.key !== 'Enter') return;
     const t = inp.value.trim(); if(!t) return;
     try{
-      const r = await api('POST','/api/tasks',{tarea:t, dueno:inp.dataset.o});
+      const r = await api('POST','api/tasks',{tarea:t, dueno:inp.dataset.o});
       if(r.status === 409){ toast(`Ya existe: ${r.id}`); return; }
       inp.value = '';
       toast(`Añadida ${r.item?.id||''}`);
@@ -265,7 +265,7 @@ document.querySelectorAll('.tab').forEach(t => {
   };
 });
 
-fetch('/api/health').then(r=>r.json()).then(j=>{
+fetch('api/health').then(r=>r.json()).then(j=>{
   document.getElementById('who').textContent = j.actor || '';
 }).catch(()=>{});
 
