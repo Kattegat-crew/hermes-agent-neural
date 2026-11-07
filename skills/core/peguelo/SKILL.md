@@ -2,7 +2,7 @@
 name: peguelo
 description: "Use when the user writes peguelo: session autopsy."
 tags: [autoevaluacion, retrospectiva, postmortem, state-db, autocritica, mejora-continua, evidencia]
-version: "1.4"
+version: "1.5"
 license: Apache-2.0
 author: Ragnar (default)
 platforms: [linux]
@@ -115,6 +115,35 @@ python3 /opt/data/skills/core/peguelo/scripts/peguelo_ledger.py add \
 
 1ª aparición → solo ledger; 2ª → parche de skill; 3ª+ → escalar a guard. Taxonomía completa y esquema del ledger en `references/taxonomia-destinos.md`.
 
+## Fase 4.5 — Promoción en tres capas (cerrar el ciclo)
+
+Una lección que se queda solo en el ledger está **muerta**: nadie la lee hasta la próxima
+autopsia. El ledger es memoria de trabajo; las tres capas son memoria operativa.
+
+| Capa | Qué va ahí | Cuándo | Verificación obligatoria |
+|---|---|---|---|
+| 1. Ledger | toda lección, sin excepción | siempre | `peguelo_ledger.py count` |
+| 2. Skill | lo procedimental y repetible | apareció ≥2 veces **o** el fallo costó un bug en producción | `grep` del texto en el `SKILL.md` + `--selftest` si tocó código |
+| 3. Memoria | hecho permanente de entorno o usuario | máx 1 por sesión, y solo si aplica a toda sesión futura | `memory(read)` de la entrada escrita |
+
+Reglas:
+
+- **No se sube a memoria para "no perderlo".** Si no es un hecho estable, su sitio es el
+  ledger o el cuerpo de una skill. La memoria se contamina rápido y se paga en cada turno.
+- **Toda capa se verifica leyendo de vuelta.** Escribir sin read-back no cuenta: es
+  exactamente el fallo que esta skill persiste («declara-y-no-ejecuta»).
+- **Si la lección toca Engram o el store nativo**, delegar la mecánica en
+  `guardado-doble-memoria`; no duplicar aquí sus pitfalls de perfiles, DBs y permisos.
+
+### Por qué esta skill NO absorbe `guardado-doble-memoria`
+
+Son dos trabajos con disparadores distintos. `peguelo` se invoca con una palabra y hace
+**autopsia** (leer evidencia, juzgar, corregir el proceso). `guardado-doble-memoria` se
+dispara con «guarda» o al cierre, y hace **persistencia** (Engram + memoria + wiki) con
+una infraestructura propia: perfiles, `state.db` por agente, aislamiento de clientes,
+permisos del store. Fusionarlas produce una skill de dos cabezas que se recuerda peor y
+se invoca peor. La capa 3 de aquí **invoca** a aquella; no la reimplementa.
+
 ## Fase 5 — Informe y cierre
 
 1. Rellena `templates/informe.md` (10 líneas, español, sin relleno).
@@ -126,6 +155,10 @@ python3 /opt/data/skills/core/peguelo/scripts/peguelo_ledger.py add \
 ## Pitfalls
 
 - **Autoevaluarse de memoria** en vez de correr el dossier → métricas inventadas. Siempre el script.
+- **El contexto comprimido no es lectura.** Editar un archivo cuyo contenido recuerdas de un
+  resumen de compactación es zero-stale-state con otro disfraz: el resumen puede estar
+  desfasado o incompleto. `read_file` del bloque exacto antes de cada `patch`. Medido el
+  07-nov: 4 patches a `pending_tasks.py` anclados en el contexto previo, 0 lecturas.
 - **Leer `active=0`** → duplica turnos y dispara fallos falsos. El filtro canónico es `active=1`.
 - Un `read_file` fallido **sí cuenta** como intento de pre-flight (el fallo es evidencia, no ausencia).
 - Convertir una corrección del usuario en «memoria» cuando en realidad es una regla de skill.

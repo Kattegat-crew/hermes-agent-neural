@@ -103,9 +103,12 @@ o revisa el error (127/bash not found, PIL missing = entorno, no código).
 
 ## Auditoría de estado de un repo (receta)
 1. `git log -1` + `git status --short` + ahead/behind vs origin → detectar trabajo sin commitear/pushear.
-2. Comparar `docs/JOURNEY.md` (suele estar al día) contra `README.md` (suele estar viejo) — el estado verídico está en JOURNEY + Engram.
-3. Buscar artefactos reales (outputs, mp4, manifests) con `find` antes de afirmar que algo existe/no existe.
-4. Engram: `mem_search` con `project: <nombre-repo>` explícito (la búsqueda default por proyecto `hermes` devuelve "No memories found" — hay que pisar el project).
+2. **`git status` miente cuando no puede leer el árbol.** Archivos de otro usuario con `0700` no entran al índice: el repo se reporta limpio mientras `git` no ve medio proyecto. Antes de decir "no hay cambios", contar dueños:
+   `find <repo> \( -user root -o -group root \) | wc -l` y `find <repo> -type d -perm 700 | wc -l`.
+   Medido el 07-nov en `marketing-campaign-generator`: **17.551 entradas de root**, 428 PNG invisibles para `git` y para el pipeline de publicación. `chown -R hermes:hermes <repo>` y verificar que el conteo de root baja a 0.
+3. Comparar `docs/JOURNEY.md` (suele estar al día) contra `README.md` (suele estar viejo) — el estado verídico está en JOURNEY + Engram.
+4. Buscar artefactos reales (outputs, mp4, manifests) con `find` antes de afirmar que algo existe/no existe.
+5. Engram: `mem_search` con `project: <nombre-repo>` explícito (la búsqueda default por proyecto `hermes` devuelve "No memories found" — hay que pisar el project).
 
 ## Caso conocido: video-ai-generator
 - Repo: `/root/marketing-campaign-generator` (Kattegat-crew/marketing-campaign-generator, rama canónica `main`), worker HTTP en :8090.
