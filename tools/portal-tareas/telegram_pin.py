@@ -64,14 +64,19 @@ def load_items():
             line = line.strip()
             if line:
                 items.append(json.loads(line))
-    return [i for i in items if i.get("estado") != "cerrado"]
+    return items
 
 
 def esc(t: str) -> str:
     return t.replace("&", "&amp;").replace("<", "&lt;").replace(">", "&gt;")
 
 
-def render(items) -> str:
+def render(todos) -> str:
+    hoy_iso = datetime.now(BOG).strftime("%Y-%m-%d")
+    items = [i for i in todos if i.get("estado") != "cerrado"]
+    hechas = sorted(
+        [i for i in todos if i.get("estado") == "cerrado" and str(i.get("cerrado_en") or "") == hoy_iso],
+        key=lambda i: i["id"], reverse=True)
     total = len(items)
     hoy = datetime.now(BOG).strftime("%d/%m %H:%M")
     out = [f"📋 <b>PENDIENTES ABIERTOS</b> — {total}", f"<i>actualizado {hoy}</i>", ""]
@@ -90,6 +95,17 @@ def render(items) -> str:
                 tarea = tarea[:87] + "…"
             out.append(f"{p} {marca}<code>{i['id']}</code> {esc(tarea)}")
         out.append("")
+    if hechas:
+        out.append(f"✅ <b>Cerradas hoy</b> ({len(hechas)})")
+        for i in hechas[:6]:
+            t = i["tarea"]
+            if len(t) > 55:
+                t = t[:52] + "…"
+            out.append(f"✓ <code>{i['id']}</code> {esc(t)}")
+        if len(hechas) > 6:
+            out.append(f"<i>+{len(hechas) - 6} más</i>")
+        out.append("")
+
     out.append("<i>Detalle completo: reels.neuralcrewlabs.com/tareas</i>")
     txt = "\n".join(out)
     return txt[:4000]
