@@ -355,6 +355,130 @@ class SyncTargetTests(Base):
         self.assertIn("MAPPED=v", self.read())
 
 
+# --------------------------------------------------- F2.3: ownership (RF-6-bis)
+class OwnershipTests(Base):
+    """F2.3: ninguna escritura cambia de propietario por accidente.
+
+    * Sin ``owner`` en el mapa -> se PRESERVA el uid/gid actual del archivo
+      existente (stat antes del replace).
+    * Con ``owner`` -> manda el owner (nombre o uid numerico; el uid numerico
+      cubre contenedores cuyo uid no tiene entrada en /etc/passwd del host).
+    * Archivo inexistente -> uid del escritor (nada que preservar).
+    """
+
+    def patch_chown(self, calls):
+        real_chown = os.chown
+        return mock.patch.object(
+            sync.os, "chown",
+            side_effect=lambda f, u, g: (calls.append((u, g)), real_chown(f, u, g))[0],
+        )
+
+    def target(self, file=None, mappings=None, **extra):
+        t = {
+            "file": file or self.path(),
+            "mode": "0600",
+            "mappings": mappings or [{"item": "Item A", "field": "password", "env": "MAPPED"}],
+        }
+        t.update(extra)
+        return t
+
+    def run_target(self, target, items, restart_fn=None):
+        warns = []
+        outs = []
+        outcome = sync.sync_target(
+            target, items,
+            warn=warns.append, out=outs.append,
+            restart_fn=restart_fn or (lambda cmd: None),
+        )
+        return outcome, "\n".join(warns), "\n".join(outs)
+
+    def test_atomic_write_preserves_current_owner_without_map_owner(self):
+        p = self.write(BASE_ENV)
+        st_before = os.stat(p)
+        calls = []
+        with self.patch_chown(calls):
+            sync.atomic_write(p, "MAPPED=nuevo\n", owner=None, warn=lambda m: None)
+        self.assertEqual(calls, [(st_before.st_uid, st_before.st_gid)])
+        self.assertIn("MAPPED=nuevo", self.read())
+        st_after = os.stat(p)
+        self.assertEqual((st_after.st_uid, st_after.st_gid),
+                         (st_before.st_uid, st_before.st_gid))
+
+    def test_atomic_write_missing_file_keeps_writer_uid(self):
+        p = self.path("nuevo.env")
+        calls = []
+        with self.patch_chown(calls):
+            sync.atomic_write(p, "A=1\n", owner=None, warn=lambda m: None)
+        self.assertEqual(calls, [], "sin archivo previo no hay nada que preservar")
+        self.assertTrue(os.path.exists(p))
+
+    def test_atomic_write_map_owner_overrides(self):
+        p = self.write(BASE_ENV)
+        calls = []
+        with mock.patch("pwd.getpwnam") as gp, \
+                mock.patch.object(sync.os, "chown",
+                                  side_effect=lambda f, u, g: calls.append((u, g))):
+            gp.return_value = mock.Mock(pw_uid=11111, pw_gid=22222)
+            sync.atomic_write(p, "MAPPED=nuevo\n", owner="explicit-user", warn=lambda m: None)
+        gp.assert_called_once_with("explicit-user")
+        self.assertEqual(calls, [(11111, 22222)])
+
+    def test_atomic_write_numeric_owner_without_passwd_entry(self):
+        # PROD: uid 10000 de contenedor SIN entrada en passwd del host
+        p = self.write(BASE_ENV)
+        calls = []
+        with mock.patch("pwd.getpwuid", side_effect=KeyError(10000)), \
+                mock.patch.object(sync.os, "chown",
+                                  side_effect=lambda f, u, g: calls.append((u, g))):
+            sync.atomic_write(p, "MAPPED=nuevo\n", owner="10000", warn=lambda m: None)
+        self.assertEqual(calls, [(10000, 10000)])
+
+    def test_sync_target_preserves_owner_end_to_end(self):
+        self.write(BASE_ENV)
+        st_before = os.stat(self.path())
+        calls = []
+        with self.patch_chown(calls):
+            outcome, warns, _ = self.run_target(
+                self.target(), {"Item A": login_item("Item A", password="nuevo-1")},
+            )
+        self.assertEqual(outcome, "ok")
+        self.assertIn("MAPPED=nuevo-1", self.read())
+        self.assertEqual(calls, [(st_before.st_uid, st_before.st_gid)])
+
+    def test_sync_target_map_owner_wins_over_preservation(self):
+        self.write(BASE_ENV)
+        calls = []
+        with mock.patch("pwd.getpwnam") as gp, \
+                mock.patch.object(sync.os, "chown",
+                                  side_effect=lambda f, u, g: calls.append((u, g))):
+            gp.return_value = mock.Mock(pw_uid=11111, pw_gid=22222)
+            outcome, _, _ = self.run_target(
+                self.target(owner="explicit-user"),
+                {"Item A": login_item("Item A", password="nuevo-1")},
+            )
+        self.assertEqual(outcome, "ok")
+        self.assertEqual(calls, [(11111, 22222)])
+
+    @unittest.skipUnless(os.geteuid() == 0, "requiere root para chown a otro uid")
+    def test_sync_target_preserves_foreign_owner_on_disk(self):
+        p = self.write(BASE_ENV)
+        os.chown(p, 65534, 65534)
+        outcome, warns, _ = self.run_target(
+            self.target(), {"Item A": login_item("Item A", password="nuevo-1")},
+        )
+        self.assertEqual(outcome, "ok")
+        st = os.stat(p)
+        self.assertEqual((st.st_uid, st.st_gid), (65534, 65534))
+        self.assertIn("MAPPED=nuevo-1", self.read())
+
+    @unittest.skipUnless(os.geteuid() == 0, "requiere root para chown a otro uid")
+    def test_atomic_write_numeric_owner_real_without_passwd_entry(self):
+        p = self.write(BASE_ENV)
+        sync.atomic_write(p, "MAPPED=nuevo\n", owner="12345", warn=lambda m: None)
+        st = os.stat(p)
+        self.assertEqual((st.st_uid, st.st_gid), (12345, 12345))
+
+
 # ---------------------------------------------------------------- main / RF-7 / RF-8
 class MainTests(Base):
     def mapfile(self, targets):

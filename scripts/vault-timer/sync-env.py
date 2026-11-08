@@ -14,6 +14,9 @@ Diseño (ver 02-design.md):
     restart SOLO si el contenido cambio y fallback ``notes`` del secure note.
   * ESCRITURA ATOMICA (RF-6): temporal en el mismo directorio + os.replace; si
     falla, el .env original queda intacto y el target cuenta FAILED.
+  * PROPIEDAD (F2.3): sin ``owner`` en el mapa se PRESERVA el uid/gid actual
+    del archivo existente; ``owner`` (nombre o uid numerico) es override
+    explicito. Archivo nuevo -> uid del escritor.
   * Exit 1 solo si failed>0 and ok==0 (RF-7); bw list items con timeout 30s (RF-8).
 
 Contrato de log (sin cambios, lo usa /var/log/vault-sync.log):
@@ -24,6 +27,7 @@ from __future__ import annotations
 
 import json
 import os
+import pwd
 import re
 import subprocess
 import sys
@@ -175,9 +179,39 @@ def build_updates(target: dict, item_map: dict, warn) -> dict:
 
 
 # ----------------------------------------------------------------------- RF-6
+def _explicit_owner_ids(owner, warn):
+    """owner del mapa -> (uid, gid), o None si no se puede resolver.
+
+    Acepta nombre de usuario o uid numerico (``"10000"``, ``10000``): el uid
+    numerico cubre contenedores cuyo uid no tiene entrada en /etc/passwd del
+    host (PROD: uid 10000 sin usuario; ``pwd.getpwnam`` fallaria y el temporal
+    quedaria root — exactamente el bug F2.3). Sin entrada en passwd para el
+    uid, gid = uid (patron de los contenedores: uid==gid)."""
+    if isinstance(owner, int) or (isinstance(owner, str) and owner.strip().isdigit()):
+        uid = int(str(owner).strip())
+        try:
+            return uid, pwd.getpwuid(uid).pw_gid
+        except KeyError:
+            return uid, uid
+    try:
+        pw = pwd.getpwnam(str(owner))
+    except KeyError:
+        warn("  WARNING: owner '%s' does not exist, ownership unchanged" % owner)
+        return None
+    return pw.pw_uid, pw.pw_gid
+
+
 def atomic_write(path: str, text: str, mode="0600", owner=None, warn=None):
     """Temporal en el mismo directorio + os.replace. El original solo se pierde
     si el reemplazo tuvo exito (RF-6).
+
+    Propiedad (F2.3): el ``owner`` del mapa es override explicito y manda;
+    sin ``owner``, se PRESERVA el uid/gid ACTUAL del archivo existente (stat
+    antes del replace) para que ninguna escritura cambie de propietario por
+    accidente. Si el archivo NO existe se mantiene el comportamiento previo:
+    el temporal queda con el uid del escritor (no hay nada que preservar). Si
+    el owner declarado no se puede resolver, se avisa y se preserva el
+    propietario existente (nunca root por accidente).
 
     Politica de codificacion del repo (check-windows-footguns): lecturas con
     utf-8-sig, ESCRITURAS con utf-8. Un BOM que traiga el archivo original se
@@ -191,12 +225,16 @@ def atomic_write(path: str, text: str, mode="0600", owner=None, warn=None):
         with os.fdopen(fd, "w", encoding="utf-8") as f:
             f.write(text)
         os.chmod(tmp, int(str(mode), 8))
-        if owner:
+        ids = _explicit_owner_ids(owner, warn) if owner not in (None, "") else None
+        if ids is None:
             try:
-                pw = pwd.getpwnam(owner)
-                os.chown(tmp, pw.pw_uid, pw.pw_gid)
-            except KeyError:
-                warn("  WARNING: owner '%s' does not exist, ownership unchanged" % owner)
+                st = os.stat(path)
+            except OSError:
+                st = None  # archivo inexistente: uid del escritor (documentado)
+            if st is not None:
+                ids = (st.st_uid, st.st_gid)
+        if ids is not None:
+            os.chown(tmp, ids[0], ids[1])
         os.replace(tmp, path)
     except BaseException:
         try:
