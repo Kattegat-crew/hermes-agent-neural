@@ -52,16 +52,18 @@ Un hilo con solo su mensaje raíz NO es huérfano por defecto: un watcher puede 
 |---|---|
 | Crear foro | `POST /guilds/{g}/channels` con `type:15`, `name`, `parent_id` |
 | Crear hilo con mensaje | `POST /channels/{foro}/threads` `{name, message:{content}}` |
+| Mover de categoría | `PATCH /channels/{id}` `{parent_id}` |
+| Dejar read-only | `PATCH` con `permission_overwrites` de `@everyone` deny `2048\|64\|34359738368` (enviar, reaccionar, crear hilos) |
+| Archivar+bloquear hilo | `PATCH /channels/{thread}` `{archived:true, locked:true}` |
 
-El mensaje raíz del hilo tiene el límite estándar de 2000 chars: excederlo responde HTTP 400 genérico. Para tickets/informes largos, crear el hilo con un cuerpo corto (síntoma + tabla de evidencia) y publicar el detalle como mensajes de seguimiento en `/channels/{thread}/messages`.
+Reglas de publicación:
+- El mensaje raíz del hilo tiene el límite estándar de 2000 chars: excederlo responde HTTP 400 genérico. Para tickets/informes largos, crear el hilo con un cuerpo corto (síntoma + tabla de evidencia) y publicar el detalle como mensajes de seguimiento en `/channels/{thread}/messages`.
 - Publicar en un foro con tags: resolver los ids reales con `GET /channels/{foro}` → `available_tags` y pasarlos como `applied_tags` en el payload de creación — un post sin tag queda fuera del flujo del foro.
 - **Tickets del foro técnico: NUNCA crearlos a mano.** Usar `scripts/crear_ticket.py` de esta skill: resuelve los tags en vivo, exige tipo + estado + etiqueta del responsable, valida la mención `<@id>` real, rechaza cuerpos > 2000 chars y reverifica el hilo después del POST. Crear un ticket con `curl`/`sleep` improvisado salta todos esos gates y produce hilos sin etiqueta.
 - El secreto de autenticación del bot de la flota vive solo en `/opt/data/.env` del host PROD (los `.env` de DEV/contenedor no lo traen): ejecutar el POST REST desde ese host — nunca imprimir el secreto ni inlinarlo en el payload. Para scripts Python usar el helper existente en lugar de re-leer el `.env`: `sys.path.insert(0, '/opt/data/scripts')` + `from _discord_token import discord_token` — resuelve `os.environ` → fuentes de secretos del perfil (v0.22.x) → `/opt/data/.env` legado, cachea el resultado y devuelve `''` si no hay (verificar antes de postear, no enviar un `Authorization: Bot ` vacío).
 - Tras crear un hilo/ticket, releerlo (`GET /channels/{thread}` + sus mensajes) y confirmar nombre, tags y mención resuelta ANTES de reportar el enlace — el POST exitoso no prueba que quedó bien armado.
 - Plantilla completa de ticket para el foro técnico: `references/ticket-foro-tecnico.md`.
-| Mover de categoría | `PATCH /channels/{id}` `{parent_id}` |
-| Dejar read-only | `PATCH` con `permission_overwrites` de `@everyone` deny `2048\|64\|34359738368` (enviar, reaccionar, crear hilos) |
-| Archivar+bloquear hilo | `PATCH /channels/{thread}` `{archived:true, locked:true}` |
+- Regla de flota (bloque instalado en `/opt/data/AGENTS.md`, obligatorio para todos los perfiles): `references/regla-flota-tickets.md`.
 
 `PATCH` de permissions **reemplaza** la lista completa de overwrites: leer los actuales, conservar los de otros roles y solo agregar el de `@everyone`.
 
