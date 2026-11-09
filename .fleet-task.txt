@@ -1,0 +1,16 @@
+[PROTOCOLO SDD OBLIGATORIO — Spec-Driven Development]
+1. INSPECCIÓN PREVIA: antes de tocar código lee AGENTS.md, .agents/rules/ y PROJECT_MEMORY.md del repo si existen. Prohibido editar sin leerlos.
+2. ESPECIFICACIÓN: define exactamente qué se hará, por qué, qué archivos se afectan y qué NO se tocará.
+3. DISEÑO TÉCNICO: arquitectura, interfaces y plan de rollback.
+4. DESGLOSE: tareas atómicas, ordenadas e independientes.
+5. TEST-FIRST (TDD): escribe primero la prueba determinista, observa su fallo (RED), implementa (GREEN), re-ejecuta.
+6. VERIFICACIÓN: corre tests/linters pertinentes antes de declarar listo.
+7. GIT: commits Conventional Commits (feat:/fix:/docs:/refactor:/test:/chore:). PROHIBIDO git push sin aprobación humana explícita. PROHIBIDO líneas Co-Authored-By o mención a IA en commits.
+No instales dependencias pagas ni consumas APIs de pago. No subas nada a internet.
+
+[CONTEXTO DE REPOSITORIO]
+Repo: /opt/hermes-agent (trabajas en un WORKTREE aislado de este repo, rama fleet/ dedicada — tus commits quedan en esa rama).
+Al terminar tu tarea: deja el working tree limpio (todo commitado en tu rama fleet/) y resume en tu respuesta final: rama usada, archivos tocados, hash del último commit y resultado de tests.
+
+[TAREA]
+Implementa HERMES-DSML-GUARD según la spec COMPLETA en /opt/data/fleet/specs/dsml-guard-spec.md — léela PRIMERO y síguela al pie de la letra. Resumen: guard de 3 capas (recuperar DSML→tool_call real, re-emitir vía recover_empty_response, cortafuegos strip) en agent/turn_final_response.py, TDD estricto: primero tests/agent/test_dsml_guard.py (RED) con TODAS las variantes de marcador (｜｜DSML｜｜ doble fullwidth, ｜DSML｜, ||DSML||, toolcalls, bloque truncado SIN cierre) y los 3 guardias anti-fantasma (herramienta declarada, args JSON válidos, bloque reconstruible), luego implementación (GREEN). Entorno de tests: el .venv del repo NO es escribible; crea el propio con UV_PROJECT_ENVIRONMENT=/opt/data/fleet/venvs/hermes-dsml-guard uv sync --frozen --link-mode=copy (desde el worktree) y uv pip install pytest; corre $VENV/bin/python -m pytest tests/agent/test_dsml_guard.py -q y luego tests/agent/ -q — no rompas los tests existentes (test_empty_response_fallback_refund.py, test_setup_beat_card_round.py). NO trabajes sobre el working tree vivo del repo (tiene archivos ajenos sucios), SOLO en tu worktree. PROHIBIDO push. Commits convencionales sin atribución IA. Cierra con marcador STOP_FOR_RAGNAR_REVIEW FASE_1_2 + resumen de tests exactos + git log --oneline del worktree.
