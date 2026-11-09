@@ -117,6 +117,24 @@ def _late_lsp_verdicts(agent) -> Optional[str]:
             + body)
 
 
+def _ccg_verify_nudge(agent, final_response) -> Optional[str]:
+    """Capability Claim Guard S3a: when the answer denies a capability this session can
+    reach, keep the turn going so the next model step performs a REAL verification call.
+
+    Bounded per turn (``repair_limit``); once spent, the S3 seal in
+    ``apply_llm_output_transform`` produces the truthful output instead.
+    """
+    if not final_response or getattr(agent, "_ccg_evidence", None) is None:
+        return None
+    try:
+        from agent.capability_claim_guard import repair_nudge
+
+        return repair_nudge(agent, final_response)
+    except Exception:
+        logger.debug("capability-claim repair check failed", exc_info=True)
+        return None
+
+
 def _append_interim_answer(agent, final_msg, messages, conversation_history, flush_fail_msg: str) -> None:
     """Real content: persist and emit as interim so the user sees the attempted answer;
     only the nudge is flagged synthetic (#65919). A held turn's answer (typed hidden) is not shown
@@ -136,10 +154,10 @@ def apply_stop_gates(
     conversation_history: Any, pending_verification_response: Any,
     pending_verification_response_previewed: Any,
 ) -> StopGateVerdict:
-    """Run verify-on-stop → pre_verify hook → kanban stop guard, in that order. Nudges
-    are user-role rows appended only after the assistant answer row, so role alternation
-    holds. Hook lookups are imported lazily from their origin modules (tests patch them
-    there)."""
+    """Run the capability-claim repair → verify-on-stop → pre_verify hook → kanban stop
+    guard, in that order. Nudges are user-role rows appended only after the assistant answer
+    row, so role alternation holds. Hook lookups are imported lazily from their origin
+    modules (tests patch them there)."""
 
     def _continue(nudge: str, flag: str) -> StopGateVerdict:
         """Append the synthetic nudge row and hand the turn back to the loop."""
@@ -157,6 +175,19 @@ def apply_stop_gates(
                 final_response or ""
             ),
         )
+
+    _ccg_nudge = _ccg_verify_nudge(agent, final_response)
+    if _ccg_nudge:
+        # The candidate row stays in history (the model must see what it claimed) but is NOT
+        # emitted as interim: a false capability claim must not be re-published by the gate.
+        final_msg["finish_reason"] = "capability_claim_repair"
+        append_message(messages, final_msg)
+        verdict = _continue(_ccg_nudge, "_ccg_repair_synthetic")
+        logger.info(
+            "capability-claim repair nudge issued (attempt %d)",
+            getattr(agent, "_ccg_repairs", 0),
+        )
+        return verdict
 
     _lsp_note = _late_lsp_verdicts(agent)
     if _lsp_note:

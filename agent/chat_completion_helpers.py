@@ -2843,8 +2843,12 @@ class _StreamingCall(StreamingWaitMonitor):
         reasoning tags inside it must still reach the display: route through
         the delta callback for tag extraction (the CLI drops non-reasoning text
         once the stream box is closed)."""
+<<<<<<< ours
         if self.agent.stream_delta_callback and not getattr(self.agent, "_hold_stream", False):
             self._quiet(lambda: (self.agent.stream_delta_callback(text), self.agent._record_streamed_assistant_text(text)))
+=======
+        self.agent._ccg_route_suppressed_text(text)
+>>>>>>> theirs
 
     def _new_diag(self) -> dict:
         diag = self.agent._stream_diag_init()
@@ -3352,6 +3356,7 @@ class _StreamingCall(StreamingWaitMonitor):
         # releasing its text here would show the provider failure as assistant output.
         if not is_router_timeout_shim(response):
             flush_pending()
+            getattr(self.agent, "_ccg_stream_flush", lambda: None)()  # S1: release held tail
         return response
 
     # ── anthropic_messages wire ─────────────────────────────────────────

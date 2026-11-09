@@ -506,6 +506,21 @@ def _apply_output_hooks(
     return final_response, transformed, pre_transform
 
 
+def _ccg_seal(agent, text):
+    """Fail-open seam for the S3 seal (no import while the guard is disabled)."""
+    if not text or getattr(agent, "_ccg_evidence", None) is None:
+        return text
+    try:
+        from agent.capability_claim_guard import seal_final_text
+
+        return seal_final_text(agent, text)
+    except Exception:  # health: allow BLE001 -- deliberate fail-open boundary: a guard bug must never break the turn
+        from agent.conversation_loop import logger
+
+        logger.exception("capability_claim_guard: seal failed")
+        return text
+
+
 def apply_llm_output_transform(
     agent, final_response, *, turn_id, platform=None, logger=None,
 ) -> tuple[Any, bool, Optional[Any]]:
@@ -526,12 +541,19 @@ def apply_llm_output_transform(
     recorded = getattr(agent, "_llm_output_transform", None)
     if isinstance(recorded, tuple) and len(recorded) == 3 and recorded[0] == turn_id:
         _, transformed, pre_transform = recorded
+        # The hook memo is per TURN; the seal is per TEXT. A repair nudge or a second text
+        # step inside the same turn arrives with text this memo never saw, and it must not
+        # be published unsealed just because an earlier text in the turn was handled.
+        _sealed = _ccg_seal(agent, final_response)
+        if _sealed != final_response:
+            return _sealed, True, final_response
         return final_response, transformed, pre_transform
     if not final_response:
         return final_response, False, None
     if platform is None:
         platform = getattr(agent, "platform", None) or ""
     transformed, pre_transform = False, None
+<<<<<<< ours
     payload = dict(response_text=final_response, session_id=agent.session_id or "", model=agent.model,
                    platform=platform, turn_id=turn_id)  # turn_id: per-turn identity for the hook callback gate
     held = getattr(agent, "_held_transforms", None) if getattr(agent, "_hold_stream", False) else None
@@ -543,6 +565,28 @@ def apply_llm_output_transform(
                         if isinstance(r, str) and r), None)
     if rewrite:
         pre_transform, final_response, transformed = final_response, rewrite, True
+=======
+    # First hook to return a string wins; None/empty leaves the text unchanged.
+    for _hook_result in _invoke_hook_safely(
+        "transform_llm_output", logger,
+        response_text=final_response,
+        session_id=agent.session_id or "",
+        model=agent.model,
+        platform=platform,
+        turn_id=turn_id,  # per-turn identity for the hook callback gate
+    ):
+        if isinstance(_hook_result, str) and _hook_result:
+            pre_transform, final_response, transformed = final_response, _hook_result, True
+            break
+    # Capability Claim Guard S3: the text the user will see must not assert a capability the
+    # session can reach. Runs AFTER any plugin transform so the seal is the last word, and it
+    # only appends — the model's own claim is never rewritten (prompt-cache/attribution
+    # invariant). No snapshot (guard disabled) returns the text untouched.
+    _sealed = _ccg_seal(agent, final_response)
+    if _sealed != final_response:
+        pre_transform = pre_transform if transformed else final_response
+        final_response, transformed = _sealed, True
+>>>>>>> theirs
     agent._llm_output_transform = (turn_id, transformed, pre_transform)
     return final_response, transformed, pre_transform
 

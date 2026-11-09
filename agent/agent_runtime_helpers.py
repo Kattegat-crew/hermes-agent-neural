@@ -552,13 +552,13 @@ def _merge_consecutive_assistants(messages: list[dict]) -> tuple[list[dict], int
     collapsed: list[dict] = []
     for msg in messages:
         prev = collapsed[-1] if collapsed and isinstance(collapsed[-1], dict) else None
-        if (
-            prev is not None and prev.get("role") == "assistant"
-            and isinstance(msg, dict) and msg.get("role") == "assistant"
-            and not _is_codex_interim(msg) and not _is_codex_interim(prev)
-        ):
-            # A provisional verification candidate is superseded, not unioned.
-            if prev.get("finish_reason") in {"verification_required", "verify_hook_continue"}:
+        if (prev is not None and prev.get("role") == "assistant"
+                and isinstance(msg, dict) and msg.get("role") == "assistant"
+                and not _is_codex_interim(msg) and not _is_codex_interim(prev)):
+            # Provisional candidates (verification / capability-claim repair) are superseded.
+            if prev.get("finish_reason") in {
+                "verification_required", "verify_hook_continue", "capability_claim_repair",
+            }:
                 _count_unnamed_row(msg, prev)
                 _remember_absorbed_row(msg, prev, folded=False)
                 collapsed[-1] = msg
