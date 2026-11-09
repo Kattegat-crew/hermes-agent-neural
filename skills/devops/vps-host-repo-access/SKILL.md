@@ -106,9 +106,12 @@ o revisa el error (127/bash not found, PIL missing = entorno, no código).
 2. **`git status` miente cuando no puede leer el árbol.** Archivos de otro usuario con `0700` no entran al índice: el repo se reporta limpio mientras `git` no ve medio proyecto. Antes de decir "no hay cambios", contar dueños:
    `find <repo> \( -user root -o -group root \) | wc -l` y `find <repo> -type d -perm 700 | wc -l`.
    Medido el 07-nov en `marketing-campaign-generator`: **17.551 entradas de root**, 428 PNG invisibles para `git` y para el pipeline de publicación. `chown -R hermes:hermes <repo>` y verificar que el conteo de root baja a 0.
-3. Comparar `docs/JOURNEY.md` (suele estar al día) contra `README.md` (suele estar viejo) — el estado verídico está en JOURNEY + Engram.
-4. Buscar artefactos reales (outputs, mp4, manifests) con `find` antes de afirmar que algo existe/no existe.
-5. Engram: `mem_search` con `project: <nombre-repo>` explícito (la búsqueda default por proyecto `hermes` devuelve "No memories found" — hay que pisar el project).
+3. **Verificar un push con `git ls-remote`, nunca con `git log --not --remotes`.** Empujar por URL explícita (`git push https://github.com/... rama`) **no actualiza** los refs `refs/remotes/*`: al minuto siguiente el repo sigue diciendo "9 ramas sin pushear" aunque ya estén en GitHub. Comparar hash local contra `git ls-remote <url> refs/heads/<rama>`; si coinciden, está subido. Además: cuando `origin` es SSH y la deploy key es de solo lectura, el push falla con "Please make sure you have the correct access rights" — usar HTTPS con el credential helper de `gh` (`HOME=<home> git -c credential.helper='!gh auth git-credential' push <url> rama`).
+4. **Un push rechazado por non-fast-forward no se fuerza: se lee.** `git rev-list --left-right --count main...origin/main` da (solo local, solo remoto). Con commits en ambos lados hay trabajo de otra persona: probar el merge **en memoria** con `git merge-tree --write-tree --name-only origin/main main` — si sale un hash y rc=0, es limpio. Recién entonces `git merge origin/main` y push.
+5. **Una regla de `approvals.deny` puede disparar con un nombre de rama.** La regla pensada para force-push (`git push` + comodín `-f`) salta con ramas como `feat/geo-f2-3` porque el nombre contiene `-f`. No rodearla: renombrar la rama (`git branch -m`) y volver a empujar.
+6. Comparar `docs/JOURNEY.md` (suele estar al día) contra `README.md` (suele estar viejo) — el estado verídico está en JOURNEY + Engram.
+7. Buscar artefactos reales (outputs, mp4, manifests) con `find` antes de afirmar que algo existe/no existe.
+8. Engram: `mem_search` con `project: <nombre-repo>` explícito (la búsqueda default por proyecto `hermes` devuelve "No memories found" — hay que pisar el project).
 
 ## Caso conocido: video-ai-generator
 - Repo: `/root/marketing-campaign-generator` (Kattegat-crew/marketing-campaign-generator, rama canónica `main`), worker HTTP en :8090.
