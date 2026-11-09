@@ -4,6 +4,14 @@ Este bloque vive en `/opt/data/AGENTS.md` (mismo inodo que `/opt/hermes-agent-da
 aplica a Ragnar y a **todos** los perfiles de la flota. Si un rebuild del contenedor regenera ese
 archivo y el bloque no está, reinyectarlo tal cual (idempotente: comprobar con `grep -c "vía única obligatoria"`).
 
+## Pendiente (no implementado): candado duro por hook
+
+Hoy la vía única se garantiza por regla + script; un `POST` manual a `/channels/1554957746980261938/threads` sigue siendo técnicamente posible. Propuesta aparcada por el Admin el 09-nov-2026:
+
+- Hook `pre_tool_call` con matcher `^(terminal|execute_code)$` que inspeccione el comando y bloquee cualquier POST/urllib/requests al endpoint `threads` de ese foro si no invoca `crear_ticket.py`.
+- Requiere: backup de `/opt/data/config.yaml`, añadir la entrada en `hooks.pre_tool_call`, `fail_closed: true`, recargar hooks del gateway y verificar que el bot sigue vivo.
+- Se implementa solo con autorización explícita ("dale" del Admin). Este bloque existe para no perder el diseño ni repetir el diagnóstico.
+
 ## Bloque
 
 ```markdown
