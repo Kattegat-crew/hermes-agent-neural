@@ -318,6 +318,12 @@ async def settle_viewer_close(authority, session_id):
         cur_row = await asyncio.to_thread(authority.db.get_session, target)
         if cur_row is None or cur_row.get('ended_at') is not None:
             await asyncio.to_thread(forget_persisted_close, authority, session_id, close.record)
+            if not live.subscribers:
+                from gateway.session_vault_prompt import release_unlocks
+                release_unlocks(session_id)
+                live.event_stream.release()
+                from gateway.session_retirement import retire_closed
+                retire_closed(authority, session_id, live, target, idle_stamp)
             return
         await _requeue_if_busy(authority, session_id, live, target, close)
         return
@@ -378,8 +384,6 @@ async def _requeue_if_busy(authority, session_id, live, target, close):
         await asyncio.to_thread(forget_persisted_close, authority, session_id, close.record)
         return
     if not await asyncio.to_thread(_busy, authority, session_id, target):
-        if session_id not in authority.pending_closes:
-            await asyncio.to_thread(forget_persisted_close, authority, session_id, close.record)  # already ended
         return
     if live.subscribers or session_id in authority.pending_closes:
         return  # a reattach cancelled it, or a newer close replaced it

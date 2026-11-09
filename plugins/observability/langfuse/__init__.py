@@ -59,16 +59,30 @@ class TraceState:
 
 _STATE_LOCK = threading.Lock()
 _TRACE_STATE: Dict[str, TraceState] = {}
-_CIRCUIT_TRIPPED_UNTIL: float = 0.0
+_CIRCUIT_TRIPPED_BY_HOME: Dict[str, float] = {}
 _CIRCUIT_COOLDOWN_SECONDS: float = 3600.0
 
 
+def _active_home_key() -> str:
+    try:
+        from hermes_constants import get_hermes_home_override, hermes_home_key
+        if get_hermes_home_override() is not None:
+            return hermes_home_key()
+    except Exception:
+        pass
+    return "default"
+
+
 def _trip_circuit(reason: str) -> None:
-    global _CIRCUIT_TRIPPED_UNTIL
-    _CIRCUIT_TRIPPED_UNTIL = time.time() + _CIRCUIT_COOLDOWN_SECONDS
-    logger.warning("Langfuse telemetry circuit breaker tripped: %s. Telemetry suspended for 3600s.", reason)
-    with _STATE_LOCK:
-        _TRACE_STATE.clear()
+    key = _active_home_key()
+    _CIRCUIT_TRIPPED_BY_HOME[key] = time.time() + _CIRCUIT_COOLDOWN_SECONDS
+    logger.warning("Langfuse telemetry circuit breaker tripped for %s: %s. Telemetry suspended for 3600s.", key, reason)
+    with _LANGFUSE_CLIENT_LOCK:
+        if key == "default":
+            global _LANGFUSE_CLIENT
+            _LANGFUSE_CLIENT = None
+        else:
+            _LANGFUSE_CLIENT_BY_HOME.pop(key, None)
 # Ceiling on live trace state (per turn_id): turns that never reach _finish_trace
 # would leak forever, so over the cap the least-recently-updated are evicted.
 # Bounds the leak, not concurrency.
@@ -251,7 +265,8 @@ def _get_langfuse() -> Optional[Langfuse]:
     """Cached Langfuse client, or ``None`` if the SDK/credentials are unavailable.
     The first build is serialized so racing callers can't each construct a client
     and leak the loser's HTTP connection + flush thread."""
-    if time.time() < _CIRCUIT_TRIPPED_UNTIL:
+    key = _active_home_key()
+    if time.time() < _CIRCUIT_TRIPPED_BY_HOME.get(key, 0.0):
         return None
     # Fast path — already settled (success or _INIT_FAILED) needs no lock;
     # re-check under it since a racing thread may have finished init.
