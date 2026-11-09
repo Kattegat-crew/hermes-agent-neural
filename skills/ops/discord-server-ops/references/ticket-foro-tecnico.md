@@ -4,9 +4,25 @@ Destino: foro `1554957746980261938` (guild `1493354289266167808`). Usar cuando e
 
 ## Tags del foro
 
-- Tags disponibles: `Implementación` (`1554957746980261940`), `Pendiente` (`1554957746980261942`).
-- Si el foro cambia de configuración, resolver los ids reales con `GET /channels/1554957746980261938` → `available_tags`; no asumir los de esta lista.
-- Crear el hilo con `applied_tags: ["<id_tag>", ...]` en el payload; un ticket sin tag queda fuera del flujo del foro.
+El foro usa 12 etiquetas en tres ejes. Resolver los ids SIEMPRE en vivo (`GET /channels/1554957746980261938` → `available_tags`); los de abajo son referencia al 09-nov-2026:
+
+- **Responsable:** `Chucho` (1555025478450946119), `Jonathan` (1555025462684819496)
+- **Tipo:** `Mantenimiento` (1554957746980261939), `Implementación` (1554957746980261940), `Incidente` (1554957746980261941)
+- **Estado:** `Pendiente` (1554957746980261942), `En curso` (1554957746980261943), `En revisión` (1554957746980261944), `Cerrado` (1554957746980261945), `Bloqueado` (1554957746980261946)
+- **Entorno:** `DEV` (1554957746980261947), `PROD` (1554957747005685860)
+
+Obligatorio: **tipo + estado + etiqueta del responsable**. Entorno solo cuando el trabajo toca una máquina concreta. Un ticket sin tag de responsable o sin mención real contraviene el topic del foro.
+
+## Vía única: scripts/crear_ticket.py
+
+```bash
+python3 /opt/hermes-agent/skills/ops/discord-server-ops/scripts/crear_ticket.py \
+  --titulo "TKT — ..." --responsable <id_numerico> \
+  --tipo Implementacion --estado Pendiente [--entorno DEV] \
+  --cuerpo /tmp/ticket.md [--dry-run]
+```
+
+Valida antes de postear: tipo/estado válidos, mención `<@id>` presente en el cuerpo, secciones `Objetivo` / `Criterios de aceptación` / `Fuera de alcance`, cuerpo ≤ 2000 chars. Mapea username→etiqueta con `ALIAS_RESPONSABLE` (`jemadiar`→Chucho, `killer420w`→Jonathan): si entra un responsable nuevo, agregar el alias ahí. Tras el POST relee el hilo y falla con exit 1 si `applied_tags` o `mentions` no cuadran.
 
 ## Esqueleto del mensaje raíz (en este orden)
 
