@@ -9,6 +9,7 @@
 !/scripts/run_brain_graph.sh
 !/scripts/nan_reviewer.py
 !/scripts/nan_quota_watch.py
+!/scripts/resumen_tickets_tecnicos.py
 !/scripts/rendicion-mensual/
 !/tools/
 /tools/*
