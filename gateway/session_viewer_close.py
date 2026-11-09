@@ -117,18 +117,25 @@ def _persist_close(authority, session_id, record):
     authority.db._execute_write(write)
 
 
-def forget_persisted_close(authority, session_id, record):
+def forget_persisted_close(authority, session_id, record=None):
     """Blocking: drop *session_id*'s stored close only if it is still exactly *record* (that close
     completed or was cancelled), and only while this authority owns the store. Returns whether a
     row went."""
     from hermes_state_runtime import _epoch
 
+    db = getattr(authority, 'db', authority)
+    epoch = getattr(authority, 'epoch', None)
+
     def write(conn):
-        _epoch(conn, authority.epoch)
+        if epoch is not None:
+            _epoch(conn, epoch)
+        if record is None:
+            return conn.execute('DELETE FROM state_meta WHERE key=?',
+                                (CLOSE_PREFIX + session_id,)).rowcount
         return conn.execute('DELETE FROM state_meta WHERE key=? AND value=?',
                             (CLOSE_PREFIX + session_id, record)).rowcount
     try:
-        return bool(authority.db._execute_write(write))
+        return bool(db._execute_write(write))
     except RuntimeStoreError as exc:
         logger.info('Stored close for %s left in place: %s', session_id, exc)
         return False
@@ -308,6 +315,10 @@ async def settle_viewer_close(authority, session_id):
     ended = await tracked_write(authority, partial(end_idle_viewer_session, authority, session_id, close.reason),
                                 then=partial(reopen_if_reattached, authority, session_id))
     if not ended:
+        cur_row = await asyncio.to_thread(authority.db.get_session, target)
+        if cur_row is None or cur_row.get('ended_at') is not None:
+            await asyncio.to_thread(forget_persisted_close, authority, session_id, close.record)
+            return
         await _requeue_if_busy(authority, session_id, live, target, close)
         return
     await asyncio.to_thread(forget_persisted_close, authority, session_id, close.record)
@@ -362,6 +373,10 @@ def _still_pending(authority, session_id, live, close):
 async def _requeue_if_busy(authority, session_id, live, target, close):
     """The stamp was refused. If input was admitted after the idle check, the close goes back to the
     drain's next idle point; any other refusal (row already ended) leaves nothing to finish."""
+    cur_row = await asyncio.to_thread(authority.db.get_session, target)
+    if cur_row is None or cur_row.get('ended_at') is not None:
+        await asyncio.to_thread(forget_persisted_close, authority, session_id, close.record)
+        return
     if not await asyncio.to_thread(_busy, authority, session_id, target):
         if session_id not in authority.pending_closes:
             await asyncio.to_thread(forget_persisted_close, authority, session_id, close.record)  # already ended

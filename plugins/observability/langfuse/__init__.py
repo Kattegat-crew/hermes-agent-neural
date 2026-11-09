@@ -59,6 +59,16 @@ class TraceState:
 
 _STATE_LOCK = threading.Lock()
 _TRACE_STATE: Dict[str, TraceState] = {}
+_CIRCUIT_TRIPPED_UNTIL: float = 0.0
+_CIRCUIT_COOLDOWN_SECONDS: float = 3600.0
+
+
+def _trip_circuit(reason: str) -> None:
+    global _CIRCUIT_TRIPPED_UNTIL
+    _CIRCUIT_TRIPPED_UNTIL = time.time() + _CIRCUIT_COOLDOWN_SECONDS
+    logger.warning("Langfuse telemetry circuit breaker tripped: %s. Telemetry suspended for 3600s.", reason)
+    with _STATE_LOCK:
+        _TRACE_STATE.clear()
 # Ceiling on live trace state (per turn_id): turns that never reach _finish_trace
 # would leak forever, so over the cap the least-recently-updated are evicted.
 # Bounds the leak, not concurrency.
@@ -241,6 +251,8 @@ def _get_langfuse() -> Optional[Langfuse]:
     """Cached Langfuse client, or ``None`` if the SDK/credentials are unavailable.
     The first build is serialized so racing callers can't each construct a client
     and leak the loser's HTTP connection + flush thread."""
+    if time.time() < _CIRCUIT_TRIPPED_UNTIL:
+        return None
     # Fast path — already settled (success or _INIT_FAILED) needs no lock;
     # re-check under it since a racing thread may have finished init.
     settled = _settled_client()
@@ -843,8 +855,12 @@ def _finalize_all_traces() -> None:
 
 def _flush(client: Any) -> None:
     if client is not None:
-        with contextlib.suppress(Exception):
+        try:
             client.flush()
+        except Exception as exc:
+            msg = str(exc).lower()
+            if any(c in msg for c in ("404", "401", "403", "not found", "unauthorized")):
+                _trip_circuit(str(exc))
 
 
 def _finish_trace(task_key: str, *, output: Any = None) -> None:
