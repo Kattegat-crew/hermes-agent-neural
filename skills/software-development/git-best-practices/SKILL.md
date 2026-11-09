@@ -68,6 +68,12 @@ git push --force-with-lease origin <feature_branch>
   - Never work around it with quoting/escaping tricks or actual force-push — the guard's intent is to keep history immutable.
 - **When direct pushes to `main` are guarded or unverifiable:** push an integration branch, open a PR, and merge only after remote CI reports green on the PR head. Local green does not satisfy the gate — confirm the CI status via API/PR `mergeable_state` before merging, and if the Actions status is not yet visible, wait or ask for eyes on the Actions page rather than merging blind.
 
+- **Push al repo `hermes-agent-neural` desde el contenedor exige la key de cuenta, no la default.** El remote `github` (`git@github.com:Kattegat-crew/hermes-agent-neural.git`) con `~/.ssh/config` resuelve a `id_ed25519_github`, que es una **deploy key read-only de otro repo** y responde `ERROR: Permission ... denied to deploy key`. Las demás keys también son deploy keys de repos distintos (`id_ed25519_mkt` → marketing-campaign-generator). La única con permiso de escritura es la identidad de cuenta `Kattegat-crew` (`id_ed25519`):
+  ```bash
+  GIT_SSH_COMMAND="ssh -i $HOME/.ssh/id_ed25519 -o IdentitiesOnly=yes" git push github HEAD:<rama>
+  ```
+  Verificar después `git rev-parse HEAD` == `git ls-remote github refs/heads/<rama>`. El remote `origin` es un mirror local (`/opt/hermes-agent-data/git-mirror/hermes-agent.git`) y acepta push normal: empujar a **ambos** para no dejar GitHub atrás.
+
 ---
 
 ## 4. Production Invariants for Agents
