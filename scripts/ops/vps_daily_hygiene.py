@@ -60,8 +60,12 @@ CANONICAL_ACTIVE_DBS: Set[str] = frozenset({
 def is_path_contained(target: Path, base_dir: Path) -> bool:
     """Verify that target resides strictly inside base_dir without escaping."""
     try:
-        resolved_target = target.resolve()
         resolved_base = base_dir.resolve()
+        if target.is_symlink():
+            # For symlinks, verify that the link's parent directory is contained within base_dir.
+            # We never follow the symlink target when testing if the symlink itself is inside base_dir.
+            return target.parent.resolve().is_relative_to(resolved_base)
+        resolved_target = target.resolve()
         return resolved_target.is_relative_to(resolved_base)
     except (ValueError, OSError):
         return False
@@ -218,16 +222,6 @@ def prune_scratch_dirs(base_dir: Path, ttl_days: int = 3, dry_run: bool = False)
                     file_mtime = lstat.st_mtime
                     file_size = lstat.st_size
 
-                    # Symlink target safety check
-                    if is_symlink:
-                        try:
-                            resolved_target = fpath.resolve()
-                            if resolved_target.name in PROTECTED_DB_NAMES:
-                                # Points to protected database - do not touch
-                                continue
-                        except OSError:
-                            pass
-
                     # TTL check
                     if file_mtime < cutoff_time:
                         if not dry_run:
@@ -374,7 +368,10 @@ def rotate_sqlite_backups(base_dir: Path, ttl_days: int = 7, dry_run: bool = Fal
             if p.is_dir():
                 scan_roots.append(p)
 
-    backup_name_re = re.compile(r"(\.bak|\.backup|state\.db.*\.bak|backup)", re.IGNORECASE)
+    backup_name_re = re.compile(
+        r"(?:^state\.db.*\.bak.*|\.bak(?:_\d+)?$|\.backup(?:_\d+)?$|\.db\.bak.*|\.sqlite\.bak.*|\.db\.backup.*|\.sqlite\.backup.*)",
+        re.IGNORECASE,
+    )
 
     for sroot in scan_roots:
         try:
@@ -399,6 +396,10 @@ def rotate_sqlite_backups(base_dir: Path, ttl_days: int = 7, dry_run: bool = Fal
         if re.fullmatch(r"state\.db(-wal|-shm)?", fpath.name):
             continue
         if fpath.name in CANONICAL_ACTIVE_DBS:
+            continue
+
+        # CRITICAL SAFETY: Never delete operational scripts, configs, keys, or non-db assets
+        if fpath.suffix.lower() in {".sh", ".py", ".json", ".yaml", ".yml", ".key", ".env", ".bundle", ".txt", ".md"}:
             continue
 
         try:
@@ -448,7 +449,7 @@ def prune_git_worktrees(repos: List[Path], dry_run: bool = False) -> Dict[str, A
 
         cmd = ["git", "-C", str(repo_path), "worktree", "prune", "-v"]
         if dry_run:
-            cmd.insert(4, "-n")
+            cmd.append("-n")
 
         try:
             proc = subprocess.run(
@@ -695,7 +696,7 @@ def run_daily_hygiene(
             log_path.parent.mkdir(parents=True, exist_ok=True)
             log_path.write_text(json.dumps(report, indent=2), encoding="utf-8")
         except OSError as exc:
-            logger.error("Failed to write JSON log to %s: %exc", log_path, exc)
+            logger.error("Failed to write JSON log to %s: %s", log_path, exc)
 
     return report
 
