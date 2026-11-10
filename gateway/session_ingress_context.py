@@ -117,11 +117,15 @@ def _runtime_profile(runner, source, profile, owner_name, homes, relay):
         # api_server.py stamp it; a bare producer source carries the routed name itself).
         return source.profile
     if matches:
-        rank = max(route.specificity for route in matches)
-        best = [route for route in matches if route.specificity == rank]
-        if len(best) != 1:
+        # Ties at the top specificity are a conflict only when they name different profiles:
+        # alias rows for one chat (WhatsApp LID/JID/number) are one destination. See
+        # ``gateway.profile_routing.unambiguous_route_target``.
+        from gateway.profile_routing import unambiguous_route_target
+
+        target = unambiguous_route_target(matches)
+        if target is None:
             raise RuntimeStoreError('admission_conflict')
-        return best[0].profile
+        return target
     if relay and profile is None and source.profile in homes:
         # The instance's one authenticated connector (relay is process-level) routes scopes to
         # served profiles (Team Gateway); the relay seal covers ``source.profile``.

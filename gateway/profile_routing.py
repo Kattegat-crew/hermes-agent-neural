@@ -178,6 +178,23 @@ def parse_profile_routes(raw: Optional[list[dict[str, Any]]]) -> list[ProfileRou
     return routes
 
 
+def unambiguous_route_target(matches: list[ProfileRoute]) -> Optional[str]:
+    """The one profile the most specific tier of *matches* names, or ``None`` when ambiguous.
+
+    A tie at the top specificity is only ambiguous when the tied routes name **different**
+    profiles. Several rows for one destination — a WhatsApp number, its ``@s.whatsapp.net`` JID
+    and its ``@lid``, all re-homed to the same profile — are a single answer, not a conflict:
+    the bridge keeps bidirectional ``lid-mapping`` files, so every alias row matches the same DM.
+    Treating that benign redundancy as ``admission_conflict`` dropped every DM on the chat before
+    admission ran. Ties naming two profiles still return ``None`` so the caller fails closed.
+    """
+    if not matches:
+        return None
+    rank = max(route.specificity for route in matches)
+    targets = {route.profile for route in matches if route.specificity == rank}
+    return targets.pop() if len(targets) == 1 else None
+
+
 def match_profile_route(
     routes: list[ProfileRoute], platform: str, guild_id: Optional[str] = None, chat_id: Optional[str] = None,
     thread_id: Optional[str] = None, parent_chat_id: Optional[str] = None,
