@@ -33,6 +33,8 @@ metadata:
 
    **3-bis — Revivir una discusión concreta** ("revisa el hilo de X", "qué decidimos sobre Y"): `session_search()` sin query para elegir la sesión por `last_active`, y luego `session_search(session_id=..., around_message_id=<id>)` para navegar hacia atrás o adelante desde un mensaje. Lo ya leído suele llegar **demotado** tras compactar: se vuelve a pedir con esos dos parámetros; no se cita de memoria.
 
+   **3-ter — Las intervenciones de una persona en un hilo:** `select id, datetime(timestamp,'unixepoch','localtime'), substr(content,1,700) from messages where session_id='<id>' and role='user' order by id;` da la línea de tiempo con ids para pedir luego el cuerpo exacto (`select content from messages where id=<id>`). En canales compartidos una fila `role='user'` puede traer un lote con mensajes de otros bots además del humano: lo de la persona es el tramo final o el que lleva su nombre, y se lee entero antes de atribuirle una frase.
+
 4. **Timeline de canales y entregas:** `grep 'inbound message' /opt/data/logs/gateway.log | tail -25` y `grep -n 'Session expiry' /opt/data/logs/gateway.log | tail -5`. Para crons: `cronjob_manage(action='list')` (`last_run_at`, `last_status`, `deliver`) + el archivo de `/opt/data/cron/output/<job_id>/`.
 5. **Responder:** decir qué se reconstruyó y de dónde (sesión, canal, hora); si el referente es claro, ejecutar; si sigue ambiguo, UNA pregunta con 2-4 opciones concretas (`clarify`), incluyendo la salida "era otra cosa / algo que dije en un audio".
 
