@@ -1816,3 +1816,7 @@ test('windowsHide defaults to true on Windows, is left alone elsewhere', () => {
 If the logic lives inline in a god-file (`main.ts`, `cli.py`,
 `gateway/run.py`) and extracting it feels disruptive: that's the actual
 signal to do the extraction, not to regex around it.
+
+## Lucky brand artwork
+
+For Lucky / Paradise artwork, read `docs/skills/lucky-identity.md` and the canonical Marketing identity registry before generation. The explicit five-digit hand clarification dated 30 Oct 2026 overrides ambiguous older reference hands; preserve the accepted current weekly ticket. Documentation only: no changes to Hermes runtime.
