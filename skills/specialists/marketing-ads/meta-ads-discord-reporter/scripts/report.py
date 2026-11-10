@@ -7,6 +7,7 @@ formats an executive performance card, and delivers it to a Discord webhook.
 
 import argparse
 import json
+import os
 import subprocess
 import sys
 import urllib.request
