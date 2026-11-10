@@ -2,7 +2,7 @@
 name: peguelo
 description: "Use when the user writes peguelo: session autopsy."
 tags: [autoevaluacion, retrospectiva, postmortem, state-db, autocritica, mejora-continua, evidencia]
-version: "1.5"
+version: "1.6"
 license: Apache-2.0
 author: Ragnar (default)
 platforms: [linux]
@@ -125,11 +125,17 @@ autopsia. El ledger es memoria de trabajo; las tres capas son memoria operativa.
 | 1. Ledger | toda lección, sin excepción | siempre | `peguelo_ledger.py count` |
 | 2. Skill | lo procedimental y repetible | apareció ≥2 veces **o** el fallo costó un bug en producción | `grep` del texto en el `SKILL.md` + `--selftest` si tocó código |
 | 3. Memoria | hecho permanente de entorno o usuario | máx 1 por sesión, y solo si aplica a toda sesión futura | `memory(read)` de la entrada escrita |
+| 4. Engram | el resumen-cierre de la sesión completa (no las lecciones sueltas) | siempre al cierre de la autopsia | `mem_search` con el título y leer el `#id` de vuelta |
 
 Reglas:
 
+- **El cierre no está completo sin Engram.** Tras ledger y capas 2-3, ejecutar `mem_save` (tool MCP; proyecto `neuralops`, tipo `discovery`/`decision`) con el resumen What/Why/Where/Learned de la sesión. Los scripts de peguelo NO hablan MCP: este paso se ejecuta desde la conversación. Costo pagado 09-nov: el peguelo del día quedó solo en ledger+disco y hubo que guardarlo a mano cuando el Admin preguntó «¿quedo en engram?». Un `conflict review pending` en la respuesta NO es fallo: el save persiste igual — verificar con `mem_search` y no reintentar automáticamente.
+
 - **No se sube a memoria para "no perderlo".** Si no es un hecho estable, su sitio es el
   ledger o el cuerpo de una skill. La memoria se contamina rápido y se paga en cada turno.
+- **Antes de añadir una lección a una skill, `grep` el SKILL.md por la regla ya escrita.**
+  Si ya existe, refuérzala o funde las dos redacciones; un duplicado en la misma skill
+  demuestra que capa 2 se aplicó de memoria, no con lectura.
 - **Toda capa se verifica leyendo de vuelta.** Escribir sin read-back no cuenta: es
   exactamente el fallo que esta skill persiste («declara-y-no-ejecuta»).
 - **Si la lección toca Engram o el store nativo**, delegar la mecánica en
@@ -149,8 +155,9 @@ se invoca peor. La capa 3 de aquí **invoca** a aquella; no la reimplementa.
 1. Rellena `templates/informe.md` (10 líneas, español, sin relleno).
 2. Guarda informe + JSON en `/opt/data/brain/ops/session-retros/`.
 3. Actualiza el ledger.
-4. Aplica **solo** lo de bajo riesgo (patch de skill propia, 1 memoria) y di qué aplicaste; lo demás se propone con una línea de por qué.
-5. Responde al usuario con el informe y la mejora aplicada. Nada de «quedo atento».
+4. Guarda el resumen-cierre en Engram (`mem_save`, capa 4) y verifícalo con `mem_search` leyendo el `#id` de vuelta.
+5. Aplica **solo** lo de bajo riesgo (patch de skill propia, 1 memoria) y di qué aplicaste; lo demás se propone con una línea de por qué.
+6. Responde al usuario con el informe y la mejora aplicada. Nada de «quedo atento».
 
 ## Pitfalls
 
@@ -170,6 +177,7 @@ se invoca peor. La capa 3 de aquí **invoca** a aquella; no la reimplementa.
   - `hygiene.writes_without_prior_read` ya no cuenta archivos nuevos: `write_file` sobre un path inexistente va a `creates`, y sobre uno existente sin lectura previa va a `ambiguous_writes` (no se acusa sin poder probarlo). Solo `patch`/`edit_file` sin lectura previa cuenta como violación, porque editar exige que el archivo exista.
   - `user.corrections` ya no matchea preguntas: exige marcador de rechazo («no,», «está mal», «así no», «corrige»…) y descarta interrogativas salvo rechazo explícito. Para auditar el recall está `user.turns_text` (todas las intervenciones, sin filtro).
   - `--last N` omite por defecto las sesiones sin mensajes y reporta `sessions_skipped_empty`; `--include-empty` recupera el comportamiento antiguo para auditoría.
+- **Corregido en v1.6 (09-nov):** la autopsia cerraba en ledger+disco y no persistía en Engram; el resumen del día se guardó a mano a instancias del Admin («¿quedo en engram?»). Ahora el cierre exige `mem_save` + verificación `mem_search` (capa 4 en Fase 4.5).
 - **Corregido en v1.4 (07-nov, verificado con `--selftest` 19/19):**
   - El detector de verificación solo miraba llamadas **posteriores al ÚLTIMO write**, y su regex no
     cubría `cmp`, `diff`, `git ls-remote`, `git rev-parse`, `systemctl is-active`, `stat`, `find` ni `jq`.
