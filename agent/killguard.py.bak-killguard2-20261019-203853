@@ -1,0 +1,71 @@
+"""Identity-checked process-group signalling (HERMES-KILLGUARD, 18-oct-2026).
+
+``os.killpg(os.getpgid(pid), SIG)`` on a PID that already exited resolves to whatever
+process holds that PID *now*. If that process leads its own group, the signal kills an
+innocent group — that is how cron scripts of unrelated jobs died with SIGTERM (exit -15)
+on 17-18 Oct 2026 (Jacqueline's morning report, the Golden/Lucky sales captures,
+soul-plugin-guard). Every group signal now carries the leader's kernel start time and is
+refused when it changed.
+"""
+from __future__ import annotations
+
+import logging
+import os
+import traceback
+
+logger = logging.getLogger(__name__)
+
+
+def proc_starttime(pid):
+    """Kernel start time of ``pid`` (field 22 of /proc/<pid>/stat); None if gone."""
+    try:
+        with open("/proc/%d/stat" % int(pid), "rb") as fh:
+            raw = fh.read()
+        tail = raw[raw.rindex(b")") + 2:].split()
+        return int(tail[19])
+    except Exception:
+        return None
+
+
+def _caller(limit=10):
+    try:
+        stack = traceback.format_stack(limit=limit)[:-1]
+        out = []
+        for frame in stack[-3:]:
+            line = frame.strip().splitlines()[0].strip()
+            out.append(line.replace('File "', "").replace('", line ', ":").rstrip(","))
+        return " <- ".join(reversed(out))
+    except Exception:
+        return "?"
+
+
+def log_signal(site, pid, pgid, starttime):
+    logger.info("killguard: %s pid=%s pgid=%s starttime=%s caller=%s",
+                site, pid, pgid, starttime, _caller())
+
+
+def safe_killpg(pgid, sig, *, expected_starttime=None, site=""):
+    """killpg that refuses a recycled group leader. True when a signal was delivered."""
+    try:
+        pgid = int(pgid)
+    except Exception:
+        return False
+    try:
+        if pgid <= 1 or pgid == os.getpgid(0):
+            logger.warning("killguard: refused %s sig=%s: pgid %s is protected", site, sig, pgid)
+            return False
+    except Exception:
+        return False
+    if expected_starttime is not None:
+        now = proc_starttime(pgid)
+        if now != expected_starttime:
+            logger.warning(
+                "killguard: REFUSED %s sig=%s pgid=%s — leader recycled "
+                "(starttime esperado %s, encontrado %s) caller=%s",
+                site, sig, pgid, expected_starttime, now, _caller())
+            return False
+    try:
+        os.killpg(pgid, sig)
+        return True
+    except (ProcessLookupError, PermissionError, OSError):
+        return False

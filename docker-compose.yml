@@ -1,76 +1,45 @@
-#
-# docker-compose.yml for Hermes Agent
-#
-# Usage:
-#   HERMES_UID=$(id -u) HERMES_GID=$(id -g) docker compose up -d
-#
-# Set HERMES_UID / HERMES_GID to the host user that owns ~/.hermes so
-# files created inside the container stay readable/writable on the host.
-# The s6-overlay stage2 hook remaps the internal `hermes` user to these
-# values via usermod/groupmod; each supervised service then drops to that
-# user via `s6-setuidgid`.
-#
-# Security notes:
-#   - The dashboard service binds to 127.0.0.1 by default. It stores API
-#     keys; exposing it on LAN without auth is unsafe. If you want remote
-#     access, use an SSH tunnel or put it behind a reverse proxy that
-#     adds authentication — do NOT pass --insecure --host 0.0.0.0.
-#   - If you override entrypoint, keep `/init` as the first command in
-#     the chain (or let docker use the image's default ENTRYPOINT,
-#     which is `["/init", "/opt/hermes/docker/main-wrapper.sh"]`).
-#     `/init` is s6-overlay's PID 1 — it runs the cont-init.d scripts
-#     (chown, profile reconcile, dashboard toggle) and sets up the
-#     supervision tree before any service starts. Bypassing it skips
-#     all of that setup and the gateway will not work correctly.
-#   - The gateway's API server is off unless you uncomment API_SERVER_KEY
-#     and API_SERVER_HOST. See docs/user-guide/api-server.md before doing
-#     this on an internet-facing host.
-#
 services:
-  gateway:
+  hermes:
     build: .
-    image: hermes-agent
-    container_name: hermes
-    restart: unless-stopped
-    network_mode: host
-    volumes:
-      - ~/.hermes:/opt/data
+    image: hermes-agent-hermes:v0.22.6-ncl-rc1
+    container_name: hermes-agent
+    ports:
+      - "100.73.30.29:9119:9119"
     environment:
-      - HERMES_UID=${HERMES_UID:-10000}
-      - HERMES_GID=${HERMES_GID:-10000}
-      # To expose the OpenAI-compatible API server beyond localhost,
-      # uncomment BOTH lines (API_SERVER_KEY is mandatory for auth):
-      # - API_SERVER_HOST=0.0.0.0
-      # - API_SERVER_KEY=${API_SERVER_KEY}
-      # Microsoft Teams — uncomment and fill in to enable Teams gateway.
-      # Register your bot at https://dev.botframework.com/ to get these values.
-      # - TEAMS_CLIENT_ID=${TEAMS_CLIENT_ID}
-      # - TEAMS_CLIENT_SECRET=${TEAMS_CLIENT_SECRET}
-      # - TEAMS_TENANT_ID=${TEAMS_TENANT_ID}
-      # - TEAMS_ALLOWED_USERS=${TEAMS_ALLOWED_USERS}
-      # - TEAMS_PORT=${TEAMS_PORT:-3978}
-      # Google Chat — uncomment and fill in to enable the Google Chat gateway.
-      # See website/docs/user-guide/messaging/google_chat.md for the full setup.
-      # The SA JSON path must point to a file mounted into the container —
-      # add a volume entry above (e.g. ``- ~/.hermes/google-chat-sa.json:/secrets/google-chat-sa.json:ro``)
-      # then set GOOGLE_CHAT_SERVICE_ACCOUNT_JSON to that mount path.
-      # - GOOGLE_CHAT_PROJECT_ID=${GOOGLE_CHAT_PROJECT_ID}
-      # - GOOGLE_CHAT_SUBSCRIPTION_NAME=${GOOGLE_CHAT_SUBSCRIPTION_NAME}
-      # - GOOGLE_CHAT_SERVICE_ACCOUNT_JSON=${GOOGLE_CHAT_SERVICE_ACCOUNT_JSON}
-      # - GOOGLE_CHAT_ALLOWED_USERS=${GOOGLE_CHAT_ALLOWED_USERS}
+      - TZ=America/Bogota
+      - HOME=/opt/data/home
+      - HERMES_UID=10000
+      - HERMES_GID=10000
+      - ENGRAM_DATA_DIR=/opt/data/home/.engram
+      - NODE_OPTIONS=--use-openssl-ca
+    volumes:
+      - ./data:/opt/data
+      - /root/.engram:/opt/data/home/.engram
+      - /home/linuxbrew/.linuxbrew/Cellar/engram/1.20.0/bin/engram:/usr/local/bin/engram:ro
+      - /home/linuxbrew/.linuxbrew/Cellar/gentle-ai/2.3.0/bin/gentle-ai:/usr/local/bin/gentle-ai:ro
+      - ./tools/mcp_tool.py:/opt/hermes/tools/mcp_tool.py:ro
+      - ./plugins/observability/langfuse/__init__.py:/opt/hermes/plugins/observability/langfuse/__init__.py:ro
+      - /root/golden-game-landing:/opt/repos/golden-game-landing:ro
+      - /opt/ai-platform:/opt/repos/ai-platform:ro
+      - /var/run/docker.sock:/var/run/docker.sock
+      - ./data/vault:/opt/vault:ro
+      - /root/tools/graphs:/opt/graphs:ro
+      - /opt/vps-brain:/opt/vps-brain
+      - /etc/ssl/certs/ca-certificates.crt:/etc/ssl/certs/ca-certificates.crt:ro
+    env_file:
+      - .env
+      - ./data/.env
+    security_opt:
+      - no-new-privileges:true
+    restart: unless-stopped
     command: ["gateway", "run"]
+    stdin_open: true
+    tty: true
+    networks:
+      - default
+      - twenty_default
 
-  dashboard:
-    image: hermes-agent
-    container_name: hermes-dashboard
-    restart: unless-stopped
-    network_mode: host
-    depends_on:
-      - gateway
-    volumes:
-      - ~/.hermes:/opt/data
-    environment:
-      - HERMES_UID=${HERMES_UID:-10000}
-      - HERMES_GID=${HERMES_GID:-10000}
-    # Localhost-only. For remote access, tunnel via `ssh -L 9119:localhost:9119`.
-    command: ["dashboard", "--host", "127.0.0.1", "--no-open"]
+networks:
+  default:
+  twenty_default:
+    external: true
