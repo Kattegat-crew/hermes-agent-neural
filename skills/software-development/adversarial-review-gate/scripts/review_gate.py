@@ -52,16 +52,16 @@ ACTIVE: dict = {"engine": "agy", "model": None, "provider": None, "fallbacks": [
 
 # modelos por entorno: se conservan para no romper instalaciones existentes
 DEFAULT_MODEL = os.environ.get("REVIEW_GATE_MODEL", "gemini-3.8-flash-high")
-ESCALATED_MODEL = os.environ.get("REVIEW_GATE_MODEL_HIGH", "claude-opus-5-5-high")
+ESCALATED_MODEL = os.environ.get("REVIEW_GATE_MODEL_HIGH", "gemini-3.8-flash-high")
 
 # `auto`: coste y latencia medidos — opencode es gratis, codex es el más rápido,
 # agy opus es el más caro y el que más tarda.
 AUTO_TIERS = {
     "cheap": ("opencode", None),
     "fast": ("codex", None),
-    "deep": ("agy", "claude-opus-5-5-high"),
+    "deep": ("agy", "gemini-3.8-flash-high"),
 }
-AUTO_ESCALATE = ("agy", "claude-opus-5-5-high")
+AUTO_ESCALATE = ("agy", os.environ.get("REVIEW_GATE_MODEL_HIGH", "gemini-3.8-flash-high"))
 
 CODE_EXT = {
     ".py", ".js", ".jsx", ".ts", ".tsx", ".mjs", ".cjs", ".go", ".rs", ".java", ".kt",

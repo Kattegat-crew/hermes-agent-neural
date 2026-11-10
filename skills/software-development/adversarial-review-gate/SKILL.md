@@ -47,19 +47,27 @@ python3 skills/software-development/adversarial-review-gate/scripts/review_gate.
   --repo /opt/mi-repo --staged --test-cmd "pytest -q tests/unit" --require-tests
 
 # elegir motor y modelo
---engine codex --model gpt-6-astra
+--engine codex --model gpt-6.1-terra
 --engine opencode --model opencode/deepseek-v4.1-flash-free
---engine agy --model claude-opus-5-5-high
+--engine agy --model gemini-3.8-flash-high
 
-# elegir por riesgo y coste (diff normal -> codex; rutas sensibles -> agy opus)
+# elegir por riesgo y coste (diff normal -> codex; rutas sensibles -> agy flash)
 --engine auto
 
 # cadena de reserva si el primero falla o agota cuota
---engine agy --fallback "codex:gpt-6-astra,opencode:opencode/glm-5.3-flash-free"
+--engine agy --fallback "codex:gpt-6.1-terra,opencode:opencode/deepseek-v4.1-flash-free"
 
 # catálogo real de motores y modelos
 python3 .../review_gate.py --list-engines
 ```
+
+Modelos por defecto (los baratos; el caro se pide a mano con `--model`):
+
+| Motor | Por defecto | Coste |
+|---|---|---|
+| `agy` | `gemini-3.8-flash-high` | bajo |
+| `codex` | `gpt-6.1-terra` con `model_reasoning_effort=high` | medio |
+| `opencode` | `opencode/deepseek-v4.1-flash-free` | cero |
 
 Salida: `0` pasa · `2` bloquea o degrada · `4` error de uso. Añadir `--json` para consumo por máquina.
 
@@ -78,7 +86,7 @@ Salida: `0` pasa · `2` bloquea o degrada · `4` error de uso. Añadir `--json` 
 | `--require-tests` | bloquea si no hay evidencia de tests verdes |
 | `--force` | ignora el cache de receipts |
 | `--allow-degraded` | fail-open explícito si el reviewer no responde (queda registrado) |
-| `--no-escalate` | no subir a `claude-opus-5-5-high` en diffs de alto riesgo |
+| `--no-escalate` | no cambiar de modelo en diffs de alto riesgo (por defecto ya no escala) |
 | `--json` | salida estructurada |
 
 Variables: `REVIEW_GATE_STATE`, `REVIEW_GATE_AGY_HOME`, `REVIEW_GATE_AGY_BIN`, `REVIEW_GATE_MODEL`,

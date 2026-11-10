@@ -38,6 +38,8 @@ AGY_LOCK = Path(os.environ.get("REVIEW_GATE_LOCK", "/opt/data/fleet/locks/review
 
 CODEX_SSH = os.environ.get("REVIEW_GATE_CODEX_SSH", "root@127.0.0.1")
 CODEX_PATH = os.environ.get("REVIEW_GATE_CODEX_PATH", "/root/.local/bin")
+# `-c model_reasoning_effort=high` es lo que da el "en high" sin pagar el modelo grande.
+CODEX_EFFORT = os.environ.get("REVIEW_GATE_CODEX_EFFORT", "high")
 OPENCODE_BIN = os.environ.get("REVIEW_GATE_OPENCODE_BIN", "/usr/local/bin/opencode")
 # HOME con opencode.json que define el agente `reviewer` con edit/bash denegados:
 # un reviewer que puede escribir en el repo puede arreglar lo que revisa.
@@ -59,7 +61,7 @@ MODELS = {
         "claude-opus-5-5-high",
         "gpt-oss-120b-medium",
     ],
-    "codex": ["gpt-6-astra", "gpt-6.1-sol"],
+    "codex": ["gpt-6.1-terra", "gpt-6-astra"],
     "opencode": [
         "opencode/deepseek-v4.1-flash-free",
         "opencode/glm-5.3-flash-free",
@@ -70,7 +72,7 @@ MODELS = {
 
 DEFAULTS = {
     "agy": os.environ.get("REVIEW_GATE_MODEL", "gemini-3.8-flash-high"),
-    "codex": "gpt-6-astra",
+    "codex": os.environ.get("REVIEW_GATE_CODEX_MODEL", "gpt-6.1-terra"),
     "opencode": "opencode/deepseek-v4.1-flash-free",
 }
 
@@ -303,6 +305,7 @@ def run_codex(repo: Path, prompt: str, schema_path: Path, model: str, timeout: i
         f"export PATH={shlex.quote(CODEX_PATH)}:$PATH; "
         f"cd {shlex.quote(str(repo))} && "
         f"codex exec -m {shlex.quote(model)} -s read-only --skip-git-repo-check "
+        f"-c {shlex.quote(f'model_reasoning_effort={CODEX_EFFORT}')} "
         f"-C {shlex.quote(str(repo))} "
         f"--output-schema {shlex.quote(str(schema_p))} "
         f"-o {shlex.quote(str(out_p))} "

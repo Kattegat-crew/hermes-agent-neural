@@ -422,9 +422,11 @@ class TestEngineRouting:
         a.engine = "auto"
         a.model = None
         hot_engine, hot_model, _ = gate.resolve_engine(a, hot=True, why="rutas sensibles")
-        calm_engine, _, _ = gate.resolve_engine(a, hot=False, why="")
-        assert hot_engine == "agy" and hot_model == "claude-opus-5-5-high"
-        assert calm_engine == "codex"
+        calm_engine, calm_model, _ = gate.resolve_engine(a, hot=False, why="")
+        # el escalado por blast radius tambien es barato: nunca opus por defecto
+        assert hot_engine == "agy" and hot_model == gate.ESCALATED_MODEL
+        assert "opus" not in (hot_model or "")
+        assert calm_engine == "codex" and calm_model is None  # -> DEFAULTS["codex"]
 
         a.no_escalate = True
         assert gate.resolve_engine(a, hot=True, why="auth")[0] == "codex"
@@ -613,6 +615,7 @@ class TestCodexAdapter:
         remote = seen["cmd"][-1]
         assert "-s read-only" in remote
         assert "dangerously-bypass" not in remote
+        assert "model_reasoning_effort=high" in remote, "el esfuerzo alto no depende del modelo caro"
         assert "--output-schema" in remote
         assert verdict["passed"] is True
         assert meta["engine"] == "codex"
