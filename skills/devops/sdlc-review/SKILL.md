@@ -72,6 +72,38 @@ The baseline duties in the Procedure section still apply on every round; the len
 
 The same principle applies outside the Kanban review lane. When spawning multiple parallel reviewers via `delegate_task`, give each reviewer a different lens — one diff-only brief, one full-context brief, one checkout-and-run brief — rather than identical briefs. Identical briefs produce correlated verdicts and duplicate findings; varied briefs cover more defect classes for the same review spend.
 
+## Ad-hoc mode: session-close adversarial review (outside Kanban)
+
+Used when there is no Kanban card: an agent finishing a coding session asks an independent
+reviewer (agy, a different profile) to review ALL of the session's work before closing.
+
+Invocation recipe and runtime pitfalls (detached run, output-to-file, isolated
+HOME) live in `adversarial-review-gate` → "Review de cierre de sesión". Sketch:
+
+```bash
+export HOME=/opt/data/fleet/agy-home
+cd /opt/data/fleet
+agy --dangerously-skip-permissions \
+  --add-dir <every dir the review must read> \
+  -p "$(cat <brief-file>)" \
+  > <output-file>.txt 2>&1
+```
+
+- Run it via the Hermes terminal `background=true` — if launched as a foreground child of the
+  gateway (`-p` long run), a gateway restart kills it (exit -15). Output to a file so the
+  verdict survives even if the runner dies.
+- The brief must contain: skill path to load and apply (lenses), the implementer's claims as
+  CLAIMS to falsify (never as facts), every file/commit/cron to audit, and the mandatory
+  output format: `VEREDICTO: APPROVE|REQUEST_CHANGES|ESCALATE` + críticos/menores + commands run.
+- Forbid the reviewer from editing anything: it reviews, it does not implement.
+- The implementer resolves every crítico with evidence before declaring the session closed;
+  minors go to the ledger/changelog.
+
+Cold independent review catches what self-verification structurally cannot:
+violations of contract documents the implementer read but assumed away, real
+API schemas reconstructed from memory instead of read, side effects of dry-run
+modes. Never substitute a second self-check for an independent reviewer.
+
 ## Procedure
 
 ### 1. Orient from the durable task record
