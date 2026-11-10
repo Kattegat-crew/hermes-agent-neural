@@ -185,6 +185,15 @@ def test_sqlite_bak_rotation_preserves_canonical_db(tmp_path: Path):
     bak_old.write_text("backup old")
     os.utime(bak_old, (time.time() - 14 * 86400, time.time() - 14 * 86400))  # 14 days old
 
+    # Operational non-db files that contain "backup" in the name must NEVER be pruned
+    script_file = tmp_path / "backup.sh"
+    script_file.write_text("#!/bin/bash\necho backup")
+    os.utime(script_file, (time.time() - 30 * 86400, time.time() - 30 * 86400))
+
+    manifest_file = tmp_path / "backup_manifest.json"
+    manifest_file.write_text('{"type": "manifest"}')
+    os.utime(manifest_file, (time.time() - 30 * 86400, time.time() - 30 * 86400))
+
     # New backup in base_dir
     bak_new = tmp_path / "state.db.bak-20261108"
     bak_new.write_text("backup new")
@@ -207,6 +216,10 @@ def test_sqlite_bak_rotation_preserves_canonical_db(tmp_path: Path):
     assert canonical_db.exists(), "Canonical state.db was deleted!"
     assert canonical_wal.exists(), "Canonical state.db-wal was deleted!"
     assert canonical_shm.exists(), "Canonical state.db-shm was deleted!"
+
+    # Operational non-db scripts/configs must remain intact
+    assert script_file.exists(), "Operational script backup.sh was deleted!"
+    assert manifest_file.exists(), "Operational config backup_manifest.json was deleted!"
 
     # Old backups pruned
     assert not bak_old.exists(), "Old state.db.bak was not pruned!"
@@ -250,6 +263,10 @@ def test_symlink_safety_and_containment(tmp_path: Path):
     assert external_file.exists(), "External file outside base_dir was deleted via symlink!"
     assert external_dir.exists(), "External directory was deleted!"
     assert canonical_db.exists(), "Canonical state.db was deleted via symlink!"
+
+    # The expired symlinks inside scratch themselves MUST be safely unlinked
+    assert not symlink_to_external.exists(follow_symlinks=False), "Expired scratch symlink was not unlinked!"
+    assert not symlink_to_db.exists(follow_symlinks=False), "Expired scratch symlink was not unlinked!"
 
     # Cleanup external test dir
     shutil.rmtree(external_dir, ignore_errors=True)
@@ -317,3 +334,53 @@ def test_full_run_cli(tmp_path: Path):
     assert "system_logs" in data["tasks"]
     assert "initial_disk" in data
     assert "final_disk" in data
+
+
+def test_prune_git_worktrees_dry_run_and_execution(tmp_path: Path):
+    """Verify git worktree prune succeeds in both dry_run and execution modes."""
+    # Setup mock git repository
+    repo_dir = tmp_path / "mock_repo"
+    repo_dir.mkdir()
+    subprocess.run(["git", "init", "-b", "main"], cwd=str(repo_dir), check=True, capture_output=True)
+    subprocess.run(["git", "config", "user.email", "test@test.local"], cwd=str(repo_dir), check=True, capture_output=True)
+    subprocess.run(["git", "config", "user.name", "Test User"], cwd=str(repo_dir), check=True, capture_output=True)
+    (repo_dir / "initial.txt").write_text("initial commit")
+    subprocess.run(["git", "add", "."], cwd=str(repo_dir), check=True, capture_output=True)
+    subprocess.run(["git", "commit", "-m", "init"], cwd=str(repo_dir), check=True, capture_output=True)
+
+    # Test dry run (must not fail with error: unknown switch 'n')
+    dry_res = prune_git_worktrees([repo_dir], dry_run=True)
+    assert dry_res["repos_checked"] == 1
+    assert dry_res["results"][0]["success"] is True
+
+    # Test real run
+    real_res = prune_git_worktrees([repo_dir], dry_run=False)
+    assert real_res["repos_checked"] == 1
+    assert real_res["results"][0]["success"] is True
+
+
+def test_vacuum_system_logs_dry_run_and_execution():
+    """Verify vacuum_system_logs dry run succeeds without errors."""
+    dry_res = vacuum_system_logs(max_size="500M", dry_run=True)
+    assert dry_res["dry_run"] is True
+    assert dry_res["max_size"] == "500M"
+    assert "success" in dry_res
+
+
+def test_json_log_write_failure_handles_error(tmp_path: Path, monkeypatch):
+    """Verify logger handles write errors without throwing TypeError."""
+    invalid_log_path = tmp_path / "non_existent_sub_dir" / "readonly_file"
+
+    def mock_write_text(*args, **kwargs):
+        raise OSError("Permission denied simulation")
+
+    monkeypatch.setattr(Path, "write_text", mock_write_text)
+
+    # Should not crash with TypeError
+    report = run_daily_hygiene(
+        base_dir=tmp_path,
+        dry_run=True,
+        git_repos=[],
+        json_log_path=invalid_log_path,
+    )
+    assert report["dry_run"] is True
