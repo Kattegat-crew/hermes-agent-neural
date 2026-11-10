@@ -2482,7 +2482,8 @@ class BasePlatformAdapter(ABC):
         else:
             merge_inbound_batch_event(existing, event, _append_text)
             if hasattr(existing, "absorb_turn_input"):
-                existing.absorb_turn_input(event)        prior_task = self._pending_text_batch_tasks.get(key)
+                existing.absorb_turn_input(event)
+        prior_task = self._pending_text_batch_tasks.get(key)
         if prior_task and not prior_task.done():
             prior_task.cancel()
         self._pending_text_batch_tasks[key] = asyncio.create_task(self._flush_text_batch(key))
