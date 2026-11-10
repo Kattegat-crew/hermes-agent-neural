@@ -1,5 +1,36 @@
 # Hermes Project Memory & Session Continuity
 
+## Initiative Record — Official DEV Upgrade to v0.23.1 & Fleet Hardening (2026-11-10)
+- **Context & Authorization**:
+  - Full official upgrade of Hermes core in DEV (`147.93.3.250` / `vmi3151337`) from `v0.22.6` to official upstream `v0.23.1` (commit `3b42157858`), authorized by Jesús Díaz (Chucho / Jemadiar1) with Keys 1 (`AUTORIZO ACTUALIZAR DEV v0.23.1`) and 2 (`AUTORIZO CUTOVER DEV`).
+- **Phase 0 (Atomic Backups)**:
+  - Full git bundle created and verified (`3,329` refs, 1.1 GB): `/opt/hermes-agent-data/backups/upgrade_v0.23.1/repo-20261110_040901.bundle`.
+  - Backup branch created: `backup-pre-v0.23.1-20261110_040901`.
+  - 9 SQLite DBs backed up hot via `.backup` with `PRAGMA integrity_check = ok`: `state.db` (1.8 GB, schema v33), `cron.db`, `projects.db`, `kanban.db`, `shared-state.db`, `response_store.db`, `runs_idempotency.db`, `verification_evidence.db`, `cron_executions.db`.
+  - Runtime environment snapshot: `envs-20261110_040901.tar.gz` (116 MB).
+  - Physical copy of `config.yaml` and `.env` checksums recorded.
+- **Phase 1 & 2 (Isolated Worktree Replay & Fleet Preservation)**:
+  - Built isolated worktree `/opt/hermes-agent-worktrees/v0.23.1` on tag `v0.23.1`.
+  - Replayed all 38 custom fleet commits (37 replayed, 1 absorbed by upstream issue #149672).
+  - Preserved all 588 fleet skills in `skills/` and custom hooks in `scripts/hooks/` (`guard_autoskill_create.py`, `guard_config_model_mutation.py`).
+  - Added defensive guards in `plugins/platforms/discord/adapter_media.py` (`discord is None` check) and `gateway/run_turn_progress.py` (`st.flood_until` short-circuit).
+- **Phase 3 & 4 (Official Runtime & Canary)**:
+  - Official Python 3.14.9 runtime with 360 dependencies compiled via `uv`.
+  - Suite execution via `scripts/run_tests.sh`: 353 passed, 0 failed.
+  - Multi-profile canary in `/tmp/hermes-canary-dev` on port 8649 verified HTTP 200 `/health`.
+- **Phase 5 (Cutover & Post-Audit Remediation)**:
+  - Linear branch switch: `prod-stable` updated to commit `0a782f316b`.
+  - Post-upgrade audit by Roshi (8.5/10) reviewed and remediated:
+    - **Dashboard (P1-1)**: Repaired dashboard runtime environment via `hermes pm repair` in `/opt/hermes-agent-data/releases/dashboard/current`. `hermes-dashboard.service` listening on port 9112 (HTTP 302/200).
+    - **Session Auto-Reset (P1-2)**: Installed and activated official catalog plugin `hermes-session-reset-policy` (v0.3.0) under Python 3.14 to restore 120-minute idle / 6:00 AM reset policy.
+    - **Permissions & Hygiene (P2-2)**: Zero root-owned files across `/opt/hermes-agent` and `/opt/hermes-agent-data`.
+    - **Backup (P2-1)**: Physical `config.yaml` synced to backup folder and post-update git bundle generated.
+    - **Cron Scheduler**: Job `da90255388df` (`amazon-au-ventas`) resumed and running cleanly.
+- **Status & Verification**:
+  - `curl -s http://127.0.0.1:8642/health` returns `{"status": "ok", "platform": "hermes-agent", "version": "0.23.1"}`.
+  - Services active with 0 restarts: `hermes-agent.service` (Ragnar / 6 platforms), `hermes-agent-roshi.service` (Roshi / 2 platforms), `hermes-dashboard.service` (Dashboard port 9112).
+
+
 ## Initiative Record — Ephemeral Progress Heartbeat & Uniform Channel Architecture (2026-10-22)
 - **Post-audit saneo (2026-10-22, ordered by Chucho)**:
   - **Flood brake restored**: the 30-sep edit-flood livelock brakes (`_FLOOD_ABANDON_WAIT_SECS`/`_FLOOD_EDIT_COOLDOWN_SECS`/`_FLOOD_EDIT_FAILURE_LIMIT` + helpers and cooldown gate in `edit_message`) had been silently lost from `plugins/platforms/telegram/adapter.py` (same working-tree-switch loss class as `fca052407a`). Re-applied via `git cherry-pick 0595377f43` (conflicts hand-merged onto the current `_edit_text` helper and the #116312 chat-outbound-budget gate; cooldown skip placed BEFORE the budget gate so `skipped_reason: edit_flood_cooldown` wins). Commit `1a8d3391ba` preserves original authorship; `test_telegram_edit_flood_storm.py` 5/5.
