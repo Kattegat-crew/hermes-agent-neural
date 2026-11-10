@@ -71,7 +71,7 @@ def _note_flood(st, result) -> bool:
 
 
 def _in_flood_window(st) -> bool:
-    return time.monotonic() < st.flood_until
+    return bool(st.flood_until and time.monotonic() < st.flood_until)
 
 
 def _settle_progress_send(st, result) -> None:
@@ -798,7 +798,7 @@ class GatewayTurnProgressMixin:
         if ctx._run_still_current():
             # On this turn's own message, as its refresh: the chat's latest may be a newer one.
             await st.adapter.send_typing(ctx.source.chat_id, metadata=typing_metadata_for_turn(
-                st.adapter, ctx.source.chat_id, ctx.event_message_id, ctx._progress_metadata))
+                st.adapter, ctx.source.chat_id, getattr(ctx, "event_message_id", None), getattr(ctx, "_progress_metadata", None)))
 
     async def _progress_send_or_edit(self, st, msg) -> bool:
         """Deliver this tick's bubble. Returns False on a transient edit failure (retry next tick).

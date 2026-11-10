@@ -280,6 +280,7 @@ async def test_heartbeat_queues_status_for_shared_progress_writer(monkeypatch):
         last_progress_msg=[None], repeat_count=[0],
     )
     monkeypatch.setattr("gateway.run_turn_runner.time.monotonic", lambda: 2.0)
+    monkeypatch.setattr("gateway.run_turn_progress.time.monotonic", lambda: 2.0)
     await TurnRunner(runner, progress_ctx).send_progress_messages()
     assert len(adapter.sent) == 1
     assert adapter.sent[0]["content"] == "Still working"
@@ -380,6 +381,7 @@ async def test_tool_and_heartbeat_share_one_replace_bubble(monkeypatch, event_or
     monkeypatch.setattr(asyncio, "sleep", lambda _seconds: _resolved_future())
     clock_values = iter([2.0, 2.0, 3.5, 4.0])
     monkeypatch.setattr("gateway.run_turn_runner.time.monotonic", lambda: next(clock_values, 4.0))
+    monkeypatch.setattr("gateway.run_turn_progress.time.monotonic", lambda: next(clock_values, 4.0))
 
     await TurnRunner(runner, progress_ctx).send_progress_messages()
 
@@ -442,6 +444,7 @@ async def test_replace_heartbeat_degrades_without_accumulating(permanent_edit_fa
     monkeypatch.setattr(asyncio, "sleep", lambda _seconds: _resolved_future())
     clock_values = iter([2.0, 2.0, 3.5, 4.0])
     monkeypatch.setattr("gateway.run_turn_runner.time.monotonic", lambda: next(clock_values, 4.0))
+    monkeypatch.setattr("gateway.run_turn_progress.time.monotonic", lambda: next(clock_values, 4.0))
 
     await TurnRunner(runner, progress_ctx).send_progress_messages()
 
@@ -524,6 +527,7 @@ async def test_telegram_flood_edit_keeps_existing_bubble_and_backs_off(monkeypat
 
     now = [10.0]
     monkeypatch.setattr("gateway.run_turn_runner.time.monotonic", lambda: now[0])
+    monkeypatch.setattr("gateway.run_turn_progress.time.monotonic", lambda: now[0])
     adapter = Adapter()
     ctx = SimpleNamespace(
         source=SimpleNamespace(chat_id="chat"), progress_grouping="replace",
