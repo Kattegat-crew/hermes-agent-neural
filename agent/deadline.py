@@ -474,10 +474,21 @@ def kill_process_tree(pid: int, *, sig: Optional[int] = None) -> bool:
     if sig is None:
         sig = _signal.SIGKILL
 
+    from agent import killguard as _killguard
+    # HERMES-KILLGUARD: pin the target's kernel start time now, while its identity is still the
+    # one the caller handed us. The PID and group signals below are refused when the stamp no
+    # longer matches — ``getpgid``/``killpg`` alone would follow a recycled PID into an innocent
+    # process group (the "Script exited with code -15" deaths of 17-18 Oct 2026).
+    _started = _killguard.proc_starttime(int(pid))
+
     with _process_tree_snapshot(int(pid), hard_kill=sig == _signal.SIGKILL) as descendants:
         signalled = False
         # Signal descendants while their ownership ancestry is still observable.
         # Frozen hard-kill targets cannot fork during this bottom-up teardown.
+        # NOTE: with ``pgid == pid`` the descendants are then also reached by the group signal
+        # below. That is intentional (a child may fork between the sweep and the group signal)
+        # and safe because SIGKILL/SIGTERM are idempotent for a process that is already dying;
+        # handlers must therefore tolerate a second TERM.
         for child in reversed(descendants):
             try:
                 if child.is_running():
@@ -487,17 +498,21 @@ def kill_process_tree(pid: int, *, sig: Optional[int] = None) -> bool:
                 continue
         try:
             # getpgid→killpg has an inherent TOCTOU shared by every killpg site; the psutil
-            # sweep below is identity-aware (PID + create time) and does not.
+            # sweep below is identity-aware (PID + create time) and does not. The identity check
+            # in _killguard closes the remaining window for both signals.
             pgid = os.getpgid(pid)
         except (ProcessLookupError, PermissionError, OSError):
             pgid = None
         try:
             if pgid is not None and pgid == pid:
                 # pid leads its own group (the == check avoids signalling the caller's group).
-                os.killpg(pgid, sig)  # windows-footgun: ok — POSIX-only branch (win32 returns above)
+                signalled = _killguard.safe_killpg(
+                    pgid, sig, expected_starttime=_started,
+                    site="agent.deadline.kill_process_tree.group") or signalled
             else:
-                os.kill(pid, sig)
-            signalled = True
+                signalled = _killguard.safe_kill(
+                    pid, sig, expected_starttime=_started,
+                    site="agent.deadline.kill_process_tree.pid") or signalled
         except ProcessLookupError:
             pass
         except (PermissionError, OSError):

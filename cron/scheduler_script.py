@@ -26,6 +26,8 @@ from typing import Any, Callable, Optional, TYPE_CHECKING
 
 from hermes_cli._subprocess_compat import windows_hide_flags
 
+from agent import killguard
+
 if TYPE_CHECKING:
     from cron.cancellation import _CancelEventLike
 
@@ -232,22 +234,84 @@ def _terminate_cron_script_process(proc: subprocess.Popen) -> None:
         proc.wait(timeout=1.0)
 
 
+def _group_members(pgid: int) -> dict[int, int]:
+    """PID -> starttime de los miembros vivos de ``pgid`` (sin depender de psutil).
+
+    Se toma ANTES de señalar: cuando el líder muere y se recolecta, su entrada de /proc
+    desaparece y la comprobación de identidad del grupo ya no puede hacerse. Los huérfanos que
+    queden en el grupo se rematan por su PROPIA identidad, no por el grupo (que un PID nuevo
+    podría estar liderando).
+    """
+    members: dict[int, int] = {}
+    try:
+        entries = os.listdir("/proc")
+    except OSError:
+        return members
+    for name in entries:
+        if not name.isdigit():
+            continue
+        try:
+            with open("/proc/%s/stat" % name, "rb") as fh:
+                raw = fh.read()
+            tail = raw[raw.rindex(b")") + 2:].split()
+            # fields tras ')' : state ppid pgrp ... ; starttime es el campo 22 del total
+            if int(tail[2]) != pgid:
+                continue
+            members[int(name)] = int(tail[19])
+        except (OSError, ValueError, IndexError):
+            continue
+    return members
+
+
 def _terminate_process_group(proc: subprocess.Popen) -> None:
     """POSIX: TERM the script's process group, then KILL if ANY member survived (a survivor holds
-    the pipe write ends open and the caller's communicate() would block on EOF forever)."""
+    the pipe write ends open and the caller's communicate() would block on EOF forever).
+
+    HERMES-KILLGUARD: a group is only signalled while it is still led by the very process we
+    spawned. ``os.getpgid`` on a reaped PID resolves to whatever holds that PID *now*, and a
+    group signal there kills an unrelated job's script — the "Script exited with code -15"
+    deaths (Jacqueline's morning report, 17-oct-2026). The leader's kernel start time is pinned
+    at spawn (``proc.hermes_starttime``) and re-checked before every signal; a changed or
+    missing stamp means the identity is gone, so we refuse instead of guessing.
+    """
     try:
         process_group = os.getpgid(proc.pid)
-        os.killpg(process_group, signal.SIGTERM)  # windows-footgun: ok — POSIX-only branch
     except (ProcessLookupError, PermissionError, OSError):
+        return
+    started = getattr(proc, "hermes_starttime", None)
+    site = "cron.scheduler_script._terminate_process_group"
+    killguard.log_signal(site, proc.pid, process_group, started)
+    if started is None:
+        # Identity unknown (spawn-time stamp unavailable): never risk an innocent group.
+        killguard.log_refused(site, "starttime del líder desconocido", proc.pid, process_group)
+        return
+    if process_group != int(proc.pid):
+        # The script was spawned as a session leader (start_new_session=True); a different
+        # leader means the PID was recycled or the script re-parented its group.
+        killguard.log_refused(site, "el grupo lo lidera otro PID", proc.pid, process_group)
+        return
+    if not killguard.safe_killpg(process_group, signal.SIGTERM,
+                                 expected_starttime=started, site=site + ".term"):
         return
     with contextlib.suppress(subprocess.TimeoutExpired):
         proc.wait(timeout=1.0)
-    try:
-        os.killpg(process_group, 0)  # windows-footgun: ok — POSIX-only branch
-    except (ProcessLookupError, OSError):
+    # Sin sondeo previo: si el líder muere entre la comprobación y el KILL, la propia comprobación
+    # falla y caemos al remate de huérfanos (con un probe aparte esa carrera dejaba huérfanos vivos).
+    kill_sig = getattr(signal, "SIGKILL", signal.SIGTERM)
+    if killguard.safe_killpg(process_group, kill_sig, expected_starttime=started,
+                             site=site + ".kill"):
         return
-    with contextlib.suppress((ProcessLookupError, PermissionError, OSError)):
-        os.killpg(process_group, getattr(signal, "SIGKILL", signal.SIGTERM))
+    # El líder ya no es nuestro. Si el PGID lo lidera AHORA otro proceso, el grupo es ajeno: no se
+    # toca a sus miembros (el starttime de un hijo ajeno sería un chequeo vacuo y mataría al ajeno).
+    if killguard.proc_starttime(process_group) is not None:
+        killguard.log_refused(site, "PGID reciclado por otro líder", process_group)
+        return
+    # Sin líder vivo, el grupo no admite miembros nuevos: lo que quede son nuestros huérfanos y se
+    # rematan uno a uno por su propio starttime.
+    for pid, stamp in _group_members(process_group).items():
+        if pid == process_group:
+            continue
+        killguard.safe_kill(pid, kill_sig, expected_starttime=stamp, site=site + ".orphan")
 
 
 def _terminate_cron_script_tree(proc: subprocess.Popen) -> None:
@@ -488,6 +552,13 @@ def _run_job_script(
         proc = subprocess.Popen(
             argv, stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True,
             cwd=workdir or str(path.parent), env=env, **popen_kwargs)
+        # HERMES-KILLGUARD: pin the leader's kernel start time while the PID is still ours, so a
+        # later group signal can prove the group still belongs to this script (a recycled PID
+        # must never be signalled).
+        try:
+            setattr(proc, "hermes_starttime", killguard.proc_starttime(proc.pid))
+        except Exception:  # never let bookkeeping break a run
+            setattr(proc, "hermes_starttime", None)
         deadline = time.monotonic() + script_timeout
         while True:
             # Tree-kill on cancel AND timeout: killpg misses setsid grandchildren (watchdogs,
