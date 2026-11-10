@@ -630,6 +630,21 @@ class TestRedactingFormatter:
         assert "abc123def456" not in result
         assert "sk-pro" in result
 
+    def test_handles_mismatched_format_args_without_crashing(self):
+        formatter = RedactingFormatter("%(message)s")
+        record = logging.LogRecord(
+            name="test",
+            level=logging.INFO,
+            pathname="",
+            lineno=0,
+            msg="Progress: 50% completed for %s with secret sk-proj-abc123def456ghi789jkl012",
+            args=(1,),  # Missing second argument for %
+            exc_info=None,
+        )
+        result = formatter.format(record)
+        assert "50% completed" in result
+        assert "abc123def456" not in result
+
 
 class TestPrintenvSimulation:
     """Simulate what happens when the agent runs `env` or `printenv`."""

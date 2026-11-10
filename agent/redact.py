@@ -1997,4 +1997,13 @@ class RedactingFormatter(logging.Formatter):
     """Log formatter that redacts secrets from all log messages."""
 
     def format(self, record: logging.LogRecord) -> str:
-        return redact_sensitive_text(super().format(record))
+        try:
+            formatted = super().format(record)
+        except Exception:
+            try:
+                formatted = str(record.msg)
+                if record.args:
+                    formatted = f"{formatted} [args: {record.args}]"
+            except Exception:
+                formatted = "<unformattable log record>"
+        return redact_sensitive_text(formatted)
