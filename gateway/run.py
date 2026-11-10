@@ -4793,7 +4793,7 @@ def _looks_like_profile_conflict_from_cmdline(command: str, our_home) -> bool:
     Substring matching is not identity: ``--profile timothy`` must NOT read as profile ``tim``. Returns
     False whenever the argv does not clearly contradict our home."""
     from gateway.status import _profile_name_for_home
-    profile_name = _profile_name_for_home(our_home)
+    profile_name = _profile_name_for_home(our_home if isinstance(our_home, Path) else Path(our_home))
     try:
         tokens = shlex.split(command)
     except ValueError:
@@ -4831,8 +4831,14 @@ def _looks_like_profile_conflict_from_cmdline(command: str, our_home) -> bool:
             continue
         # Named-profile home: a DIFFERENT explicit profile contradicts it (legacy default argv never carried
         # profile flags). Default/root home: ANY explicit named-profile flag contradicts it.
-        if profile_name is None or profile_name == "default" or value != profile_name:
-            return True
+        target_is_default = value in (None, "", "default")
+        ours_is_default = profile_name in (None, "default")
+        if ours_is_default:
+            if not target_is_default:
+                return True
+        else:
+            if value != profile_name:
+                return True
     home_value = _flag_value("--hermes-home") or _env_home_value()
     return bool(home_value is not None and _norm(home_value) != _norm(str(our_home)))
 
