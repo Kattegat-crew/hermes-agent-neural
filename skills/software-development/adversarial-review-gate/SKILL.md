@@ -27,18 +27,38 @@ código correcto: garantiza que alguien distinto miró y no encontró un agujero
 
 ## Prerequisites
 
-- `agy` instalado y con OAuth vivo (`agy models` responde). La ruta se puede fijar con
-  `REVIEW_GATE_AGY_BIN`.
-- Un `HOME` aislado con el token copiado en `.gemini/antigravity-cli/`. Por defecto
-  `REVIEW_GATE_AGY_HOME`; dos instancias con el mismo `HOME` se matan entre sí y el gate lo
-  serializa con `flock`.
-- `git` en el repo objetivo. El gate se niega a correr fuera de un repositorio.
+Para `agy`: el binario con OAuth vivo (`agy models` responde) y un `HOME` aislado con el token
+en `.gemini/antigravity-cli/` (`REVIEW_GATE_AGY_HOME`). Dos instancias con el mismo `HOME` se
+matan entre sí, y el gate lo serializa con `flock`.
+
+Para `codex`: vive en el host y se invoca por `ssh` como root (`REVIEW_GATE_CODEX_SSH`,
+`REVIEW_GATE_CODEX_PATH`). Siempre con `-s read-only`.
+
+Para `opencode`: el binario local (`REVIEW_GATE_OPENCODE_BIN`). No tiene salida estructurada
+nativa, así que su veredicto se parsea del stream de eventos.
+
+`git` en el repo objetivo: el gate se niega a correr fuera de un repositorio.
 
 ## How to Run
 
 ```bash
+# motor por defecto (agy) con tests obligatorios
 python3 skills/software-development/adversarial-review-gate/scripts/review_gate.py \
   --repo /opt/mi-repo --staged --test-cmd "pytest -q tests/unit" --require-tests
+
+# elegir motor y modelo
+--engine codex --model gpt-6-astra
+--engine opencode --model opencode/deepseek-v4.1-flash-free
+--engine agy --model claude-opus-5-5-high
+
+# elegir por riesgo y coste (diff normal -> codex; rutas sensibles -> agy opus)
+--engine auto
+
+# cadena de reserva si el primero falla o agota cuota
+--engine agy --fallback "codex:gpt-6-astra,opencode:opencode/glm-5.3-flash-free"
+
+# catálogo real de motores y modelos
+python3 .../review_gate.py --list-engines
 ```
 
 Salida: `0` pasa · `2` bloquea o degrada · `4` error de uso. Añadir `--json` para consumo por máquina.
@@ -47,6 +67,12 @@ Salida: `0` pasa · `2` bloquea o degrada · `4` error de uso. Añadir `--json` 
 
 | Flag | Efecto |
 |---|---|
+| `--engine agy\|codex\|opencode\|auto` | motor del reviewer (default: `agy`) |
+| `--model M` / `--provider P` | modelo del motor; `--provider` solo para opencode |
+| `--fallback "motor:modelo,..."` | cadena de reserva |
+| `--stop-on critical,high,medium` | qué severidades bloquean; el resto pasa a advertencias |
+| `--budget-seconds N` | 0 = sin límite; si se agota, bloquea sin llamar al reviewer |
+| `--list-engines` | catálogo vivo de motores y modelos |
 | `--staged` (default) / `--work` / `--range A..B` | qué diff se revisa |
 | `--test-cmd "..."` | ejecuta la suite; si falla, bloquea sin gastar tokens |
 | `--require-tests` | bloquea si no hay evidencia de tests verdes |
@@ -70,9 +96,11 @@ Variables: `REVIEW_GATE_STATE`, `REVIEW_GATE_AGY_HOME`, `REVIEW_GATE_AGY_BIN`, `
    Las tablas de patrones se excluyen a sí mismas y cada línea admite supresión con
    `# review-gate:ignore`.
 4. **Tests primero.** Con `--test-cmd` el fallo corta aquí, antes del reviewer.
-5. **Reviewer AGY** en `--mode plan` (no edita) con `--json-schema` y `--output-format json`: el
-   veredicto llega como `structured_output` validado, no como prosa. Recibe el diff como DATO y el
-   contrato; nunca la conclusión del autor.
+5. **Reviewer** en el motor elegido. Todos reciben el diff como DATO y el contrato, nunca la
+   conclusión del autor. Cada adaptador traduce su salida al mismo contrato:
+   `agy` (`--json-schema` → `structured_output`), `codex` (`--output-schema` estricto → fichero
+   con `-o`), `opencode` (stream de eventos → texto → JSON). Un veredicto con forma inválida se
+   normaliza o se descarta; nunca revienta el gate.
 6. **Veredicto y receipt.** `critical`/`high`/`medium` bloquean; `low` va a advertencias. El receipt
    queda en `REVIEW_GATE_STATE/<repo-slug>/<review_id>.json` y el hallazgo en `ledger.jsonl` con
    fingerprint.
@@ -107,6 +135,18 @@ Variables: `REVIEW_GATE_STATE`, `REVIEW_GATE_AGY_HOME`, `REVIEW_GATE_AGY_BIN`, `
 - **Un receipt corrupto es un cache miss, no un fallo.** Leer estado ajeno con `json.loads` sin
   proteger deja el diff bloqueado para siempre; escribir con `tempfile` + `os.replace` evita crear
   ese receipt a medias.
+- **El esquema portable es el más estricto.** `codex` rechaza el `--output-schema` si alguna clave
+  de `properties` falta en `required`. El esquema del gate los exige todos y los adaptadores
+  toleran valores vacíos al leer.
+- **`codex` corre como root en el host: siempre `-s read-only`.** Copiar el patrón de `fleet-run`
+  (`--dangerously-bypass-approvals-and-sandbox`) convertiría al reviewer en un root sin sandbox
+  leyendo diffs ajenos.
+- **`opencode` no tiene esquema**: puede devolver `blocking` como lista de frases sueltas. Hay que
+  normalizarlo (severidad inferida del texto) o el gate muere con `AttributeError`.
+- **`opencode` trocea el texto en eventos arbitrarios**: unirlos con `\n` parte claves JSON. Se
+  concatenan sin separador y se reintenta con `\n` como respaldo.
+- **`opencode` no tiene `-C`**: hay que lanzarlo con `cwd` en el repo o choca contra
+  `external_directory` y auto-rechaza la lectura.
 - **`--json-schema` es la pieza que hace el gate parseable.** Sin schema, `agy -p` devuelve prosa y el
   veredicto no se puede evaluar.
 - **Latencia real**: 108–260 s y ~100k tokens por revisión con `gemini-3.8-flash-high --effort high`.

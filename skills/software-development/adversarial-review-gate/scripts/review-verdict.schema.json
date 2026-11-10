@@ -3,6 +3,8 @@
   "required": [
     "passed",
     "blocking",
+    "non_blocking",
+    "tests_adequate",
     "summary"
   ],
   "additionalProperties": false,
@@ -17,6 +19,7 @@
         "required": [
           "severity",
           "file",
+          "line",
           "issue",
           "fix"
         ],
