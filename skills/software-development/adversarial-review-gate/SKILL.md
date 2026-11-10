@@ -144,6 +144,10 @@ Variables: `REVIEW_GATE_STATE`, `REVIEW_GATE_AGY_HOME`, `REVIEW_GATE_AGY_BIN`, `
 - **Un receipt corrupto es un cache miss, no un fallo.** Leer estado ajeno con `json.loads` sin
   proteger deja el diff bloqueado para siempre; escribir con `tempfile` + `os.replace` evita crear
   ese receipt a medias.
+- **`codex` se satura con diffs de más de ~1.000 líneas**: en vez de responder el JSON,
+  hace eco del prompt. Es un fallo del modelo, no del adaptador, y el gate hace lo correcto
+  (degrada). Mitigación: `--fallback` a otro motor, o `--max-diff` más bajo troceando la
+  revisión por archivo.
 - **El esquema portable es el más estricto.** `codex` rechaza el `--output-schema` si alguna clave
   de `properties` falta en `required`. El esquema del gate los exige todos y los adaptadores
   toleran valores vacíos al leer.
