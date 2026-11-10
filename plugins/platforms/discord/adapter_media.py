@@ -120,6 +120,9 @@ class DiscordMediaMixin:
         """
         from plugins.platforms.discord.adapter import _prompt_target_id, discord
 
+        if discord is None or not hasattr(discord, "File"):
+            return SendResult(success=False, error="discord package not installed or unavailable")
+
         if not self._client:
             return SendResult(success=False, error="Not connected")
         if not os.path.isfile(file_path):
@@ -322,6 +325,9 @@ class DiscordMediaMixin:
                 metadata=metadata,
             )
         from plugins.platforms.discord.adapter import _prompt_target_id, discord
+
+        if discord is None or not hasattr(discord, "File"):
+            return SendResult(success=False, error="discord package not installed or unavailable")
 
         try:
             import io
