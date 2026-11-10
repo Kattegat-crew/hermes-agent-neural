@@ -1,7 +1,7 @@
 services:
   hermes:
     build: .
-    image: hermes-agent-hermes:v0.22.6-ncl-rc1
+    image: hermes-agent-hermes:v0.23.1-ncl-rc1
     container_name: hermes-agent
     ports:
       - "100.73.30.29:9119:9119"
