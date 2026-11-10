@@ -290,23 +290,25 @@ def _terminate_process_group(proc: subprocess.Popen) -> None:
         # leader means the PID was recycled or the script re-parented its group.
         killguard.log_refused(site, "el grupo lo lidera otro PID", proc.pid, process_group)
         return
-    members = _group_members(process_group)
     if not killguard.safe_killpg(process_group, signal.SIGTERM,
                                  expected_starttime=started, site=site + ".term"):
         return
     with contextlib.suppress(subprocess.TimeoutExpired):
         proc.wait(timeout=1.0)
+    # Sin sondeo previo: si el líder muere entre la comprobación y el KILL, la propia comprobación
+    # falla y caemos al remate de huérfanos (con un probe aparte esa carrera dejaba huérfanos vivos).
     kill_sig = getattr(signal, "SIGKILL", signal.SIGTERM)
-    if killguard.safe_killpg(process_group, 0, expected_starttime=started,
-                             site=site + ".probe"):
-        killguard.safe_killpg(process_group, kill_sig, expected_starttime=started,
-                              site=site + ".kill")
+    if killguard.safe_killpg(process_group, kill_sig, expected_starttime=started,
+                             site=site + ".kill"):
         return
-    # Líder recolectado (o identidad cambiada) con miembros aún vivos en el grupo: se rematan
-    # uno por uno con su starttime, nunca por el grupo. Se refresca la instantánea porque en el
-    # periodo de gracia el script pudo lanzar hijos nuevos (traps de salida, forks tardíos).
-    members = _group_members(process_group)
-    for pid, stamp in members.items():
+    # El líder ya no es nuestro. Si el PGID lo lidera AHORA otro proceso, el grupo es ajeno: no se
+    # toca a sus miembros (el starttime de un hijo ajeno sería un chequeo vacuo y mataría al ajeno).
+    if killguard.proc_starttime(process_group) is not None:
+        killguard.log_refused(site, "PGID reciclado por otro líder", process_group)
+        return
+    # Sin líder vivo, el grupo no admite miembros nuevos: lo que quede son nuestros huérfanos y se
+    # rematan uno a uno por su propio starttime.
+    for pid, stamp in _group_members(process_group).items():
         if pid == process_group:
             continue
         killguard.safe_kill(pid, kill_sig, expected_starttime=stamp, site=site + ".orphan")

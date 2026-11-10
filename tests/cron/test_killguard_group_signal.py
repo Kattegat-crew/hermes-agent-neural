@@ -147,18 +147,41 @@ class TestCronScriptGroupTermination:
             if pid == 5151:
                 return 777  # el huérfano sigue vivo y con su identidad
             state["checks"] += 1
-            return 111 if state["checks"] == 1 else None  # el líder desaparece tras el TERM
+            # 1: TERM (identidad viva) · 2: KILL (ya no está) · 3: ¿lo lidera otro? (no)
+            return 111 if state["checks"] == 1 else None
 
         monkeypatch.setattr(scheduler_script.killguard, "proc_starttime", fake_start)
-        scans = [{"4242": 111}, {"5151": 777}]  # 1er scan antes del TERM, 2º tras la gracia
-        monkeypatch.setattr(scheduler_script, "_group_members",
-                            lambda pgid: scans.pop(0) if scans else {})
+        monkeypatch.setattr(scheduler_script, "_group_members", lambda pgid: {5151: 777})
         proc = _FakeProc(pid=4242, starttime=111)
 
         scheduler_script._terminate_process_group(proc)
 
         assert killpg_calls == [(4242, signal.SIGTERM)]
         assert kill_calls == [(5151, signal.SIGKILL)]
+
+    def test_refuses_to_touch_members_when_the_pgid_was_recycled(self, monkeypatch, killpg_calls, kill_calls):
+        """Si el PGID lo lidera ahora otro proceso, el grupo es ajeno: no se roza a sus hijos."""
+        from cron import scheduler_script
+
+        monkeypatch.setattr(os, "getpgid", lambda pid: pid)
+        state = {"checks": 0}
+
+        def fake_start(pid):
+            state["checks"] += 1
+            # 1: TERM (viva) · 2: KILL (líder ya no está) · 3: lo lidera otro proceso (999)
+            return 111 if state["checks"] == 1 else (None if state["checks"] == 2 else 999)
+
+        def boom(pgid):
+            raise AssertionError("no debe escanear miembros de un grupo ajeno")
+
+        monkeypatch.setattr(scheduler_script.killguard, "proc_starttime", fake_start)
+        monkeypatch.setattr(scheduler_script, "_group_members", boom)
+        proc = _FakeProc(pid=4242, starttime=111)
+
+        scheduler_script._terminate_process_group(proc)
+
+        assert killpg_calls == [(4242, signal.SIGTERM)]
+        assert kill_calls == []
 
     def test_real_child_group_is_terminated(self):
         from agent import killguard

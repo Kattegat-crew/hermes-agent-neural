@@ -485,6 +485,10 @@ def kill_process_tree(pid: int, *, sig: Optional[int] = None) -> bool:
         signalled = False
         # Signal descendants while their ownership ancestry is still observable.
         # Frozen hard-kill targets cannot fork during this bottom-up teardown.
+        # NOTE: with ``pgid == pid`` the descendants are then also reached by the group signal
+        # below. That is intentional (a child may fork between the sweep and the group signal)
+        # and safe because SIGKILL/SIGTERM are idempotent for a process that is already dying;
+        # handlers must therefore tolerate a second TERM.
         for child in reversed(descendants):
             try:
                 if child.is_running():

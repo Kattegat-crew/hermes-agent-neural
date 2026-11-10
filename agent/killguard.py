@@ -74,6 +74,10 @@ def safe_killpg(pgid, sig, *, expected_starttime=None, site=""):
         log_refused(site or "killguard.safe_killpg", "sin starttime de referencia", pgid, pgid)
         return False
     now = proc_starttime(pgid)
+    if now is None:
+        # El líder ya no existe: no es un reciclado, es un grupo que terminó.
+        logger.debug("killguard: %s pgid=%s ya no existe", site or "killguard.safe_killpg", pgid)
+        return False
     if now != expected_starttime:
         log_refused(site or "killguard.safe_killpg",
                     "líder reciclado (starttime esperado %s, encontrado %s)"
