@@ -1,7 +1,7 @@
 ---
 name: adversarial-review-gate
-description: Use when committing code — AGY adversarial review gate.
-version: 1.0.0
+description: Use when committing code — adversarial multi-engine review.
+version: 2.0.0
 author: Jonathan Parra (Plon), Hermes Agent
 license: Apache-2.0
 platforms: [linux, macos]
@@ -15,8 +15,9 @@ metadata:
 # Adversarial Review Gate Skill
 
 Un agente no verifica su propio trabajo. Esta skill pone un segundo modelo, sin el contexto ni el
-sesgo del autor, a buscar cómo romper el diff antes de que se convierta en commit. No garantiza
-código correcto: garantiza que alguien distinto miró y no encontró un agujero.
+sesgo del autor, a buscar cómo romper el diff antes de que se convierta en commit. Tres motores
+intercambiables (`agy`, `codex`, `opencode`) con cadena de reserva. No garantiza código correcto:
+garantiza que alguien distinto miró y no encontró un agujero.
 
 ## When to Use
 
