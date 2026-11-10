@@ -19,6 +19,8 @@ services:
       - /home/linuxbrew/.linuxbrew/Cellar/gentle-ai/2.3.0/bin/gentle-ai:/usr/local/bin/gentle-ai:ro
       - ./tools/mcp_tool.py:/opt/hermes/tools/mcp_tool.py:ro
       - ./plugins/observability/langfuse/__init__.py:/opt/hermes/plugins/observability/langfuse/__init__.py:ro
+      - ./tools/uv:/usr/local/bin/uv:ro
+      - ./tools/uvx:/usr/local/bin/uvx:ro
       - /root/golden-game-landing:/opt/repos/golden-game-landing:ro
       - /opt/ai-platform:/opt/repos/ai-platform:ro
       - /var/run/docker.sock:/var/run/docker.sock

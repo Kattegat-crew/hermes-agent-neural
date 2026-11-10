@@ -344,3 +344,8 @@ apps/desktop/.dist-build*
 # State local de herramientas de agente (no versionar)
 .atl/
 .codegraph/
+
+# Local overlays and backups
+tools/uv
+docker-compose.yml.*
+
