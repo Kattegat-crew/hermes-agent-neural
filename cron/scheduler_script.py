@@ -290,8 +290,6 @@ def _terminate_process_group(proc: subprocess.Popen) -> None:
         # leader means the PID was recycled or the script re-parented its group.
         killguard.log_refused(site, "el grupo lo lidera otro PID", proc.pid, process_group)
         return
-    # Miembros vivos ANTES de señalar: si el líder muere y se recolecta, su /proc desaparece y
-    # el grupo ya no puede validarse; los supervivientes se rematan por su propia identidad.
     members = _group_members(process_group)
     if not killguard.safe_killpg(process_group, signal.SIGTERM,
                                  expected_starttime=started, site=site + ".term"):
@@ -305,7 +303,9 @@ def _terminate_process_group(proc: subprocess.Popen) -> None:
                               site=site + ".kill")
         return
     # Líder recolectado (o identidad cambiada) con miembros aún vivos en el grupo: se rematan
-    # uno por uno con su starttime, nunca por el grupo.
+    # uno por uno con su starttime, nunca por el grupo. Se refresca la instantánea porque en el
+    # periodo de gracia el script pudo lanzar hijos nuevos (traps de salida, forks tardíos).
+    members = _group_members(process_group)
     for pid, stamp in members.items():
         if pid == process_group:
             continue

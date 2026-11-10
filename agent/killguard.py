@@ -69,13 +69,16 @@ def safe_killpg(pgid, sig, *, expected_starttime=None, site=""):
             return False
     except Exception:
         return False
-    if expected_starttime is not None:
-        now = proc_starttime(pgid)
-        if now != expected_starttime:
-            log_refused(site or "killguard.safe_killpg",
-                        "líder reciclado (starttime esperado %s, encontrado %s)"
-                        % (expected_starttime, now), pgid, pgid)
-            return False
+    if expected_starttime is None:
+        # Sin sello no hay forma de probar que el grupo sigue siendo nuestro: jamás se señala.
+        log_refused(site or "killguard.safe_killpg", "sin starttime de referencia", pgid, pgid)
+        return False
+    now = proc_starttime(pgid)
+    if now != expected_starttime:
+        log_refused(site or "killguard.safe_killpg",
+                    "líder reciclado (starttime esperado %s, encontrado %s)"
+                    % (expected_starttime, now), pgid, pgid)
+        return False
     try:
         os.killpg(pgid, sig)
         return True
@@ -99,6 +102,11 @@ def safe_kill(pid, sig, *, expected_starttime=None, site=""):
         log_refused(site or "killguard.safe_kill", "sin starttime de referencia", pid)
         return False
     now = proc_starttime(pid)
+    if now is None:
+        # Ya no existe: no es un reciclado, es un proceso que terminó. No se señala y no se
+        # grita "reciclado" (evita ruido en PROD con recolección rápida de s6/init).
+        logger.debug("killguard: %s pid=%s ya no existe", site or "killguard.safe_kill", pid)
+        return False
     if now != expected_starttime:
         log_refused(site or "killguard.safe_kill",
                     "PID reciclado (starttime esperado %s, encontrado %s)"

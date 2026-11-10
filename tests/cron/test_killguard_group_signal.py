@@ -76,6 +76,12 @@ class TestKillguardPrimitives:
         assert killguard.safe_killpg(os.getpgid(0), signal.SIGTERM, site="t") is False
         assert killpg_calls == []
 
+    def test_safe_killpg_refuses_without_reference_stamp(self, killpg_calls):
+        from agent import killguard
+
+        assert killguard.safe_killpg(4242, signal.SIGTERM, site="t") is False
+        assert killpg_calls == []
+
     def test_safe_kill_refuses_without_reference_stamp(self, kill_calls):
         from agent import killguard
 
@@ -144,7 +150,9 @@ class TestCronScriptGroupTermination:
             return 111 if state["checks"] == 1 else None  # el líder desaparece tras el TERM
 
         monkeypatch.setattr(scheduler_script.killguard, "proc_starttime", fake_start)
-        monkeypatch.setattr(scheduler_script, "_group_members", lambda pgid: {4242: 111, 5151: 777})
+        scans = [{"4242": 111}, {"5151": 777}]  # 1er scan antes del TERM, 2º tras la gracia
+        monkeypatch.setattr(scheduler_script, "_group_members",
+                            lambda pgid: scans.pop(0) if scans else {})
         proc = _FakeProc(pid=4242, starttime=111)
 
         scheduler_script._terminate_process_group(proc)
