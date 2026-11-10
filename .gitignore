@@ -1,4 +1,5 @@
 .DS_Store
+.bw_session_cache
 /venv/
 /venv.old/
 /venv.stale.runtime-*/
