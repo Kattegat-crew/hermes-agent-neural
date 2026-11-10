@@ -30,6 +30,9 @@ metadata:
 1. **Sesiones recientes:** `session_search()` sin query → lista con `last_active` y `source`. Ordenar por `last_active`, NO por inicio.
 2. **Leer la sesión candidata:** `session_search(session_id=<id>)`. Si es grande devuelve head+tail y el volcado completo queda en `/opt/data/cache/spillover/` (procesarlo con `execute_code`, no re-pedirlo por API).
 3. **DB directo si el tail no basta:** `sqlite3 file:/opt/data/state.db?mode=ro` → `messages` filtrando `role='user'` por `timestamp`; `sessions` para mapear sesión→canal/chat. (Recetas en `references/hermes-state-db-map.md`.)
+
+   **3-bis — Revivir una discusión concreta** ("revisa el hilo de X", "qué decidimos sobre Y"): `session_search()` sin query para elegir la sesión por `last_active`, y luego `session_search(session_id=..., around_message_id=<id>)` para navegar hacia atrás o adelante desde un mensaje. Lo ya leído suele llegar **demotado** tras compactar: se vuelve a pedir con esos dos parámetros; no se cita de memoria.
+
 4. **Timeline de canales y entregas:** `grep 'inbound message' /opt/data/logs/gateway.log | tail -25` y `grep -n 'Session expiry' /opt/data/logs/gateway.log | tail -5`. Para crons: `cronjob_manage(action='list')` (`last_run_at`, `last_status`, `deliver`) + el archivo de `/opt/data/cron/output/<job_id>/`.
 5. **Responder:** decir qué se reconstruyó y de dónde (sesión, canal, hora); si el referente es claro, ejecutar; si sigue ambiguo, UNA pregunta con 2-4 opciones concretas (`clarify`), incluyendo la salida "era otra cosa / algo que dije en un audio".
 
@@ -39,6 +42,7 @@ metadata:
 - **Fechas del prompt poco fiables:** `Conversation started: <fecha>` puede estar viejo. Usar `date` y los timestamps de la DB como verdad.
 - **`sessions` no tiene columna `session_id`:** su PK es `id`; el `session_id` de la app vive en `messages.session_id`. Un `JOIN ... ON s.session_id = m.session_id` falla con `no such column`.
 - **Archivos `root:root`** (salida de cron, spillover de crons): leerlos con `docker exec hermes-agent cat <path>`.
+- **Un adjunto vive dentro de `messages.content`.** El texto del documento que subió el usuario está en la fila de su mensaje, precedido de `[The user sent a text document: '<nombre>' ...]`. Recuperarlo por una frase distintiva del documento (no por el nombre del archivo) y paginar con `substr(content,1,5000)`, `substr(content,5001,7000)`…: un `select content` completo inunda el contexto y las rutas de `cache/documents/native-inputs/` caducan antes que la DB.
 - **No inventar el referente.** Guardar una interpretación plausible como si fuera un hecho contamina memoria y documentación; reconstruir primero.
 - **Un `guarda`/`documenta` tras expiración** sigue siendo una petición real: reconstruir el hito y ejecutar el guardado, confirmando el tema en una línea si hubo duda.
 - **Si `memory add` falla** con _"could not be read"_: el store real es `/opt/data/memories/MEMORY.md` (NO `/opt/data/MEMORY.md`, señuelo de 0 bytes). Reparar con `docker exec hermes-agent chown hermes:hermes /opt/data/memories/MEMORY.md /opt/data/memories/USER.md` + `chmod 600` + borrar `.lock` huérfanos, y verificar con un add que devuelva `entry_count`/`usage`.
