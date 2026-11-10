@@ -557,7 +557,9 @@ def main() -> int:
 
     structured = None
     meta: dict = {}
-    if not blocking:
+    # Solo un hallazgo que bloquea justifica saltarse al reviewer: con --stop-on critical
+    # un estatico `high` no debe impedir que se revise a fondo el resto.
+    if not [b for b in blocking if b.get("severity", "medium") in stop_on]:
         engine, model, provider = resolve_engine(args, hot, why)
         ACTIVE.update({"engine": engine, "model": model, "provider": provider,
                        "fallbacks": parse_fallbacks(args.fallback)})
@@ -609,9 +611,14 @@ def main() -> int:
 
     # El reviewer puede rechazar sin enumerar motivos (p.ej. tests insuficientes).
     # Un passed=false NUNCA puede terminar en exit 0: sería descartar su veredicto.
-    if structured and structured.get("passed") is False and not blocking:
+    # Se mira solo lo que de verdad bloquea: con `--stop-on critical`, un estatico `high`
+    # dejaba `blocking` no vacio, el rechazo no se añadia, el high se degradaba y el
+    # veredicto salia aprobado. Ese era el fail-open.
+    if structured and structured.get("passed") is False and not [
+        b for b in blocking if b.get("severity", "medium") in stop_on
+    ]:
         blocking.append({
-            "source": "agy", "severity": "high", "file": "?", "rule": "reviewer-rejected",
+            "source": "gate", "severity": "high", "file": "?", "rule": "reviewer-rejected",
             "issue": "El reviewer marcó passed=false sin enumerar hallazgos: rechazo explícito",
             "fix": "Revisar el diff con el resumen del receipt y volver a pasar el gate",
         })
@@ -633,8 +640,15 @@ def main() -> int:
     # --stop-on decide qué severidades bloquean; el resto pasa a advertencias.
     # Se aplica ANTES de construir la lista de advertencias para que lo degradado
     # siga apareciendo en el receipt en lugar de desaparecer.
-    soft = [b for b in blocking if b.get("severity", "medium") not in stop_on]
-    blocking = [b for b in blocking if b.get("severity", "medium") in stop_on]
+    # Un bloqueo generado por el propio gate (reviewer que rechazo sin dar hallazgos,
+    # presupuesto agotado) no puede degradarse por --stop-on: seria fail-open.
+    # Solo el escaneo estatico es degradable: es una heuristica. Un test que falla o
+    # falta, y un rechazo del reviewer, son hechos. Degradarlos seria aprobar sin pruebas.
+    HARD_SOURCES = ("gate", "tests")
+    soft = [b for b in blocking
+            if b.get("severity", "medium") not in stop_on
+            and b.get("source") not in HARD_SOURCES]
+    blocking = [b for b in blocking if b not in soft]
     advisories.extend(soft)
 
     non_blocking_list = list((structured or {}).get("non_blocking") or [])

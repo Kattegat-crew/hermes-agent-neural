@@ -223,7 +223,8 @@ def run_agy(repo: Path, prompt: str, schema_path: Path, model: str, timeout: int
                 break
             except BlockingIOError:
                 if time.monotonic() >= deadline:
-                    lock_fh.close()
+                    # Sin cerrar aqui: el `finally` hace unlock+close y fallaria con
+                    # ValueError sobre un handle ya cerrado.
                     return None, _meta("agy", model, None, 0.0,
                                        error=f"lock de agy ocupado mas de {timeout}s")
                 time.sleep(0.5)
@@ -242,10 +243,14 @@ def run_agy(repo: Path, prompt: str, schema_path: Path, model: str, timeout: int
         seconds = round(time.time() - t0, 1)
     finally:
         try:
-            fcntl.flock(lock_fh, fcntl.LOCK_UN)
+            if not lock_fh.closed:
+                fcntl.flock(lock_fh, fcntl.LOCK_UN)
+        except (OSError, ValueError):
+            pass
+        try:
+            lock_fh.close()
         except OSError:
             pass
-        lock_fh.close()
 
     if rc != 0:
         return None, _meta("agy", model, None, seconds, error=(err or out or "sin salida")[-800:])
@@ -430,6 +435,19 @@ def run_opencode(repo: Path, prompt: str, model: str, provider: str | None, time
     env = dict(os.environ)
     env["HOME"] = str(OPENCODE_HOME)
     env["XDG_CONFIG_HOME"] = str(OPENCODE_HOME / ".config")
+
+    # opencode fusiona la config del proyecto con la global: un repo hostil podria
+    # reabrir edit/bash. Si el repo trae su propia config, no se le da ese control.
+    project_configs = (
+        repo / "opencode.json", repo / "opencode.jsonc",
+        repo / ".opencode", repo / ".opencode/opencode.json",
+        repo / ".opencode/opencode.jsonc",
+    )
+    for proj in project_configs:
+        if proj.exists():
+            return None, _meta("opencode", full_model, provider, 0.0,
+                               error=f"el repo trae configuracion de opencode ({proj.name}); "
+                                     "el aislamiento no seria confiable")
 
     before = _tree_state(repo)
     if before is None:

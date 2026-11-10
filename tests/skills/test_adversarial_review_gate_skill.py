@@ -217,6 +217,74 @@ class TestVerdictPath:
         assert run(gate, monkeypatch, ["--repo", str(repo), "--staged"]) == 0
 
 
+class TestGateFindingsNeverSoften:
+    """--stop-on no puede degradar un rechazo del propio reviewer."""
+
+    def test_reviewer_rejection_is_not_downgraded(self, gate, tmp_path, monkeypatch):
+        repo = make_repo(tmp_path)
+        (repo / "ok.py").write_text("def f():\n    return 1\n")
+        subprocess.run(["git", "add", "-A"], cwd=repo, check=True, capture_output=True)
+        monkeypatch.setattr(gate, "call_reviewer", lambda *_a, **_k: (
+            {"passed": False, "blocking": [], "non_blocking": [], "tests_adequate": True,
+             "summary": "no me convence"},
+            {"engine": "fake", "model": "fake", "seconds": 0.1}))
+        # con --stop-on critical, un rechazo sin hallazgos seguiria siendo un 'high'
+        assert run(gate, monkeypatch, ["--repo", str(repo), "--staged",
+                                       "--stop-on", "critical"]) == 2
+
+    def test_failing_tests_are_never_downgraded(self, gate, tmp_path, monkeypatch):
+        """Un test en rojo es un hecho, no una heuristica: --stop-on no lo degrada."""
+        repo = make_repo(tmp_path)
+        (repo / "ok.py").write_text("def f():\n    return 1\n")
+        subprocess.run(["git", "add", "-A"], cwd=repo, check=True, capture_output=True)
+        monkeypatch.setattr(gate, "call_reviewer", lambda *_a, **_k: (
+            {"passed": True, "blocking": [], "non_blocking": [], "tests_adequate": True,
+             "summary": "ok"}, {"engine": "fake", "model": "fake", "seconds": 0.1}))
+        rc = run(gate, monkeypatch, ["--repo", str(repo), "--staged", "--stop-on", "medium,high",
+                                     "--test-cmd", "false", "--require-tests"])
+        assert rc == 2, "un test rojo no puede salir 0 por --stop-on"
+
+    def test_rejection_survives_alongside_a_downgraded_static(self, gate, tmp_path, monkeypatch):
+        """El caso exacto del fail-open: estatico `high` + --stop-on critical + passed=false."""
+        repo = make_repo(tmp_path)
+        (repo / "ok.py").write_text("import os\nos.system('ls')\n")  # 'high'
+        subprocess.run(["git", "add", "-A"], cwd=repo, check=True, capture_output=True)
+        monkeypatch.setattr(gate, "call_reviewer", lambda *_a, **_k: (
+            {"passed": False, "blocking": [], "non_blocking": [], "tests_adequate": True,
+             "summary": "no me convence"},
+            {"engine": "fake", "model": "fake", "seconds": 0.1}))
+        assert run(gate, monkeypatch, ["--repo", str(repo), "--staged",
+                                       "--stop-on", "critical"]) == 2
+
+    def test_downgraded_static_finding_still_reaches_the_reviewer(self, gate, tmp_path, monkeypatch):
+        repo = make_repo(tmp_path)
+        (repo / "ok.py").write_text("import os\nos.system('ls')\n")  # regla 'high', no crítica
+        subprocess.run(["git", "add", "-A"], cwd=repo, check=True, capture_output=True)
+        called = {"n": 0}
+
+        def fake(*_a, **_k):
+            called["n"] += 1
+            return ({"passed": True, "blocking": [], "non_blocking": [], "tests_adequate": True,
+                     "summary": "ok"}, {"engine": "fake", "model": "fake", "seconds": 0.1})
+
+        monkeypatch.setattr(gate, "call_reviewer", fake)
+        run(gate, monkeypatch, ["--repo", str(repo), "--staged", "--stop-on", "critical"])
+        assert called["n"] == 1, "un estatico degradado no debe saltarse la revision"
+
+
+class TestOpencodeProjectConfig:
+    def test_repo_with_its_own_opencode_config_is_refused(self, gate, tmp_path, monkeypatch):
+        eng = gate.review_engines
+        repo = tmp_path / "repo"; repo.mkdir()
+        (repo / "opencode.jsonc").write_text('{"permission": {"edit": "allow"}}')
+        home = tmp_path / "home"; (home / ".config/opencode").mkdir(parents=True)
+        (home / ".config/opencode/opencode.json").write_text(
+            '{"permission": {"edit": "deny", "bash": "deny"}}')
+        monkeypatch.setattr(eng, "OPENCODE_HOME", home)
+        verdict, meta = eng.run_opencode(repo, "p", "opencode/x-free", None, 30)
+        assert verdict is None and "configuracion de opencode" in meta["error"]
+
+
 class TestStopOnPolicy:
     """--stop-on decide que severidades bloquean sin hacer desaparecer el resto."""
 
@@ -475,6 +543,44 @@ class TestFallbackBudget:
         assert len(seen) == 2, f"debieron caber 2 intentos de 20s en 50s: {seen}"
         assert seen[1] <= 30, f"el segundo intento no heredo el presupuesto: {seen}"
 
+
+class TestAgyLockLifecycle:
+    """El lock de agy debe liberarse sin reventar, tambien cuando se agota la espera."""
+
+    def test_happy_path_returns_a_verdict(self, gate, tmp_path, monkeypatch):
+        eng = gate.review_engines
+        payload = json.dumps({
+            "status": "SUCCESS",
+            "structured_output": {"passed": True, "blocking": [], "non_blocking": [],
+                                  "tests_adequate": True, "summary": "ok"},
+        })
+        monkeypatch.setattr(eng, "_ensure_agy_home", lambda *_a, **_k: tmp_path)
+        monkeypatch.setattr(eng, "_sh", lambda *a, **k: (0, payload, ""))
+        monkeypatch.setattr(eng, "AGY_LOCK", tmp_path / "lock")
+        verdict, meta = eng.run_agy(tmp_path, "p", tmp_path / "s.json", "m", 30)
+        assert verdict is not None and verdict["passed"] is True
+
+    def test_lock_timeout_degrades_instead_of_raising(self, gate, tmp_path, monkeypatch):
+        """Si el lock esta ocupado, se devuelve error: nunca ValueError en el finally."""
+        eng = gate.review_engines
+        clock = {"t": 0.0}
+
+        def fake_flock(fh, op):
+            raise BlockingIOError("ocupado")
+
+        monkeypatch.setattr(eng, "_ensure_agy_home", lambda *_a, **_k: tmp_path)
+        monkeypatch.setattr(eng, "AGY_LOCK", tmp_path / "lock")
+        monkeypatch.setattr(eng.time, "monotonic", lambda: clock["t"])
+
+        def advance(_s):
+            clock["t"] += 10
+
+        monkeypatch.setattr(eng.time, "sleep", advance)
+        import fcntl as real_fcntl
+        monkeypatch.setattr(real_fcntl, "flock", fake_flock)
+        verdict, meta = eng.run_agy(tmp_path, "p", tmp_path / "s.json", "m", 5)
+        assert verdict is None
+        assert "lock de agy ocupado" in meta["error"]
 
 class TestCodexAdapter:
     """codex corre como root en el host: jamas sin sandbox de solo lectura."""
