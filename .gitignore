@@ -344,3 +344,9 @@ apps/desktop/.dist-build*
 # State local de herramientas de agente (no versionar)
 .atl/
 .codegraph/
+
+# Home de pruebas que crean los tests en la raíz del repo (runtime, no fuente)
+/default/
+/fixture/
+/owned/
+/target/
