@@ -717,8 +717,8 @@ def main(argv: Optional[List[str]] = None) -> int:
     parser.add_argument(
         "--json-log",
         type=Path,
-        default=None,
-        help="Path to write JSON execution report",
+        default=Path("/var/log/vps-hygiene.json"),
+        help="Path to write JSON execution report (default: /var/log/vps-hygiene.json)",
     )
     parser.add_argument(
         "--scratch-ttl-days",
