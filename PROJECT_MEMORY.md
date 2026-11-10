@@ -402,3 +402,15 @@
 ### Lucky — volante V2 aprobado y PDF nativo de stickers publicado (30-oct-2026)
 - Usuario aprueba volante V2, autoriza Drive/NCL/GH y solicita PDF de stickers en mejor definicion en carpeta anterior. Volante en06-imprimibles/03-volante-infografico (ID1fYkT1wl0VEUlzPpAauZ_SyKJ5ffWa6da), PNG+PDF A5. StickersPDF ID14vKQSO8bKnVG5R6Ns3-wPhGxSdilsryB en02-tarjeta-y-stickers, logo original700px(~1307ppp) y contornos vectoriales. PNG antiguo ausente en Drive: no reponerlo.
 - Volante aprobado visualmente: manos derecha/izquierda, cuatro hojas, sonrisa cerrada; ~181ppp nativos, preprensa se evalua aparte. No generar nuevas imagenes por esta publicacion. Galeria con6imagenes y descarga PDF de stickers. Laterality/acting propagados a cinco guias Drive, fuentes marketing y espejoHermes.
+
+### Hermes PROD — Actualización oficial a v0.23.1 completada (10-nov-2026)
+- **Versión:** `v0.23.1` (base `v0.23.1` con 42 commits propios certificados desde DEV, commit `9da428c23d` en rama `ncl/v0.23.1`).
+- **Imagen Docker:** `hermes-agent-hermes:v0.23.1-ncl-rc1` con etiqueta `org.opencontainers.image.revision=46d379574e`.
+- **Autorización:** Ejecutado por Antigravity bajo la doble llave de Jesús Díaz (`AUTORIZO ACTUALIZAR PROD v0.23.1` y `AUTORIZO CUTOVER PROD`) siguiendo el plan de Roshi (`PLAN_ACTUALIZACION_PROD_v0.23.1.md`).
+- **Verificación de Puertas:**
+  - F0: Backup SQLite (`.backup`) de las 7 bases (`state.db`, `projects.db`, `kanban.db`, `shared-state.db`, `response_store.db`, `runs_idempotency.db`, `verification_evidence.db`) verificado con `PRAGMA integrity_check = ok`. Bundle Git (`repo-prod-20261110_053134.bundle`, 905 MB). Imagen previa respaldada como `rollback-prod:v0.22.6-ncl`.
+  - F1: Delta Git bundle transportado desde DEV (`prod-stable --not v0.23.1`, 42 commits).
+  - F2: Overlay PROD integrado y commiteado (`docker-compose.yml`, `nginx-proxy/`, test webhook).
+  - F3: Imagen Docker compilada con BuildKit y parches propios verificados (`agent/dsml_guard.py`, `agent/semantic_triage.py`, `gateway/activity_labels.py`, `index_char_limit`, `skill_route`).
+  - F4: Canario multi-perfil aislado (`/opt/hermes-canary2` en puerto `9120`) comprobó migración exitosa de `state.db` (32 → 33, `quick_check: ok`), migración de `config.yaml` (`_config_version: 53`), 0 tracebacks y dashboard `302`. Desmantelado limpiamente.
+  - F5: Cutover en caliente. 3 plataformas conectadas (`api_server`, `discord`, `whatsapp`), `Connected as Bob-adminprod#1448`. Dashboard 9119 respondiendo HTTP `302`. Gateway interno 8642 respondiendo HTTP `200`. 542 crons activos. 0 tracebacks en logs.
