@@ -13,6 +13,19 @@ El foro usa 12 etiquetas en tres ejes. Resolver los ids SIEMPRE en vivo (`GET /c
 
 Obligatorio: **tipo + estado + etiqueta del responsable**. Entorno solo cuando el trabajo toca una máquina concreta. Un ticket sin tag de responsable o sin mención real contraviene el topic del foro.
 
+## IDs de mención de los humanos (NO son los ids de tag)
+
+`Chucho` y `Jonathan` existen dos veces en este foro con ids distintos: como **etiqueta** (el tag que se aplica al hilo) y como **persona** (el id que va en `<@id>`). Usar el id del tag en el cuerpo produce una mención que Discord no resuelve y no notifica — el POST devuelve 200, el hilo queda armado y nadie recibe el aviso.
+
+Verificado el 10-nov-2026: `<@1555025478450946119>` (id del tag `Chucho`) devuelve `GET /guilds/{g}/members/{id}` → **404 `Unknown User`** y `mentions: []` en el mensaje.
+
+Ids reales de persona (guild `1493354289266167808`, al 10-nov-2026):
+
+- Jonathan (`killer420w`): `713538631918157853`
+- Chucho (`jemadiar`): `742803595241717840`
+
+Verificar SIEMPRE antes de publicar: `GET /guilds/1493354289266167808/members/{id}` debe devolver 200 con el `user.username` esperado. Un 404 significa que la mención no notifica. Si cambia el guild o entra alguien nuevo, re-resolver con `GET /guilds/{g}/members?limit=1000` y filtrar por `user.username` / `global_name`.
+
 ## Vía única: scripts/crear_ticket.py
 
 ```bash
