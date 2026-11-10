@@ -147,6 +147,22 @@ Variables: `REVIEW_GATE_STATE`, `REVIEW_GATE_AGY_HOME`, `REVIEW_GATE_AGY_BIN`, `
   concatenan sin separador y se reintenta con `\n` como respaldo.
 - **`opencode` no tiene `-C`**: hay que lanzarlo con `cwd` en el repo o choca contra
   `external_directory` y auto-rechaza la lectura.
+- **Los fail-open se esconden en las politicas, no en el codigo.** Si un flag como
+  `--stop-on` re-clasifica severidades, todo lo que NO es heuristica (un rechazo del
+  reviewer, un test en rojo, un presupuesto agotado) tiene que quedar fuera de ese
+  filtro. Revisa cada vez: ¿que camino termina en exit 0 sin haber probado nada?
+- **Un veredicto incompleto nunca es una aprobacion.** `{}`, `{"passed": true}` sin
+  `blocking`, o `blocking: [null]` se normalizan a rechazo o se descartan; jamas a
+  `passed=true`. Es el bug mas facil de escribir y el mas caro.
+- **El aislamiento se acredita, no se supone.** Que exista un archivo de config no
+  prueba nada: hay que leer la politica efectiva (`permission.edit == deny`), rechazar
+  repos que traigan su propia config (se fusiona y puede reabrir permisos) y verificar
+  despues que el arbol de trabajo no cambio.
+- **Un lock con `flock` bloqueante se come el presupuesto.** Espera acotada con
+  `LOCK_NB` + deadline, y libera siempre en un `finally` idempotente (cerrar el handle
+  antes del `finally` provoca `ValueError` en el `unlock`).
+- **Un motor sin esquema nativo puede devolver `blocking` como lista de frases.**
+  Normaliza antes de recorrerla o el gate muere con `AttributeError` en el peor momento.
 - **`--json-schema` es la pieza que hace el gate parseable.** Sin schema, `agy -p` devuelve prosa y el
   veredicto no se puede evaluar.
 - **Latencia real**: 108–260 s y ~100k tokens por revisión con `gemini-3.8-flash-high --effort high`.
