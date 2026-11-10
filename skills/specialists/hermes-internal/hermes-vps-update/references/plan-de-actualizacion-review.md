@@ -116,6 +116,13 @@ se cherry-pickeanean.
 - `0 Traceback` en `gateway.log` y `errors.log` desde el arranque
 - `NRestarts=0`, `hermes doctor` sin fallos, `git status` limpio
 - `PRAGMA quick_check` de la DB migrada = `ok`
+- **endpoint del dashboard** (`9119` o el que aplique) en `200`/`302` — un plan
+  que solo mide el gateway deja el panel caído y nadie lo nota
+- **decisión sobre `session_reset`** tomada y aplicada (plugin instalado o cambio
+  aceptado y documentado); su retirada del core no emite error, solo un aviso de
+  `doctor`, así que el reset se pierde en silencio
+- **en Docker: hash de 4 archivos del contenedor == árbol del repo** (si difieren,
+  la imagen no salió de ese checkout y el build es una regresión)
 
 Sin esto, «verde» es una opinión.
 

@@ -59,6 +59,20 @@ cd $W && git log --format='%s' vX.Y.Z..HEAD | tr -d '\r' | sort > /tmp/rep.txt
 comm -23 /tmp/own.txt /tmp/rep.txt   # faltantes — DEBE salir vacío
 ```
 
+Un faltante por **subject** no es automáticamente una pérdida: upstream puede
+haber arreglado el mismo defecto con otro mensaje. Antes de declararlo perdido,
+buscar el contenido del parche en el árbol nuevo:
+
+```bash
+git show <sha-faltante> | grep -E '^\+' | grep -vE '^\+\+' | head -3   # las líneas nuevas
+# y buscar esas líneas / ese símbolo en la rama nueva:
+grep -rn '<símbolo-del-parche>' <ruta-del-módulo>
+```
+
+Si el arreglo está (aunque con otra redacción o atribuido a un issue de upstream),
+la cobertura es completa y se reporta como «absorbido por upstream», no como
+«commit perdido».
+
 Caso real (nov-2026): 57 commits de código propios, 22 aplicados → el informe
 «replay completado» ocultaba 35 faltantes, entre ellos la trie semántica
 (`agent/semantic_triage.py`), el utillaje de skills on-demand
@@ -125,7 +139,33 @@ tests de 2 archivos. Verde ≠ verificado: pedir `scripts/run_tests.sh` completo
   Caso real: 38 modificados + 40 sin rastrear (incluye `gateway/run.py`,
   `plugins/platforms/whatsapp/adapter.py`, `scripts/whatsapp-bridge/bridge.js`).
 
-## 7. Veredicto y bloqueo
+## 7. Verificar sus afirmaciones en el sistema vivo (no en su resumen)
+
+Un agente que ejecutó la actualización reporta en el mismo tono lo que hizo y lo
+que cree haber hecho. Tres comprobaciones que descubren la diferencia:
+
+```bash
+# 1. ¿de verdad quedó sin archivos de root? (los recrea cada vez que corre algo como root)
+find <repo> -not -path '*/.git/*' -user root | wc -l
+git -C <repo> status --porcelain | wc -l
+# 2. ¿lo que declara instalado está instalado?
+<hermes> plugins list | grep -i '<plugin>'; grep -m1 '_config_version' <home>/config.yaml
+# 3. ¿los endpoints que su plan no definió responden?
+curl -s -o /dev/null -w '%{http_code}\n' http://<host>:<puerto-dashboard>/
+<hermes> doctor 2>&1 | tail -8
+```
+
+Patrón observado repetidamente: el informe dice «0 archivos root» y el `find`
+devuelve decenas (pycache `cpython-314` generado por su propio `pm repair` como
+root); dice «dashboard OK» y el endpoint devuelve 500 porque su entorno fue
+recolectado. **La afirmación no es evidencia: se re-ejecuta el comando.**
+
+Al cerrar la auditoría, separar en el veredicto: (a) lo que quedó bien y se probó,
+(b) lo que declaró y no se cumplió, (c) lo que el plan no midió y quedó roto.
+Ese tercer bloque es el que suele contener los P1 reales (dashboard, política de
+reset de sesiones, respaldo de `config.yaml`).
+
+## 8. Veredicto y bloqueo
 
 Autorizar el cutover solo si: (a) `comm -23` de commits propios sale vacío o cada
 faltante tiene justificación verificada (upstream lo trae / obsoleto declarado y

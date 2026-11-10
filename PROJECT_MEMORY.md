@@ -31,6 +31,19 @@
   - Services active with 0 restarts: `hermes-agent.service` (Ragnar / 6 platforms), `hermes-agent-roshi.service` (Roshi / 2 platforms), `hermes-dashboard.service` (Dashboard port 9112).
 
 
+## Initiative Record — Official PROD Upgrade to v0.23.1 & Docker Cutover (2026-11-10)
+- **Context & Authorization**:
+  - Full official upgrade of Hermes core in PROD (`169.58.189.222` / `vmi3513784`) from `v0.22.6-ncl-rc1` to official upstream `v0.23.1` (carrying the 42 DEV-certified commits, commit `9da428c23d` in branch `ncl/v0.23.1`).
+  - Authorized by Jesús Díaz (Chucho / Jemadiar1) with Keys 1 (`AUTORIZO ACTUALIZAR PROD v0.23.1`) and 2 (`AUTORIZO CUTOVER PROD`) following Roshi's execution plan (`PLAN_ACTUALIZACION_PROD_v0.23.1.md`).
+- **Phases Executed & Verified**:
+  - **F0 (Atomic Backups)**: Full git bundle created and verified (`3,266` refs, 905 MB): `/opt/hermes-backups/up_v0.23.1_20261110_053134/repo-prod-20261110_053134.bundle`. Tag `backup/pre-v0.23.1-prod-20261110_053134`. Hot `.backup` of all 7 SQLite databases (`state.db`, `projects.db`, `kanban.db`, `shared-state.db`, `response_store.db`, `runs_idempotency.db`, `verification_evidence.db`) with `PRAGMA integrity_check = ok`. Image `rollback-prod:v0.22.6-ncl` tagged.
+  - **F1 (Delta Bundle Transport)**: Transported delta git bundle `/tmp/ncl-v0.23.1-42.bundle` from DEV to PROD, fetched into `ncl/v0.23.1`.
+  - **F2 (PROD Overlay Integration)**: Preserved and committed PROD-specific overlay (`docker-compose.yml`, `nginx-proxy/`, `test_agent_exchange_webhook.py`) on top of `v0.23.1` (commit `46d379574e`).
+  - **F3 (Image Compilation)**: Compiled `hermes-agent-hermes:v0.23.1-ncl-rc1` with BuildKit. Label `org.opencontainers.image.revision=46d379574e`. Verified NCL custom modules (`dsml_guard.py`, `semantic_triage.py`, `activity_labels.py`, `index_char_limit`, `skill_route`).
+  - **F4 (Multi-Profile Canary)**: Isolated canary in `/opt/hermes-canary2` (port 9120) with cloned databases and config. Verified `state.db` schema migration (32 → 33, `quick_check: ok`), `config.yaml` version bump (52 → 53), 14 profiles supervised, dashboard HTTP 302, 0 tracebacks. Cleanly torn down.
+  - **F5 (Official Cutover)**: Hot container recreation with `v0.23.1-ncl-rc1`. Gateway healthy (HTTP 200 on port 8642). Dashboard healthy (HTTP 302 on port 9119). All 3 platforms connected (`api_server`, `discord`, `whatsapp`), `Connected as Bob-adminprod#1448`. 542 active crons. 0 tracebacks in logs. Container RSS: 2.64 GiB.
+
+
 ## Initiative Record — Ephemeral Progress Heartbeat & Uniform Channel Architecture (2026-10-22)
 - **Post-audit saneo (2026-10-22, ordered by Chucho)**:
   - **Flood brake restored**: the 30-sep edit-flood livelock brakes (`_FLOOD_ABANDON_WAIT_SECS`/`_FLOOD_EDIT_COOLDOWN_SECS`/`_FLOOD_EDIT_FAILURE_LIMIT` + helpers and cooldown gate in `edit_message`) had been silently lost from `plugins/platforms/telegram/adapter.py` (same working-tree-switch loss class as `fca052407a`). Re-applied via `git cherry-pick 0595377f43` (conflicts hand-merged onto the current `_edit_text` helper and the #116312 chat-outbound-budget gate; cooldown skip placed BEFORE the budget gate so `skipped_reason: edit_flood_cooldown` wins). Commit `1a8d3391ba` preserves original authorship; `test_telegram_edit_flood_storm.py` 5/5.

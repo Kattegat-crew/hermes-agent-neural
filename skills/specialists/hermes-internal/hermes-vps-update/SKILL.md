@@ -137,6 +137,30 @@ comm -23 <(git -C /opt/hermes-agent ls-tree -r --name-only HEAD | sort) \
 Verde en 5 archivos de test sobre un repo de miles NO es «suite completada»:
 exigir `scripts/run_tests.sh` y su salida.
 
+## Puertas de aceptación que el plan siempre olvida
+
+Un update se declara bueno por lo que arrancó, no por lo que el plan enumeró.
+Estas dos puertas faltan casi siempre y son las que dejan la flota rota en
+silencio:
+
+1. **El dashboard también se verifica.** `systemctl is-active` / `docker ps` dicen
+   `active` aunque el panel devuelva 500. Comprobar el endpoint real (`9119`, o el
+   que corresponda) y exigir `200`/`302`. Un proceso vivo cuyo entorno de runtime
+   fue recolectado responde 500 con el servicio «activo».
+2. **`session_reset` cambió de dueño.** Desde `v0.23.x` el reset por
+   inactividad/horario ya **no lo aplica el core**: `hermes_cli/
+   session_reset_retirement.py` lo delega al plugin de catálogo
+   `hermes-session-reset-policy` (tier community, hook `pre_gateway_dispatch`, sin
+   timers ni escrituras en background; lee el bloque `session_reset` tal cual).
+   Si la config declara `mode: both` y el plugin no está instalado, **el reset
+   simplemente no ocurre**: sesiones y costo crecen sin techo. `hermes doctor` lo
+   avisa, pero hay que decidir antes del cutover: instalar el plugin (y probar la
+   rotación en el canario) o aceptar el nuevo modelo y documentarlo.
+
+Correr `hermes doctor` **como puerta**, no como cortesía: sus avisos son
+precisamente los criterios que ningún plan escribió.
+
+
 ## Pitfalls (anotadas: causa raíz de la operación real)
 
 - **`cherry-pick` con conflicto `modify/delete` borra archivos propios en silencio**:
@@ -168,6 +192,20 @@ exigir `scripts/run_tests.sh` y su salida.
 - **`reset --hard` en un fork con parches propios destruye el trabajo**: verificar
   primero `git rev-list --count $MB..HEAD` (ver "Decisión previa") — no asumir
   que todo checkout de Hermes es descartable.
+- **El árbol del repo puede NO ser lo que corre**: en instalaciones Docker, comparar
+  el sha de 4 archivos dentro del contenedor contra el árbol antes de reconstruir.
+  Si difieren, el build desplegaría otra cosa (normalmente el fork viejo) y el
+  update sería una regresión silenciosa. Receta en
+  `references/docker-prod-update.md`.
+- **`hermes pm sync` no existe**: los subcomandos son `{lock,install,env,doctor,repair,environment,gc,bundle,status,update}`;
+  para preparar el entorno de un checkout es `hermes pm environment <nombre>`.
+- **`gateway run` no acepta `--port`**: sus flags son `[-h] [-v] [-q] [--replace] [--force]`.
+  El puerto del canario se fija en el `config.yaml` del home aislado.
+- **El rebuild del entorno compite con el timeout del servicio**: cambiar de rama
+  cambia el lock y el launcher reconstruye el venv al arrancar; con
+  `TimeoutStartUSec=90s` systemd puede matar el arranque y entrar en bucle. Con los
+  servicios **detenidos**, precalentar el entorno (`hermes pm install --wait`) y, si
+  el rebuild es largo, subir el timeout a 300 s durante la ventana.
 - **`shared:a2a fatal` (bind 9900)**: pre-existente, no es un retroceso del update.
 
 ## Salida
@@ -183,6 +221,9 @@ exigir `scripts/run_tests.sh` y su salida.
 - `references/fork-upstream-replay.md` — actualizar un fork con parches propios
   (replay de parches, medición de solape, ¿upstream ya lo trae?) y cadencia
   semanal con autorización en dos pasos.
+- `references/docker-prod-update.md` — actualizar una instancia en Docker Compose:
+  deriva imagen↔árbol, transporte del commit validado por bundle, imagen de
+  rollback, canario en proyecto aparte y puertas de cutover.
 - `references/auditoria-replay-tercero.md` — auditar un replay ejecutado por
   otro agente: leer su transcript, cobertura real de commits, paridad funcional
   por keyword y los dos agujeros (modify/delete y working tree sucio).
