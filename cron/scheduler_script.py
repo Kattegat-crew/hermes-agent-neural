@@ -234,6 +234,35 @@ def _terminate_cron_script_process(proc: subprocess.Popen) -> None:
         proc.wait(timeout=1.0)
 
 
+def _group_members(pgid: int) -> dict[int, int]:
+    """PID -> starttime de los miembros vivos de ``pgid`` (sin depender de psutil).
+
+    Se toma ANTES de señalar: cuando el líder muere y se recolecta, su entrada de /proc
+    desaparece y la comprobación de identidad del grupo ya no puede hacerse. Los huérfanos que
+    queden en el grupo se rematan por su PROPIA identidad, no por el grupo (que un PID nuevo
+    podría estar liderando).
+    """
+    members: dict[int, int] = {}
+    try:
+        entries = os.listdir("/proc")
+    except OSError:
+        return members
+    for name in entries:
+        if not name.isdigit():
+            continue
+        try:
+            with open("/proc/%s/stat" % name, "rb") as fh:
+                raw = fh.read()
+            tail = raw[raw.rindex(b")") + 2:].split()
+            # fields tras ')' : state ppid pgrp ... ; starttime es el campo 22 del total
+            if int(tail[2]) != pgid:
+                continue
+            members[int(name)] = int(tail[19])
+        except (OSError, ValueError, IndexError):
+            continue
+    return members
+
+
 def _terminate_process_group(proc: subprocess.Popen) -> None:
     """POSIX: TERM the script's process group, then KILL if ANY member survived (a survivor holds
     the pipe write ends open and the caller's communicate() would block on EOF forever).
@@ -261,16 +290,26 @@ def _terminate_process_group(proc: subprocess.Popen) -> None:
         # leader means the PID was recycled or the script re-parented its group.
         killguard.log_refused(site, "el grupo lo lidera otro PID", proc.pid, process_group)
         return
+    # Miembros vivos ANTES de señalar: si el líder muere y se recolecta, su /proc desaparece y
+    # el grupo ya no puede validarse; los supervivientes se rematan por su propia identidad.
+    members = _group_members(process_group)
     if not killguard.safe_killpg(process_group, signal.SIGTERM,
                                  expected_starttime=started, site=site + ".term"):
         return
     with contextlib.suppress(subprocess.TimeoutExpired):
         proc.wait(timeout=1.0)
-    if not killguard.safe_killpg(process_group, 0, expected_starttime=started,
-                                 site=site + ".probe"):
+    kill_sig = getattr(signal, "SIGKILL", signal.SIGTERM)
+    if killguard.safe_killpg(process_group, 0, expected_starttime=started,
+                             site=site + ".probe"):
+        killguard.safe_killpg(process_group, kill_sig, expected_starttime=started,
+                              site=site + ".kill")
         return
-    killguard.safe_killpg(process_group, getattr(signal, "SIGKILL", signal.SIGTERM),
-                          expected_starttime=started, site=site + ".kill")
+    # Líder recolectado (o identidad cambiada) con miembros aún vivos en el grupo: se rematan
+    # uno por uno con su starttime, nunca por el grupo.
+    for pid, stamp in members.items():
+        if pid == process_group:
+            continue
+        killguard.safe_kill(pid, kill_sig, expected_starttime=stamp, site=site + ".orphan")
 
 
 def _terminate_cron_script_tree(proc: subprocess.Popen) -> None:

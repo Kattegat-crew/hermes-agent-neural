@@ -130,6 +130,28 @@ class TestCronScriptGroupTermination:
         assert killpg_calls == [(4242, signal.SIGTERM)]
         assert proc.waited
 
+    def test_orphans_in_the_group_are_killed_by_their_own_identity(self, monkeypatch, killpg_calls, kill_calls):
+        """Líder recolectado + miembros vivos: se rematan por su starttime, nunca por el grupo."""
+        from cron import scheduler_script
+
+        monkeypatch.setattr(os, "getpgid", lambda pid: pid)
+        state = {"checks": 0}
+
+        def fake_start(pid):
+            if pid == 5151:
+                return 777  # el huérfano sigue vivo y con su identidad
+            state["checks"] += 1
+            return 111 if state["checks"] == 1 else None  # el líder desaparece tras el TERM
+
+        monkeypatch.setattr(scheduler_script.killguard, "proc_starttime", fake_start)
+        monkeypatch.setattr(scheduler_script, "_group_members", lambda pgid: {4242: 111, 5151: 777})
+        proc = _FakeProc(pid=4242, starttime=111)
+
+        scheduler_script._terminate_process_group(proc)
+
+        assert killpg_calls == [(4242, signal.SIGTERM)]
+        assert kill_calls == [(5151, signal.SIGKILL)]
+
     def test_real_child_group_is_terminated(self):
         from agent import killguard
         from cron import scheduler_script
