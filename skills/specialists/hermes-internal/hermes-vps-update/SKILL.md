@@ -157,6 +157,24 @@ silencio:
    avisa, pero hay que decidir antes del cutover: instalar el plugin (y probar la
    rotación en el canario) o aceptar el nuevo modelo y documentarlo.
 
+3. **Los servidores MCP no vuelven solos.** El contenedor recreado levanta el gateway,
+   pero los MCP que se lanzan con `uvx`/`npx` mueren en silencio y el gateway los deja
+   en *"parking until a reconnect"*. Contar hijos vivos por servidor dentro del
+   contenedor (`ps aux | grep -E 'mcp|npx|uvx'`) antes de declarar el update bueno.
+   Tres causas y su fix:
+   - **Imagen reconstruida sin `uv`/`uvx`** (no estaba en la versión anterior tampoco):
+     montar el `uv` del host en `tools/uv` y un wrapper de una línea
+     (`exec /usr/local/bin/uv tool run "$@"`) como `tools/uvx`, ambos `:ro`, más un
+     `UV_CACHE_DIR` escribible por el uid del servicio.
+   - **Secretos montados `root:root 600`** mientras los servidores corren como uid no-root
+     (10000) → `PermissionError` al arrancar. `chown` al uid del servicio; nunca `chmod 777`.
+   - **Dependencia pineada que ya no resuelve** (una transitiva desaparece de PyPI): el
+     servidor muere en cada arranque hasta que se quita el pin **y** se verifica el
+     contrato nuevo (p. ej. la versión nueva pide el DSN como argumento o `DATABASE_URL`
+     donde la vieja leía `DATABASE_URI`).
+   Con decenas de servidores MCP el arranque tarda minutos: presupuestarlos antes de
+   emitir veredicto y no reiniciar "a ver si ya" en mitad de la ventana.
+
 Correr `hermes doctor` **como puerta**, no como cortesía: sus avisos son
 precisamente los criterios que ningún plan escribió.
 
