@@ -97,6 +97,8 @@ Tres respuestas concretas, sin vaselina:
 
 Regla anti-sesgo: si la crítica te deja bien parado, no era crítica. Reescríbela.
 
+**Insumo obligatorio cuando la sesión tocó código:** el veredicto del review adversarial externo (`sdlc-review` modo ad-hoc / `adversarial-review-gate`, ejecutado por agy ANTES de este peguelo). Sus hallazgos —críticos resueltos y menores— entran como material de esta fase y alimentan las cajas de la Fase 4 (un hallazgo repetido ya no es lección: es regla dura en la skill). El peguelo NO sustituye al review gate: el gate controla la calidad del código; el peguelo hace la autopsia organizacional de la sesión completa. Orden: gate → correcciones verificadas → push → peguelo.
+
 ## Fase 4 — Destino de cada lección (5 cajas)
 
 - **skill** → procedimiento repetible → `skill_manage(patch)` sobre la skill usada; si no existe, propuesta.
