@@ -172,6 +172,12 @@ se invoca peor. La capa 3 de aquí **invoca** a aquella; no la reimplementa.
   «lo que creo que quiere» cuesta un turno entero y una corrección: pasó el 11-nov-2026 con
   «corre skill peguelo», que se contestó con un guardado de memoria cuando la skill existía en
   `skills/core/peguelo`.
+- **El homófono castellano `pégalo` NO existe como lectura válida.** Segunda aparición el
+  11-nov-2026, la misma sesión, 20 min después del parche anterior: el Admin escribió solo
+  `Peguelo` y se respondió pegando un informe en el chat («pégalo aquí»). Regla dura: si el
+  mensaje es una palabra suelta (o contiene) el nombre de una skill del catálogo, se corre la
+  skill ANTES de interpretar la frase; la duda se resuelve ejecutando, no preguntando, porque
+  el coste de correr la autopsia de más es un informe, y el de no correrla es otra corrección.
 - **Autoevaluarse de memoria** en vez de correr el dossier → métricas inventadas. Siempre el script.
 - **El contexto comprimido no es lectura.** Editar un archivo cuyo contenido recuerdas de un
   resumen de compactación es zero-stale-state con otro disfraz: el resumen puede estar
