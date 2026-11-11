@@ -1127,4 +1127,49 @@ class TestOnDemandCompactMemoryIndex:
         assert "Secret operational runbook" not in mem_prompt
         assert "INDEX OF STORED MEMORIES" not in mem_prompt
 
+    def test_search_markdown_section_hierarchy_and_anti_contamination(self, tmp_dir):
+        store = MemoryStore(
+            memory_char_limit=100000,
+            user_char_limit=8000,
+            on_demand=True,
+            index_char_limit=0,
+        )
+        store.load_from_disk()
+        store.add(
+            "memory",
+            "## AcmeCorp\n"
+            "- Client funnels use Meta Pixel and CAPI (`meta-pixel-capi`) with SHA-256 deduplication.\n"
+            "- Deployed on Cloudflare Workers.\n\n"
+            "## Golden Game\n"
+            "- Uses React + Vite landing page with Coljuegos compliance.",
+        )
+        store.add(
+            "memory",
+            "## Infrastructure Notes\n"
+            "- Revisar los servidores de desarrollo todos los viernes por la tarde.",
+        )
+
+        # Query with Spanish stopwords ("Revisa lo de AcmeCorp") must isolate only ## AcmeCorp
+        # and suppress ## Golden Game and ## Infrastructure Notes.
+        res = json.loads(
+            memory_tool(action="search", target="memory", content="Revisa lo de AcmeCorp", store=store)
+        )
+        assert res["success"] is True
+        assert res["match_count"] == 1
+        matched_text = res["matches"][0]["content"]
+        assert "## AcmeCorp" in matched_text
+        assert "meta-pixel-capi" in matched_text
+        assert "Golden Game" not in matched_text
+        assert "Infrastructure Notes" not in matched_text
+
+        # Hyphenated compound token query ("meta pixel capi") must match `meta-pixel-capi`
+        res_hyphen = json.loads(
+            memory_tool(action="search", target="memory", content="meta pixel capi", store=store)
+        )
+        assert res_hyphen["success"] is True
+        assert res_hyphen["match_count"] == 1
+        assert "AcmeCorp" in res_hyphen["matches"][0]["content"]
+        assert "Golden Game" not in res_hyphen["matches"][0]["content"]
+
+
 

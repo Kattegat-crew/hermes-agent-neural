@@ -5,6 +5,7 @@ in ``tools.memory_tool`` and is read lazily."""
 
 import itertools
 import logging
+import math
 import os
 import re
 import time
@@ -75,6 +76,53 @@ def _read_failed_error(path: Path) -> dict[str, Any]:
 # every dash/minus -> "-". Plus whitespace runs (re-wrapped lines, NBSP) -> one space.
 _MATCH_FOLD = str.maketrans({**dict.fromkeys("\"`\u2018\u2019\u201a\u201b\u201c\u201d\u201e\u201f", "'"),
                              **dict.fromkeys("\u2010\u2011\u2012\u2013\u2014\u2015\u2212", "-")})
+
+
+def _tokenize_search_terms(text: str) -> list[str]:
+    """Tokenize *text* on word boundaries with hyphen expansion (zero hardcoded word lists)."""
+    norm = _normalize_for_match(text).lower()
+    raw_tokens = re.findall(r"[a-z0-9_\u00c0-\u024f]+(?:-[a-z0-9_\u00c0-\u024f]+)*", norm)
+    expanded: list[str] = []
+    seen: set[str] = set()
+    for tok in raw_tokens:
+        candidates = [tok]
+        if "-" in tok:
+            candidates.extend(part for part in tok.split("-") if part)
+        for cand in candidates:
+            if len(cand) < 2:
+                continue
+            if cand not in seen:
+                seen.add(cand)
+                expanded.append(cand)
+    return expanded
+
+
+def _split_markdown_sections(entry: str) -> list[tuple[str, str]]:
+    """Split an entry containing Markdown headings (# / ## / ###) into (heading, block) pairs."""
+    lines = entry.splitlines()
+    sections: list[tuple[str, list[str]]] = []
+    current_heading = ""
+    current_lines: list[str] = []
+
+    for line in lines:
+        stripped = line.strip()
+        if stripped.startswith("#"):
+            if current_lines:
+                sections.append((current_heading, current_lines))
+            current_heading = stripped.lstrip("#").strip()
+            current_lines = [line]
+        else:
+            current_lines.append(line)
+
+    if current_lines:
+        sections.append((current_heading, current_lines))
+
+    result = [
+        (heading, "\n".join(block_lines).strip())
+        for heading, block_lines in sections
+        if "\n".join(block_lines).strip()
+    ]
+    return result or [("", entry)]
 
 
 def _normalize_for_match(text: str) -> str:
@@ -741,7 +789,7 @@ class MemoryStore:
         return header + "\n".join(summary_lines)
 
     def search(self, target: str, query: str) -> dict[str, Any]:
-        """Read-only keyword/topic search across entries in *target*."""
+        """Read-only keyword/topic/section search across entries in *target* using IDF + heading hierarchy."""
         from tools.memory_tool import _memory_target_error
         if target_error := _memory_target_error(self, target):
             return target_error
@@ -750,23 +798,92 @@ class MemoryStore:
             return _error("Query is required for 'search' action (pass via content or old_text).", "invalid_args")
         entries = self._entries_for(target)
         q_norm = _normalize_for_match(q).lower()
-        q_words = [w for w in re.findall(r"\w+", q_norm) if len(w) >= 2]
-        scored: list[tuple[float, int, str]] = []
+        q_words = _tokenize_search_terms(q)
+        q_word_set = set(q_words)
+
+        # First pass: split entries into Markdown sections and compute dynamic corpus document
+        # frequency (DF) so ubiquitous functional tokens naturally receive low IDF weight without
+        # any hardcoded stopword lists.
+        parsed_entries: list[tuple[int, list[tuple[str, str, set[str], set[str]]]]] = []
+        doc_freq: dict[str, int] = {}
+        total_sections = 0
+
         for idx, entry in enumerate(entries, 1):
-            e_norm = _normalize_for_match(entry).lower()
-            score = 0.0
-            if q_norm and q_norm in e_norm:
-                score += 10.0
-            if q_words:
-                hits = sum(1 for w in q_words if w in e_norm)
-                if hits:
-                    score += hits / len(q_words) * 5.0
-            if score > 0:
-                scored.append((score, idx, entry))
+            sec_list: list[tuple[str, str, set[str], set[str]]] = []
+            for heading, sec_text in _split_markdown_sections(entry):
+                sec_tokens = set(_tokenize_search_terms(sec_text))
+                heading_tokens = set(_tokenize_search_terms(heading)) if heading else set()
+                sec_list.append((heading, sec_text, sec_tokens, heading_tokens))
+                total_sections += 1
+                for tok in sec_tokens:
+                    doc_freq[tok] = doc_freq.get(tok, 0) + 1
+            parsed_entries.append((idx, sec_list))
+
+        def _term_idf(tok: str) -> float:
+            df = doc_freq.get(tok, 0)
+            # Standard BM25 IDF + sublinear character-information factor (no word lists)
+            base_idf = math.log(1.0 + (max(total_sections, 1) - df + 0.5) / (df + 0.5))
+            info_factor = min(1.5, len(tok) / 4.0)
+            return base_idf * info_factor
+
+        total_query_idf = sum(_term_idf(w) for w in q_words) or 1.0
+        heading_matched_items: list[tuple[float, int, str]] = []
+        body_matched_items: list[tuple[float, int, str]] = []
+
+        for idx, sec_list in parsed_entries:
+            matched_sections_for_entry: list[tuple[float, str, bool]] = []
+
+            for heading, sec_text, sec_tokens, heading_tokens in sec_list:
+                sec_norm = _normalize_for_match(sec_text).lower()
+                score = 0.0
+                has_heading_hit = False
+
+                if heading_tokens and q_word_set:
+                    h_overlap = q_word_set & heading_tokens
+                    if h_overlap:
+                        has_heading_hit = True
+                        h_idf_sum = sum(_term_idf(w) for w in h_overlap)
+                        score += 15.0 + (h_idf_sum / max(len(heading_tokens), 1)) * 5.0
+
+                if q_norm and len(q_norm) >= 3 and q_norm in sec_norm:
+                    score += 10.0
+
+                if q_words:
+                    matched_words = [w for w in q_words if w in sec_tokens]
+                    if matched_words:
+                        matched_idf = sum(_term_idf(w) for w in matched_words)
+                        coverage_ratio = matched_idf / total_query_idf
+                        # Require either a heading hit, phrase hit, or meaningful IDF coverage
+                        # so shared low-information particles across sections do not trigger false matches.
+                        if has_heading_hit or score > 0 or coverage_ratio >= 0.35 or len(matched_words) == len(q_words):
+                            score += coverage_ratio * 5.0
+
+                if score > 0:
+                    matched_sections_for_entry.append((score, sec_text, has_heading_hit))
+
+            if not matched_sections_for_entry:
+                continue
+
+            entry_has_heading_hit = any(h for _, _, h in matched_sections_for_entry)
+            if entry_has_heading_hit:
+                kept = [(s, txt) for s, txt, h in matched_sections_for_entry if h]
+            else:
+                kept = [(s, txt) for s, txt, _ in matched_sections_for_entry]
+
+            best_score = max(s for s, _ in kept)
+            combined_text = "\n\n".join(txt for _, txt in kept)
+            if entry_has_heading_hit:
+                heading_matched_items.append((best_score, idx, combined_text))
+            else:
+                body_matched_items.append((best_score, idx, combined_text))
+
+        # Anti-contamination: when the query matches one or more Markdown section headings
+        # (e.g. `## AcmeCorp`), suppress unrelated sections that only matched body terms.
+        scored = heading_matched_items if heading_matched_items else body_matched_items
         scored.sort(key=lambda item: (-item[0], item[1]))
         top = [
-            {"index": idx, "score": round(score, 2), "content": entry}
-            for score, idx, entry in scored[:10]
+            {"index": idx, "score": round(score, 2), "content": content}
+            for score, idx, content in scored[:10]
         ]
         return {
             "success": True,

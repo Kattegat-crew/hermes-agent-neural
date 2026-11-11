@@ -1,5 +1,19 @@
 # Hermes Project Memory & Session Continuity
 
+## Initiative Record — Focus Port into Native `MemoryStore` & `typesafe-skill-router` (2026-11-11)
+- **Context & Scope**:
+  - Ported the core architectural breakthroughs from `hermes_focus_plugin` (`c34c1fb`) directly into Hermes native on-demand memory and skill routing while preserving 100% session KV-cache stability (`Zero-Default-Load`).
+- **Changes Applied**:
+  1. **Hierarchical Markdown Section Search & Anti-Contamination (`tools/memory_tool_store.py`)**:
+     - Added `_tokenize_search_terms()` (word-boundary tokenization + hyphen expansion `meta-pixel-capi` -> `meta`, `pixel`, `capi` with zero hardcoded word lists), dynamic corpus IDF + information-density weighting, and `_split_markdown_sections()` (`#`/`##`/`###` heading inheritance).
+     - Upgraded `MemoryStore.search()` so entity heading matches (`## AcmeCorp`) isolate only the matching section and suppress unrelated sibling sections (`## Golden Game`) or generic body hits.
+  2. **Two-Phase Memory-Grounded Routing & Local BM25 + PageRank Graph (`/opt/hermes-agent-data/plugins/typesafe-skill-router/`)**:
+     - Added `typesafe_router/local_graph.py` (`probe_memory_for_query` + `route_local_graph` with BM25 + Personalized PageRank).
+     - Updated `handle_skill_route()` in `__init__.py` to probe `MEMORY.md` in Phase 1, enrich Jev context with matched entity facts, promote domain-grounded candidates into Tier 1, include matched memory context in the tool response, and fall back in `<10 ms` to `local_graph` on Jev timeout/error/`no_fit`.
+  3. **Test & Hygiene Verification**:
+     - Added regression tests in `tests/tools/test_memory_tool.py` and `typesafe-skill-router/tests/test_skill_route_tool.py` (**147/147 passing**).
+     - Removed residual hackathon test directories (`plugins/neural-context-plugin`, `plugin-data/neural-context-plugin`, `plugin-data/focus`).
+
 ## Initiative Record — Official DEV Upgrade to v0.23.1 & Fleet Hardening (2026-11-10)
 - **Context & Authorization**:
   - Full official upgrade of Hermes core in DEV (`147.93.3.250` / `vmi3151337`) from `v0.22.6` to official upstream `v0.23.1` (commit `3b42157858`), authorized by Jesús Díaz (Chucho / Jemadiar1) with Keys 1 (`AUTORIZO ACTUALIZAR DEV v0.23.1`) and 2 (`AUTORIZO CUTOVER DEV`).
