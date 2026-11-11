@@ -1,0 +1,229 @@
+---
+name: peguelo
+description: "Use when the user writes peguelo: session autopsy."
+tags: [autoevaluacion, retrospectiva, postmortem, state-db, autocritica, mejora-continua, evidencia]
+version: "1.6"
+license: Apache-2.0
+author: Ragnar (default)
+platforms: [linux]
+created: 2026-11-04
+renamed: 2026-11-07
+category: core
+metadata:
+  hermes:
+    tags: [peguelo, retro, autocritica, postmortem, autoevaluacion, state.db, mejora, lecciones]
+    related_skills: [hermes-session-forensics, hermes-memory-maintenance, skill-library-ops, capability-claim-verification]
+---
+
+# PEGUELO — autopsia de sesión: reflexión, autocrítica y mejora
+
+> Se llamaba `espejo`. El 7-nov-2026 el Admin la renombró a **peguelo** para que la
+> palabra clave y el nombre de la skill sean la misma. La palabra `espejo` sigue
+> funcionando como alias para no romper la costumbre.
+
+## When to Use — disparadores (una palabra)
+
+- `peguelo` → sesión actual (`$HERMES_SESSION_ID`).
+- `peguelo 3` → últimas 3 sesiones + agregado.
+- `peguelo <session_id>` → sesión concreta.
+- `peguelo patrones` → barrido cross-sesión (25 sesiones por defecto) buscando lo que se repite: fallos recurrentes, bucles de sistema, escrituras sin lectura, correcciones repetidas y procedimientos candidatos a skill. Lo que aparece en ≥ 3 sesiones distintas no es torpeza puntual, es sistema.
+- Añadir `--lineage` si la sesión viene de una compresión (hilo partido en varias sesiones).
+
+Alias heredado: `espejo` (mismos subcomandos).
+También se activa con «hazte una autocrítica», «qué aprendimos» o «evalúa tu desempeño».
+
+## Qué es y qué no es
+
+Es una **autopsia**: evidencia del disco → juicio con cita → una mejora concreta. No es un diario, no es un elogio y no inventa métricas. Si algo no se puede probar con una salida de tool o con el dossier, se marca **sin evidencia**, no PASS.
+
+Salida: informe (10 líneas) + JSON + ledger + máximo 3 lecciones + 1 acción aplicada (o propuesta si toca config/prod).
+
+## Leyes (no negociables)
+
+1. **Sin cita no hay veredicto.** Cada PASS/FAIL referencia `#idx` del dossier o un número medido (fallos, repeticiones, etc.).
+2. **La corrección del humano pesa 3x** más que la autoevaluación. Es la señal más cara y la más honesta.
+3. **Evidencia externa > opinión interna.** La autocorrección sin feedback externo puede EMPEORAR el resultado (ver `references/investigacion.md`). Por eso el dossier se calcula desde `state.db`, no desde el recuerdo de la conversación.
+4. **Blameless.** Se critica el proceso y el sistema, sin autoflagelación y sin excusas. «El hook estaba roto» es un ticket de infra, no una absolución: ¿por qué no lo detecté antes y cambié de vía?
+5. **Máximo 3 lecciones y 1 escritura de memoria** por sesión. Lo demás va al ledger o se descarta.
+6. **Cero secretos/PII.** El script redacta, pero no pegues tokens a mano en el informe ni en el ledger.
+7. **Solo lectura + mejoras locales.** Nada de tocar PROD, publicar, gastar ni mutar config en esta skill.
+
+## Fase 1 — Evidencia (minutos, no opiniones)
+
+```bash
+python3 /opt/data/skills/core/peguelo/scripts/peguelo_evidence.py            # sesión actual
+python3 /opt/data/skills/core/peguelo/scripts/peguelo_evidence.py --last 3   # patrón
+python3 /opt/data/skills/core/peguelo/scripts/peguelo_evidence.py --patrones # barrido 25 sesiones
+python3 /opt/data/skills/core/peguelo/scripts/peguelo_evidence.py --session <id> --lineage
+python3 /opt/data/skills/core/peguelo/scripts/peguelo_evidence.py --out /opt/data/brain/ops/session-retros/2026-11-04-<id>.json
+```
+
+El script abre `state.db` en `mode=ro`, filtra `active=1` (transcripción canónica; `active=0` son generaciones viejas que duplican los mismos turnos) y tarda < 1 s con 20 sesiones con actividad (~3 s en frío sobre una DB grande). Las sesiones sin mensajes se omiten por defecto. El digest ya trae lo importante; el JSON completo queda en disco.
+
+Orden de lectura (de más a menos valor):
+
+1. `user.corrections` — qué te corrigió el humano, textual. Es heurístico: un rechazo sin
+   marcador («yo no dije X», «te equivocaste de tarea») no matchea. **Lee también
+   `user.turns_text` completo** y juzga las 6-10 últimas intervenciones a mano; una
+   corrección perdida invalida el check 7 y falsea toda la rúbrica (pesa 3x).
+2. `flags.claims_without_evidence` y `flags.promises_without_action` — el fallo «declara-y-no-ejecuta».
+3. `failures` + `loops` — tool calls quemadas; separar infra (hook roto, red, permisos) de diseño (herramienta equivocada, parámetros malos).
+4. `hygiene.writes_without_prior_read` — ediciones de archivos existentes sin lectura previa (violación de zero-stale-state). `hygiene.creates` son archivos nuevos (legítimos) y `hygiene.ambiguous_writes` los `write_file` sobre archivos que hoy existen: no se acusan, se revisan si interesan.
+5. `totals.repeated_calls` y `tools` — economía y elección de herramienta.
+
+Los detectores son heurísticos: un «fallo» puede ser un éxito que menciona la palabra error. **Verifica el `#idx` antes de acusarte.**
+
+Si `terminal` está bloqueado por un hook roto, no lo esquives en silencio: decláralo como incidente en el informe. Como contingencia de solo lectura puedes generar el mismo dossier con Python local (`browser_exec`), que corre en la misma máquina y lee el mismo `state.db`.
+
+## Fase 2 — Rúbrica (8 checks binarios)
+
+| # | Check | PASS si… | Evidencia mínima |
+|---|---|---|---|
+| 1 | Intención | respondí exactamente lo pedido, ni de más ni de menos | cita del pedido + qué se entregó |
+| 2 | Pre-flight | antes de mutar leí el archivo / `git status` | `#idx` de la lectura previa |
+| 3 | Verificación | probé el resultado con salida real (test, curl, readback) | `hygiene.verification_calls` |
+| 4 | Economía | `repeated_calls` ≤ 10% de las llamadas y sin bucles | `totals` + `loops` |
+| 5 | Guardrails | sin destructivos sin confirmación, sin gasto/publicación/secretos | `hygiene.destructive_commands` |
+| 6 | Comunicación | español, sin relleno, recomendación única, sin trazas crudas en canal ejecutivo | muestra de la respuesta |
+| 7 | Correcciones | cada corrección del humano quedó como regla o descarte explícito | `user.corrections` |
+| 8 | Cierre | nada declarado quedó sin ejecutar | `flags.promises_without_action` |
+
+Score = PASS / (PASS + FAIL); `NA` no cuenta (p. ej. check 7 en sesiones de cron). **< 6/8 exige al menos un parche o un guard propuesto.** Detalle operativo y ejemplos en `references/rubrica.md`.
+
+## Fase 3 — Crítica adversarial (obligatoria)
+
+Tres respuestas concretas, sin vaselina:
+
+1. «Si el Admin pagara por cada tool call, ¿cuál habría eliminado?» → lista exacta de `#idx`.
+2. «¿Qué afirmé que no puedo probar con una salida de tool?» → lista.
+3. «Escribe la crítica más dura que haría un revisor hostil que leyó el dossier» → 5 líneas, sin defensa.
+
+Regla anti-sesgo: si la crítica te deja bien parado, no era crítica. Reescríbela.
+
+**Insumo obligatorio cuando la sesión tocó código:** el veredicto del review adversarial externo (`sdlc-review` modo ad-hoc / `adversarial-review-gate`, ejecutado por agy ANTES de este peguelo). Sus hallazgos —críticos resueltos y menores— entran como material de esta fase y alimentan las cajas de la Fase 4 (un hallazgo repetido ya no es lección: es regla dura en la skill). El peguelo NO sustituye al review gate: el gate controla la calidad del código; el peguelo hace la autopsia organizacional de la sesión completa. Orden: gate → correcciones verificadas → push → peguelo.
+
+## Fase 4 — Destino de cada lección (5 cajas)
+
+- **skill** → procedimiento repetible → `skill_manage(patch)` sobre la skill usada; si no existe, propuesta.
+- **memoria** → hecho permanente (entorno, usuario, convención) → `memory(add)`, máx 1.
+- **brain** → contexto de proyecto/cliente → `mem_save` (Engram) o `/opt/data/brain/…`.
+- **guard** → error que una máquina puede impedir → propuesta de hook/validación (no se implementa sin OK).
+- **nada** → evento único → se descarta explícitamente (evita contaminar la memoria).
+
+Regla de promoción (ledger, no memoria humana):
+
+```bash
+python3 /opt/data/skills/core/peguelo/scripts/peguelo_ledger.py add \
+  --rule "Leer el archivo antes de escribirlo" --destination skill --target <skill> \
+  --session <id> --evidence "#12 write_file sin read_file previo"
+```
+
+1ª aparición → solo ledger; 2ª → parche de skill; 3ª+ → escalar a guard. Taxonomía completa y esquema del ledger en `references/taxonomia-destinos.md`.
+
+## Fase 4.5 — Promoción en tres capas (cerrar el ciclo)
+
+Una lección que se queda solo en el ledger está **muerta**: nadie la lee hasta la próxima
+autopsia. El ledger es memoria de trabajo; las tres capas son memoria operativa.
+
+| Capa | Qué va ahí | Cuándo | Verificación obligatoria |
+|---|---|---|---|
+| 1. Ledger | toda lección, sin excepción | siempre | `peguelo_ledger.py count` |
+| 2. Skill | lo procedimental y repetible | apareció ≥2 veces **o** el fallo costó un bug en producción | `grep` del texto en el `SKILL.md` + `--selftest` si tocó código |
+| 3. Memoria | hecho permanente de entorno o usuario | máx 1 por sesión, y solo si aplica a toda sesión futura | `memory(read)` de la entrada escrita |
+| 4. Engram | el resumen-cierre de la sesión completa (no las lecciones sueltas) | siempre al cierre de la autopsia | `mem_search` con el título y leer el `#id` de vuelta |
+
+Reglas:
+
+- **El cierre no está completo sin Engram.** Tras ledger y capas 2-3, ejecutar `mem_save` (tool MCP; proyecto `neuralops`, tipo `discovery`/`decision`) con el resumen What/Why/Where/Learned de la sesión. Los scripts de peguelo NO hablan MCP: este paso se ejecuta desde la conversación. Costo pagado 09-nov: el peguelo del día quedó solo en ledger+disco y hubo que guardarlo a mano cuando el Admin preguntó «¿quedo en engram?». Un `conflict review pending` en la respuesta NO es fallo: el save persiste igual — verificar con `mem_search` y no reintentar automáticamente.
+
+- **No se sube a memoria para "no perderlo".** Si no es un hecho estable, su sitio es el
+  ledger o el cuerpo de una skill. La memoria se contamina rápido y se paga en cada turno.
+- **Antes de añadir una lección a una skill, `grep` el SKILL.md por la regla ya escrita.**
+  Si ya existe, refuérzala o funde las dos redacciones; un duplicado en la misma skill
+  demuestra que capa 2 se aplicó de memoria, no con lectura.
+- **Toda capa se verifica leyendo de vuelta.** Escribir sin read-back no cuenta: es
+  exactamente el fallo que esta skill persiste («declara-y-no-ejecuta»).
+- **Si la lección toca Engram o el store nativo**, delegar la mecánica en
+  `guardado-doble-memoria`; no duplicar aquí sus pitfalls de perfiles, DBs y permisos.
+
+### Por qué esta skill NO absorbe `guardado-doble-memoria`
+
+Son dos trabajos con disparadores distintos. `peguelo` se invoca con una palabra y hace
+**autopsia** (leer evidencia, juzgar, corregir el proceso). `guardado-doble-memoria` se
+dispara con «guarda» o al cierre, y hace **persistencia** (Engram + memoria + wiki) con
+una infraestructura propia: perfiles, `state.db` por agente, aislamiento de clientes,
+permisos del store. Fusionarlas produce una skill de dos cabezas que se recuerda peor y
+se invoca peor. La capa 3 de aquí **invoca** a aquella; no la reimplementa.
+
+## Fase 5 — Informe y cierre
+
+1. Rellena `templates/informe.md` (10 líneas, español, sin relleno).
+2. Guarda informe + JSON en `/opt/data/brain/ops/session-retros/`.
+3. Actualiza el ledger.
+4. Guarda el resumen-cierre en Engram (`mem_save`, capa 4) y verifícalo con `mem_search` leyendo el `#id` de vuelta.
+5. Aplica **solo** lo de bajo riesgo (patch de skill propia, 1 memoria) y di qué aplicaste; lo demás se propone con una línea de por qué.
+6. Responde al usuario con el informe y la mejora aplicada. Nada de «quedo atento».
+
+## Pitfalls
+
+- **La palabra clave es el disparador literal.** Si el Admin escribe una palabra suelta que parece
+  nombre propio (`peguelo`, `espejo`…), ESA es la orden: buscarla en el catálogo
+  (`find <skills> -maxdepth 4 -iname "*<palabra>*"`) y ejecutar esa skill. Reinterpretarla como
+  «lo que creo que quiere» cuesta un turno entero y una corrección: pasó el 11-nov-2026 con
+  «corre skill peguelo», que se contestó con un guardado de memoria cuando la skill existía en
+  `skills/core/peguelo`.
+- **Autoevaluarse de memoria** en vez de correr el dossier → métricas inventadas. Siempre el script.
+- **El contexto comprimido no es lectura.** Editar un archivo cuyo contenido recuerdas de un
+  resumen de compactación es zero-stale-state con otro disfraz: el resumen puede estar
+  desfasado o incompleto. `read_file` del bloque exacto antes de cada `patch`. Medido el
+  07-nov: 4 patches a `pending_tasks.py` anclados en el contexto previo, 0 lecturas.
+- **«Lo acabo de crear» no es lectura.** Si el archivo en el path objetivo lo escribió un
+  subagente, un `cp` o un `scp`, tú nunca lo viste en disco: el texto puede diferir de lo que
+  ordenaste. `read_file` antes del primer `patch` sobre cualquier path que no hayas leído tú
+  mismo en esta sesión. Medido el 11-nov: 12 patches sin lectura previa sobre worktrees,
+  todos sobre archivos recién copiados.
+- **Leer `active=0`** → duplica turnos y dispara fallos falsos. El filtro canónico es `active=1`.
+- Un `read_file` fallido **sí cuenta** como intento de pre-flight (el fallo es evidencia, no ausencia).
+- Convertir una corrección del usuario en «memoria» cuando en realidad es una regla de skill.
+- Escribir 10 lecciones: ninguna se recuerda. Máximo 3.
+- Dar PASS por «me sentí bien». Sin cita, es FAIL.
+- En sesiones de cron no hay usuario: el check 7 es `NA`, no FAIL; y el informe no se «responde», se archiva.
+- El coste puede venir `0.0` si el perfil no tiene pricing: usa tokens como proxy, no inventes dólares.
+- **Corregido en v1.1 (04-nov, parche verificado con `--selftest`):**
+  - `hygiene.writes_without_prior_read` ya no cuenta archivos nuevos: `write_file` sobre un path inexistente va a `creates`, y sobre uno existente sin lectura previa va a `ambiguous_writes` (no se acusa sin poder probarlo). Solo `patch`/`edit_file` sin lectura previa cuenta como violación, porque editar exige que el archivo exista.
+  - `user.corrections` ya no matchea preguntas: exige marcador de rechazo («no,», «está mal», «así no», «corrige»…) y descarta interrogativas salvo rechazo explícito. Para auditar el recall está `user.turns_text` (todas las intervenciones, sin filtro).
+  - `--last N` omite por defecto las sesiones sin mensajes y reporta `sessions_skipped_empty`; `--include-empty` recupera el comportamiento antiguo para auditoría.
+- **Corregido en v1.6 (09-nov):** la autopsia cerraba en ledger+disco y no persistía en Engram; el resumen del día se guardó a mano a instancias del Admin («¿quedo en engram?»). Ahora el cierre exige `mem_save` + verificación `mem_search` (capa 4 en Fase 4.5).
+- **Corregido en v1.4 (07-nov, verificado con `--selftest` 19/19):**
+  - El detector de verificación solo miraba llamadas **posteriores al ÚLTIMO write**, y su regex no
+    cubría `cmp`, `diff`, `git ls-remote`, `git rev-parse`, `systemctl is-active`, `stat`, `find` ni `jq`.
+    Una sesión que verifica con `cmp` y compara hashes remotos salía con `verificacion_post=False`
+    (falso negativo). Ahora cuenta la verificación posterior a **cualquier** write y reconoce esos comandos.
+    Si el check 3 falla, comprueba primero si el comando de prueba estaba fuera del regex.
+- **Corregido en v1.2 (04-nov):**
+  - `peguelo_ledger.py` acepta `--ledger` antes o después del subcomando, y tiene su propio `--selftest` (4 comprobaciones: flag global, flag post-subcomando, `count` post-subcomando, destino inválido rechazado). Mecanismo para reproducir el fix: el flag se declara en el parser raíz Y en cada subparser con `default=argparse.SUPPRESS`; si se declara solo en la raíz, el default del subparser lo pisa y el flag post-subcomando falla; si se repite con default normal, el subparser pisa el valor global. Se resuelve después en `main` leyendo `args.ledger` una sola vez.
+  - `--patrones [N]` ya existe: agrupa por sesión distinta (no por aparición) y colapsa runs consecutivos de la misma tool, porque `terminal,terminal,terminal` es un run, no un procedimiento. Umbral por defecto: 3 sesiones.
+  - Límite conocido: el coste es lineal en sesiones (~4 s para 25). No bajar el umbral de 3 sin mirar el JSON: con 2, casi todo parece patrón.
+
+## Verificación
+
+Tres gates, todos deterministas y sin red. Si alguno falla, no se usa la skill: se arregla.
+
+```bash
+python3 /opt/data/skills/core/peguelo/scripts/peguelo_evidence.py --selftest   # 19 comprobaciones
+python3 /opt/data/skills/core/peguelo/scripts/peguelo_ledger.py --selftest    # 4 comprobaciones
+python3 /opt/data/skills/core/peguelo/scripts/peguelo_evidence.py --patrones 5 --out /tmp/p.json
+```
+
+Esperado: `SELFTEST OK (19 comprobaciones)`, `SELFTEST LEDGER OK (4 comprobaciones)` y un JSON de patrones con las cinco claves (`fallos_recurrentes`, `bucles_de_sistema`, `escrituras_repetidas`, `correcciones_repetidas`, `procedimientos`).
+
+El selftest cubre específicamente los defectos ya pagados: creación vs sobrescritura, pregunta vs corrección, sesión vacía vs sesión con actividad, colapso de runs y umbral de 3 sesiones.
+
+## Referencias
+
+- `references/rubrica.md` — definición operativa de los 8 checks, umbrales y ejemplos PASS/FAIL.
+- `references/taxonomia-destinos.md` — las 5 cajas, regla 1-2-3, esquema y retención del ledger.
+- `references/investigacion.md` — fuentes (Reflexion, CRITIC, Huang et al., postmortem SRE, claude-reflect) y qué se tomó de cada una.
+- `templates/informe.md` — plantilla del informe de 10 líneas.
+- `scripts/peguelo_evidence.py` — dossier forense (stdlib, solo lectura, `--selftest` incluido).
+- `scripts/peguelo_ledger.py` — ledger de lecciones y regla de promoción.
