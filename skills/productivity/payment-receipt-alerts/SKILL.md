@@ -72,13 +72,19 @@ El **valor + nombre** permiten a la cajera emparejar con la persona que tiene al
 2. **Golden Game** aún no tiene OAuth de **lectura** en ActivePieces (solo una conexión `Gmail Golden` de tipo **SMTP**, envío): conectar su Gmail antes de la fase 2. Verificar el tipo de pieza antes de asumir que se puede leer.
 3. Todo corre en **ActivePieces de PROD** (`ap-app`/`ap-worker`, `100.73.30.29:8088`), no en dev.
 
-## Pitfalls
+- **No asumir inmutabilidad de pestañas en Google Sheets**: si un usuario renombra, recrea o reemplaza la pestaña en Sheets, el `sheetId` (gid numérico) cambia y ActivePieces arroja `Sheet with ID ... not found`. Como `retryOnFailure` por defecto es `false`, los pagos entrantes se descartan silenciosamente hasta que se ejecute la conciliación.
 
-- **No confundir "breve" con una herramienta**: en este negocio es **Bre-B**, el sistema de pagos inmediatos de Colombia; los recibos llegan del banco del local.
-- **No prometer latencia** que el mecanismo elegido no da (polling ≠ segundos).
-- **No dar por hecho** que el correo trae la sede: ver la limitación estructural arriba.
-- **No guardar secretos** en el repo ni en el chat: van materializados en `/opt/data/secrets/` (chmod 600).
-- **No mezclar** la hora del encabezado (UTC) con la del cuerpo (hora local Colombia) al construir el aviso.
+## Operaciones de Conciliación y Reportes
+
+- `scripts/reconcile_breb.py`: Conciliador autónomo e idempotente. Compara correos recibidos en Gmail contra las filas del Google Sheet, limpia filas vacías/corruptas e inyecta pagos huérfanos ordenados cronológicamente sin duplicar por código de operación.
+  ```bash
+  # Auditoría preventiva (Dry-run)
+  python3 scripts/reconcile_breb.py --tenant all
+
+  # Aplicar conciliación a Golden Game
+  python3 scripts/reconcile_breb.py --tenant golden --apply
+  ```
+- `scripts/breb_report.py`: Generador mensual de resúmenes ejecutivos (en Google Sheet) y PDFs consolidados vía Gotenberg. Corre vía cron (`0 12 1 * *`) en Ragnar.
 
 ## Arquitectura en Producción (Actualizado 02/10/2026)
 
@@ -104,5 +110,5 @@ El sistema opera bajo un patrón de **dos capas (Tiempo Real + Consistencia Even
 
 - `references/bre-b-bbva-receipt-format.md` — muestra real del recibo BBVA Bre-B, tabla de campos, regexes y volumetría.
 - `scripts/read_receipts.py` — lector/parser re-ejecutable del buzón (refresh + Gmail API + rate-limit safe).
-- `scripts/reconcile_breb.py` — script de conciliación no destructiva con Google Sheets API v4.
-
+- `scripts/reconcile_breb.py` — script de conciliación, auditoría y recuperación de pagos huérfanos.
+- `scripts/breb_report.py` — generador mensual de resumen ejecutivo en Sheets y PDFs.
