@@ -1,14 +1,12 @@
 ---
 name: colombia-juegos-promocionales
-description: "Use when drafting Colombia casino promotion compliance."
+description: >-
+  Use when drafting Colombia casino promotion compliance. Usar al redactar compliance de promociones en Colombia. hermes: tags: [colombia, legal, compliance, casinos, coljuegos, promociones, datos-personales]
 tags: [colombia, legal, compliance, coljuegos, promociones, datos]
-  Usar al redactar compliance de promociones en Colombia.
 version: 1.0.0
 author: hermes
 license: MIT
 metadata:
-  hermes:
-    tags: [colombia, legal, compliance, casinos, coljuegos, promociones, datos-personales]
 triggers:
   - T&C / términos y condiciones de promoción, sorteo, rifa o ruleta
   - casino / juegos de suerte y azar / Coljuegos / bono promocional

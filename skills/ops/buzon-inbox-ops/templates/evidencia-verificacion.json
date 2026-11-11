@@ -1,0 +1,24 @@
+{
+  "archivo": "/opt/data/inbox/<agente>/done/evidencia-<ticket>-verificacion.json",
+  "generado_utc": "<ISO8601>",
+  "generado_por": "<agente>",
+  "contexto": "<1-2 líneas: qué se verificó y contra qué fuentes>",
+  "fuente_leida": {
+    "ruta": "/opt/data/inbox/<agente>/done/<archivo>.json",
+    "campos_clave": {"cerrado_en": null, "cerrado_por": null}
+  },
+  "verificacion_de_afirmaciones": [
+    {
+      "afirmacion": "<texto de la afirmación del aviso o de un tercero>",
+      "verificado": false,
+      "metodo": "<comando o llamada API exacta usada>",
+      "datos": {},
+      "motivo_si_no_verificable": "<solo cuando verificado=false: por qué la fuente no alcanza>",
+      "matiz": "<opcional: condición que acota la verificación>"
+    }
+  ],
+  "estado_real": {"<dimensión_del_entregable>": "<valor verificado>"},
+  "acciones_ejecutadas": ["<cada acción con su comando real, sin secretos>"],
+  "no_atribuible": ["<recursos aparecidos bajo identidad propia sin registro de comando; requieren confirmación del Admin>"],
+  "decisiones_pendientes_del_admin": ["<decisión numerada que solo Plon puede tomar>"]
+}

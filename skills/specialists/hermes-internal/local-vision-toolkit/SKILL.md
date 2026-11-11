@@ -1,32 +1,19 @@
 ---
 name: local-vision-toolkit
-description: "Use when a model without vision must read an image or chart"
-  Autonomous local computer vision toolkit — OCR, image analysis, chart detection,
-  infographic extraction, screenshot interpretation, and diagram understanding.
-  Runs 100% locally with Python (OpenCV, Tesseract, Pillow, scikit-image).
-  Does NOT depend on the connected model having vision capabilities.
-  Use when the user shares an image, screenshot, diagram, chart, infographic,
-  or any visual content that needs analysis — even if the model can't see.
+description: >-
+  Use when a model without vision must read an image or chart Autonomous local computer vision toolkit — OCR, image analysis, chart detection, infographic extraction, screenshot interpretation, and diagram understanding. Runs 100% locally with Python (OpenCV, Tesseract, Pillow, scikit-image). Does NOT depend on the connected model having vision capabilities. Use when the user shares an image, screenshot, diagram, chart, infographic, or any visual content that needs analysis — even if the model can't see. hermes: tags: [Vision, OCR, Images, Charts, Infographics, Diagrams, Local, AI] category: vision related_skills: [document-reader, brain-knowledge-base, knowledge-absorption, skill-integration] commands: [python3] python_packages: system_packages:
 version: 1.0.0
 author: hermes
 license: MIT
 metadata:
-  hermes:
-    tags: [Vision, OCR, Images, Charts, Infographics, Diagrams, Local, AI]
-    category: vision
-    related_skills: [document-reader, brain-knowledge-base, knowledge-absorption, skill-integration]
 prerequisites:
-  commands: [python3]
-  python_packages:
     - Pillow
     - pytesseract
     - opencv-python
     - scikit-image
     - numpy
     - matplotlib (optional)
-  system_packages:
     - tesseract-ocr (with lang=spa for Spanish support)
-
 ---
 
 # Local Vision Toolkit

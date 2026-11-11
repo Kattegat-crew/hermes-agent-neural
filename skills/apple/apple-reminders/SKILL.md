@@ -1,7 +1,6 @@
 ---
 name: apple-reminders
-description: "Use when adding/listing Apple Reminders via remindctl"
-tags: [recordatorios, reminders, apple-reminders, macos, remindctl, tareas, todo]
+description: "Apple Reminders via remindctl: add, list, complete."
 version: 1.0.0
 author: Hermes Agent
 license: MIT

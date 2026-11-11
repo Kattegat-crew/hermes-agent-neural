@@ -252,6 +252,19 @@ Every migration must have a reversible down script. For irreversible changes:
 2. **Feature flags** — application can switch between old/new schema reads
 3. **Shadow tables** — keep a copy of the original table during migration window
 
+### Offline Syntax Validation (no server available)
+
+When an environment has no PostgreSQL server and no Docker (cannot spin up an ephemeral instance), validate SQL in design docs or migrations against the real PostgreSQL grammar with `pglast` (libpg_query bindings):
+
+```bash
+python3 -m venv .venv && ./.venv/bin/pip install pglast   # e.g. v8.7 = PG16 grammar
+./.venv/bin/python -c "import pglast; pglast.parse_sql('CREATE TABLE t (id bigserial primary key);'); print('OK')"
+```
+
+- Use `pglast.split(sql)` to split multi-statement scripts, then parse each statement individually so one bad statement does not mask the rest.
+- **Scope of the evidence:** parser success proves syntax and grammar version only. Concurrency semantics (leases, CAS updates, advisory locks, retry claims) are NOT exercised — require a live ephemeral PostgreSQL for those, and state the limitation explicitly in the review instead of implying the SQL is fully "tested".
+- Typical failure: design docs containing shorthand like a bare `capi_events (...)` block instead of `CREATE TABLE capi_events (...)` — normalize to full DDL before validating.
+
 ### Migration Generator Tool
 
 ```bash

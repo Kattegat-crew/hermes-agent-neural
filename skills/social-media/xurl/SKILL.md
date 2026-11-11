@@ -1,7 +1,6 @@
 ---
 name: xurl
-description: "Use when posting or searching X via the official xurl CLI"
-tags: [x, twitter, redes-sociales, api, publicar, dm, oauth, cli]
+description: "X/Twitter via xurl CLI: raw post search, posting, DM, media."
 version: 1.1.3
 author: xdevplatform + openclaw + Hermes Agent
 license: MIT

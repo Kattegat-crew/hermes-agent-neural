@@ -80,6 +80,46 @@ sistemático de un caso aislado.
 Un `.md` de **0 bytes** es la corrida silenciosa normal de un job que no tenía nada que
 reportar (no es un fallo); el silencio es el comportamiento esperado de los publicadores.
 
+### Pitfall D — el publicador falló y `last_status: ok` lo tapó
+Symptom: `jobs.json` con `last_status: ok` en un job `no_agent: true` (script .sh) mientras el
+`.md` de la corrida termina en `… post:401` o `post:-32001`. El wrapper imprimía el error del
+post pero salía 0 (el post no era el último comando / no se comprobaba `$?`), así que el
+scheduler marcó verde.
+Detección: leer el `cron/output/<jobid>/*.md` más reciente y grepear `post:`; agregar por
+resultado (`sort | uniq -c`) para separar fallo sistemático de caso aislado.
+Regla: `ncl-discord post` (o el curl) debe ser el ÚLTIMO comando del script y su exit code el
+del script; probarlo con un canal inválido y exigir `rc≠0`. Para saber si el canal sirve en el
+contexto del scheduler (otro uid/env que tu sesión), usar la sonda `env -i` de
+`notification-delivery-reliability`.
+
+### Pitfall E — publicador sin `?thread_id=` genera un hilo nuevo por corrida (explosión de hilos)
+Symptom: un canal-foro de Discord se llena de hilos duplicados que nacen solos
+(`Informe de Vigia 02-nov`, `Latido flota Hermes`, `vigia-auditoria-2100`, …), con 0–1
+mensaje cada uno. Causa: jobs cuya publicación usa `curl $WH` (webhook Discord) **sin
+`?thread_id=<fijo>`** en la URL → cada corrida crea un hilo nuevo. No es un fallo del
+webhook: es la URL sin ancla.
+Detección: grep `thread_id` en el `jobs.json` de cada publicador (los hay con y sin);
+en DEV (03/11) eran 3: `hermes-maintenance-night` (30 3), `vigia-informe-0800` (0 8),
+`vigia-auditoria-2100` (0 21), todos en perfil vigia. Parchear SOLO uno deja la
+explosión activa por los otros — cubrir TODOS los publicadores.
+Fix: fijar `?thread_id=` en la URL del curl de cada job. Antes de cualquier limpieza
+masiva (script con `--apply`), snapshot reversible:
+```
+D=/opt/data/cache/<tema>/backup-$(date -u +%Y%m%d-%H%M%S); mkdir -p $D
+cp /opt/data/cron/jobs.json $D/jobs-default.json
+for p in /opt/data/profiles/*/cron/jobs.json; do cp $p $D/jobs-$(basename $(dirname $(dirname $p))).json; done
+```
+Y en Discord, antes de borrar hilos "vacíos", verificar contra la API real (token en
+`/opt/data/.env`): un hilo "de 1 mensaje" puede contener una ficha de tarea valiosa; si
+son duplicados exactos, archivar el contenido a disco con sha256 antes de borrar.
+
+### Cobertura — cada perfil tiene SU `jobs.json`
+`/opt/data/cron/jobs.json` lista solo los jobs del perfil `default`. Un job que vive en
+`/opt/hermes-agent-data/profiles/<perfil>/cron/jobs.json` (ej. vigía) es invisible para
+cualquier auditoría que lea solo la ruta raíz: recorrer `profiles/*/cron/jobs.json` siempre.
+Ese job tampoco ve `/etc/cron.d`: un `cron.d` + un job Hermes para la misma tarea = dos
+barridos y dos posts el mismo día (caso real: 08:30 root + 09:00 Hermes, lunes).
+
 ## Procedure (full diagnostic)
 1. `ps` to confirm which process serves the profile: multiplexed gateway vs
    `hermes --profile X serve --isolated`. This influences who the cron runner is — but

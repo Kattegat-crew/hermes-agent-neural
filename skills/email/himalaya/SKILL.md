@@ -1,7 +1,6 @@
 ---
 name: himalaya
-description: "Use when driving IMAP/SMTP mail from the himalaya CLI"
-tags: [email, correo, imap, smtp, cli, terminal, himalaya]
+description: "Himalaya CLI: IMAP/SMTP email from terminal."
 version: 1.1.0
 author: community
 license: MIT

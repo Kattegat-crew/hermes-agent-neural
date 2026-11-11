@@ -54,6 +54,42 @@ Patrón del "agente administrador de Hermes" (inspirado en el rol Havoc / Bot Mo
 - **`hermes gateway status --verbose` NO existe** — no inventar flags; usar `hermes gateway status`.
 - **Ruta del config:** `/opt/data/config.yaml` (no `/opt/data/data/...`; ese intento falla con FileNotFoundError). Inventario y topología MCP (snapshot 2026-09-25 + patrón estable + quirk canva/pg_ro): `references/mcp-inventory.md`.
 
+## Instalar un MCP NO catalogado (vía `hermes mcp add`)
+
+El conector `manage_connections` SOLO instala MCPs del catálogo propio (`install` falla con
+`unknown MCP server(s)` para todo lo demás). Para un MCP hosted no catalogado (ej. **Exa**,
+instalado y verificado 02-nov-2026) la vía canónica es la CLI, siguiendo D-I-V-E:
+
+1. **D:** confirmar que el servidor ofrece endpoint MCP (documentación oficial) y qué tools expone.
+2. **I:** backup de `config.yaml` → `config.yaml.bak-<fecha>` y luego:
+   `hermes mcp add <nombre> --url '<URL-con-parametros>'`
+3. **V:** `hermes mcp test <nombre>` (transporte + tools descubiertas). Las tools quedan
+   disponibles tras `/reload-mcp` en la sesión abierta o en una sesión nueva.
+
+- **Prompts interactivos headless:** `hermes mcp add` pregunta "¿requiere auth? [Y/n]" y "¿habilitar
+  todas las tools? [Y/n/select]". En headless pipear las respuestas: `printf 'n\ny\n' | hermes mcp add ...`
+  (`n` = sin auth cuando el endpoint es keyless; `y` = habilitar todas). Sin TTY el prompt de API key
+  se cuelga con warning de getpass y cancela el add.
+- **Exa (referencia):** URL con tools explícitas:
+  `https://mcp.exa.ai/mcp?tools=web_search_exa,web_fetch_exa,web_search_advanced_exa`.
+  La lista `tools=` REEMPLAZA los defaults; incluir cada tool deseada. Keyless funciona con
+  rate-limits gratuitos; con API key usar header `x-api-key` (o OAuth vía `?login`).
+  `agent_run` de Exa solo aparece autenticado (OAuth o API key).
+- **Prueba real headless alternativa:** si el cliente MCP Python está en el entorno, validar el
+  endpoint antes/después del add con `streamable_http_client` del SDK `mcp` — ojo a la versión del
+  SDK: el generador puede yieldear 2 streams (no 3) y `CallToolResult` usa `is_error`, no `isError`.
+  Instalar desde memoria del SDK es frágil; verificar campos con `model_fields` antes de iterar.
+
+## Cerrobloqueo approvals.deny (capa 2) — auditoría y pruebas seguras
+
+- Semántica: `approvals.deny` en `config.yaml` son globs fnmatch que bloquean ANTES de cualquier bypass (`--yolo` / `mode: off`); se verifica con `hermes approvals test -- <cmd>` (exit 0 allow / 2 ask / 3 deny). Capa 1 hardline (blocklist fija en `tools/approval.py`) y capa 2 deny sobreviven a todos los modos.
+- **PATRÓN CLAVE — nunca poner literales de reglas deny en el texto de un comando de terminal:** el gate analiza el texto COMPLETO del comando y atrapa fragmentos de prueba (reconstrucciones por partes, comentarios, ssh embebido). Para probar reglas destructivas: escribir el script/payload a archivo con `write_file` y ejecutarlo, o pipearlo por stdin (`cat payload.sh | ssh prod "docker exec -i <container> sh"`).
+- Verificación E2E en contenedor remoto: config en disco ≠ gate vivo. Verificar DENTRO del contenedor: `docker exec -i <c> sh < payload.sh` con `hermes approvals test`; confirmar el detalle `blocked even under --yolo / mode=off`.
+- En `mode: off` los benignos pasan (exit 0 con `approval bypass active`) pero deny sigue bloqueando — diseño correcto para PROD.
+- Contraste de resultados: un paste de pytest con `collected 0 items` indica intérprete/ruta equivocada, no suite vacía — re-correr con el python correcto (el venv del repo puede carecer de PyYAML; usar `/usr/bin/python3.12`) antes de aceptar.
+- Residual aceptado (documentar, no intentar cubrir con globs): crons `no_agent` quedan fuera del interceptor (contención = permisos Linux); `docker system prune` sin `--volumes` sigue permitido por diseño.
+- Receta completa de auditoría (DEV+PROD, script de pruebas, verificación en contenedor): `references/approvals-deny-audit.md`.
+
 ## Vigilancia automatizada (cron de mantenimiento)
 
 - Job `hermes-maintenance-night` (03:30) con `monitor_script=/opt/data/scripts/hermes-ops-monitor.py`: verifica gateway UP y puertos clave, **monitorea updates del repo de Hermes** (GitHub API vs `hermes --version`), escanea errores del día en logs, revisa **logs de bots y comportamiento** (restarts, timeouts, bucles), comprueba disco/RAM, y como agente asigna **puntuación del output** (score 0-100 por bot) cuando se detecta cambio.

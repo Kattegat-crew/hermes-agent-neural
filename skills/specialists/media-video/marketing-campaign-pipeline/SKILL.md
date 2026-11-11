@@ -74,6 +74,18 @@ Si cambian los T&C/manual operativo DESPUÉS de que la fábrica generó docs/gui
 6. Frases literales dichas por el cliente (p.ej. de Jesús en guiones reels) son **intocables y derogatorias**: si un lema nuevo las reemplaza, el lema viejo queda fuera de toda pieza nueva.
 
 
+## Imprimibles físicos (preimpresa con Pillow, validado 28-oct-2026)
+
+Boletas, tarjetas de sellos, pendones y volantes NO se generan con IA: se generan con un script Pillow (`scripts/print/<campana>_print.py`, CLI `--pieza todas`). Reglas duras aprendidas:
+
+1. **Layout en mm, nunca en píxeles crudos:** `px(mm) = int(mm*300/25.4)`; sangrado 3 mm + área segura 3 mm (canvas = pieza +6 mm); fondos a sangre, contenido dentro del margen seguro; PNG 300 ppp para revisión + PDF (`resolution=300`) para imprenta.
+2. **Posiciones mm absolutas, jamás flujo acumulado** (`y = pegar_logo(...); título en y+0.6` se solapa cuando las marcas tienen logos de distinta proporción — Golden 0.76 vs Lucky 0.94 de razón alto/ancho): medir la altura real del logo al ancho elegido para el PEOR caso entre marcas y fijar cada bloque en una Y absoluta con presupuesto vertical cerrado.
+3. **QA con `vision_analyze` usando preguntas concretas** ("¿el pie colisiona con SEDE/FECHA?", "¿queda espacio muerto abajo?"): preguntas genéricas devuelven prosa inútil. Convertir cada hallazgo en cambio de coordenadas mm y regenerar; descontar falsos positivos de la visión sobre elementos decorativos contrastándolos contra el código. Revisar SIEMPRE una pieza por marca.
+4. **Variable-data anti-error de cajera:** una sola boleta para varios sorteos con casilla `[ ] SEMANAL / [ ] FINAL`; fechas pre-impresas bajo cada casilla de sello (impide sellar jornadas inexistentes); espacio muerto se rellena con función (bloque de canje con firma), no con decoración; pie legal en banda propia separada; pendientes legales marcados dentro de la pieza (`PIE LEGAL PENDIENTE (C6)`) para que no lleguen a imprenta por accidente.
+5. **Impresor:** bandas oscuras a sangre = tinta pesada (avisar secado/marcado); lo que parece espacio muerto bajo el marco de corte es sangrado, no eliminarlo.
+
+Nota: existe un intento de skill dedicada `print-ready-production` (dominio propio, no cubierto por este paraguas) cuyo create quedó bloqueado por el hook `guard_autoskill_create.py` fallando cerrado ("unparseable stdout", 28-oct-2026). Si el hook se repara, migrar esta sección a esa skill.
+
 ## Pitfalls
 
 - **Subidas a Drive fallan con "Not authenticated" si la sesión corre bajo un perfil.** `google_api.py` deriva `TOKEN_PATH` de `HERMES_HOME` (`get_hermes_home()`); si el HERMES_HOME activo es `profiles/<bot>`, busca el token ahí y no lo encuentra. **Fix: `export HERMES_HOME=/root/hermes-agent-legacy-docker/data` (raíz) antes de subir assets.** Verificado 26/08 con los posters.

@@ -109,7 +109,24 @@ clean commercial photography style, 16:9 aspect ratio, 4K
 - Requesting complex text — use overlays instead for anything beyond short headlines
 - No style direction — "photorealistic," "flat illustration," "3D render"
 
+### Codex CLI native image generation (ChatGPT-authenticated)
+
+When the Codex CLI is available on a host, its native `image_generation` tool produces high-fidelity edits/generations from real reference photos using the user's ChatGPT plan (no per-image API spend). Verified workflow, exact command and pitfalls — including the mandatory stdin prompt when attaching `-i` references — live in [references/codex-image-generation.md](references/codex-image-generation.md). Key rules: normalize refs to JPEG RGB ≤2048 px, generate photo-only plates (text/infographics added later with deterministic overlay), and capture the output path the tool reports rather than globbing for the newest file.
+
 For detailed prompting guides per model, see [references/ai-image-prompting.md] ⚠️ FALTA: references/ai-image-prompting.md.
+
+### Photo-based banners: NEVER regenerate the photo (signage-erasure pitfall)
+
+When the base image is a REAL photo of a physical location (storefront, venue, product in situ), AI models routinely erase real-world signage, logos, banners and fascia text — even in edit mode. Verified twice: a character-identity clause like *"No other text, letters, numbers, logos or watermarks anywhere in the image"* made the model blank out a casino's pendones and marquee, and re-scoping that clause to the character only did NOT fix it — the model still removed the signs.
+
+Rule: **do not fight the model with prompts; change the method.** Keep the original photo pixel-intact and composite only the added elements deterministically:
+
+1. Generate ONLY the overlay element (e.g. brand mascot, full body) alone on a flat pure-magenta `#FF00FF` chroma background — no floor, no shadow, generous margin, references attached for identity and styling.
+2. Cut it out locally (PIL): alpha from distance-to-key color, extra suppression for key-hued low-green pixels, Gaussian-feather the matte, crop to bbox.
+3. Composite the cutout onto the untouched photo with a blurred contact shadow; extend portrait photos to 16:9 with a local blurred fill (no AI).
+4. Typography/panels are added programmatically (translucent rounded panel behind text for contrast on busy facades).
+
+Recipe with code: [references/chroma-cutout-compositing.md](references/chroma-cutout-compositing.md). QA trick: diff the composed output against the original photo in the sign region — near-zero means the signage survived.
 
 ---
 
@@ -124,7 +141,7 @@ Best for non-designers who need polished output fast.
 - **Strengths:** Massive template library, brand kit, Magic Resize (one design → all sizes), team collaboration
 - **Best for:** Social graphics, presentations, email headers, simple banners
 - **Limitations:** Less control than Figma, templates can look generic
-- **Agent-friendliness:** Has an API but limited — better as a human-in-the-loop tool
+- **Agent-friendliness:** REAL and verified via the Canva MCP tools — see [references/canva-mcp-editing.md](references/canva-mcp-editing.md). Verified end-to-end: `create_design` → `update_fill` (swap background for own art) → `replace_text` (accents/ñ work: `miércoles`, `PREGUNTA EN TAQUILLA`) → `commit_editing_transaction` → `export_design`. Hard limit: the API can format and replace existing text but CANNOT create new text elements — build one base design manually or via one AI generation, then duplicate it (`copy_design`) per variant and swap fill + texts. Each `create_design`/AI action burns Canva AI credit quota; duplicating does not.
 
 ### Figma
 

@@ -1,7 +1,6 @@
 ---
 name: apple-notes
-description: "Use when creating/searching Apple Notes via memo"
-tags: [notas, apple-notes, macos, memo, icloud, sincronizacion, notes]
+description: "Manage Apple Notes via memo CLI: create, search, edit."
 version: 1.0.1
 author: Hermes Agent
 license: MIT

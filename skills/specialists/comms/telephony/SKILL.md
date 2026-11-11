@@ -101,6 +101,9 @@ Why:
 - easiest way to play a custom MP3
 - pairs well with Hermes `text_to_speech` plus a public file host or tunnel
 
+### 5) "I want a live conversational S2S agent with in-call tools and post-call webhooks"
+Use **Phonic** — see `references/phonic-voice-agents.md` for the verified provisioning recipe (secret materialization, agent CRUD, capability map, cost gates).
+
 ## Files and persistent state
 
 The skill persists telephony state in two places:
@@ -417,3 +420,4 @@ After setup, you should be able to do all of the following with just this skill:
 - Twilio voice: https://www.twilio.com/docs/voice/api/call-resource
 - Vapi docs: https://docs.vapi.ai/
 - Bland.ai: https://app.bland.ai/
+- Phonic (verified recipe in references/): https://api.phonic.co/v1

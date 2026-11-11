@@ -1,0 +1,64 @@
+{
+  "schema": "memory-compaction/plan@1",
+  "profile": "default",
+  "target": "memory",
+  "entries": [
+    {
+      "idx": 1,
+      "sha1": "<lo calcula memory_inventory.py --emit-plan; NO editar>",
+      "chars": 703,
+      "summary": "NeuralCrew Labs & Digital Expressions: ...",
+      "action": "keep",
+      "destination": null,
+      "merge_into": null,
+      "reason": "invariante de identidad y autoridad"
+    },
+    {
+      "idx": 2,
+      "sha1": "<no editar>",
+      "chars": 1204,
+      "summary": "Cliente Golden Game: NIT ...",
+      "action": "move",
+      "destination": {
+        "kind": "brain",
+        "path": "/opt/data/brain/entities/golden_game.md",
+        "anchor": "## Hechos verificados"
+      },
+      "merge_into": null,
+      "reason": "datos duros de cliente, consultables en brain"
+    },
+    {
+      "idx": 3,
+      "sha1": "<no editar>",
+      "chars": 640,
+      "summary": "Incidente reels 07-oct: LOCK anti-duplicado",
+      "action": "move",
+      "destination": {
+        "kind": "engram",
+        "observation_id": 2577
+      },
+      "merge_into": null,
+      "reason": "episodio buscable; ya guardado con mem_save"
+    },
+    {
+      "idx": 4,
+      "sha1": "<no editar>",
+      "chars": 320,
+      "summary": "Duplicado parcial de #2",
+      "action": "merge",
+      "destination": null,
+      "merge_into": 2,
+      "reason": "contenido ya fusionado en la entrada vigente"
+    },
+    {
+      "idx": 5,
+      "sha1": "<no editar>",
+      "chars": 1580,
+      "summary": "Cierre conciliación Bre-B 01-oct",
+      "action": "archive",
+      "destination": null,
+      "merge_into": null,
+      "reason": "estado cerrado; verbatim + recall por fecha/ID"
+    }
+  ]
+}

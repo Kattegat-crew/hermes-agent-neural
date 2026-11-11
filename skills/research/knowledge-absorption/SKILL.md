@@ -1,17 +1,11 @@
 ---
 name: knowledge-absorption
-description: "Use when absorbing external sources into the brain wiki."
-  Absorber y transformar conocimiento desde fuentes externas (Notion, docs, web)
-  hacia el Brain wiki. Incluye estrategias de priorización, deduplicación,
-  y filtrado de ruido para absorber SOLO lo que importa.
+description: >-
+  Use when absorbing external sources into the brain wiki. Absorber y transformar conocimiento desde fuentes externas (Notion, docs, web) hacia el Brain wiki. Incluye estrategias de priorización, deduplicación, y filtrado de ruido para absorber SOLO lo que importa. hermes: tags: [wiki, knowledge-base, absorption, notion, research] category: research related_skills: [brain-knowledge-base, notion-integration, defuddle, local-vision-toolkit, document-reader]
 version: 1.0.0
 author: Ragnar
 license: MIT
-metadata:
-  hermes:
-    tags: [wiki, knowledge-base, absorption, notion, research]
-    category: research
-    related_skills: [brain-knowledge-base, notion-integration, defuddle, local-vision-toolkit, document-reader]
+metadata: {}
 ---
 
 # Knowledge Absorption — De Fuentes a Brain
@@ -213,13 +207,15 @@ Cuando el usuario comparte una imagen (screenshot, gráfico, diagrama, infograf�
 
 2. **Crear página Brain con frontmatter:**
    ```markdown
-   ---
+
+---
    title: {description_short}
    type: image_analysis
    tags: [image, {chart_type|diagram|infographic}, {category}]
    created: YYYY-MM-DD
    source: local
-   ---
+
+---
 
    # {Title}
 

@@ -167,6 +167,29 @@ Ready to implement <feature-name>
 | "Any directory name works" | Explicit instructions beat an existing project-local directory, which beats the `.worktrees/` default. |
 | "The workspace is fresh — baseline tests can wait" | A dirty baseline makes every later failure ambiguous. Run the tests now; proceeding past failures is your human partner's call. |
 
+## Throwaway A/B Worktrees (Diagnostic Only)
+
+A worktree is also the right tool to **classify test failures as pre-existing vs introduced** — without touching your working branch:
+
+```bash
+git worktree add /tmp/ab-base-<sha> <base-sha>
+cd /tmp/ab-base-<sha> && <run the same failing tests>
+git worktree remove --force /tmp/ab-base-<sha>
+```
+
+- Identical failing files AND identical per-file counts on the base commit ⇒ failures are pre-existing/environmental, not caused by your change.
+- Compare counts per file, not just presence — identical counts are the signature.
+- Diagnostic use only: never develop inside a throwaway A/B tree; remove it immediately after.
+
+## Permissions on shared/group worktrees (verified pitfall)
+
+When a worktree lives in a group-shared directory (setgid group ownership) and ownership/permissions get fixed afterwards, do **not** recursively rewrite file modes to a fixed value such as `rw-rw----`:
+
+- Rewriting modes strips the executable bit from files that were mode `100755` → `git status` floods with mode-change-only `M` entries (dirty tree with zero content diff; `git diff` shows only `old mode/new mode` lines).
+- Recovery is lossless because the change is mode-only: `git checkout -- .` restores every original mode.
+- Correct pattern: add group-write permission to files and group-setgid to directories instead of replacing whole modes — that grants group access without touching the execute bit.
+- If a build ran (`dist/`, `node_modules/`), exclude those paths from any permission sweep or it churns thousands of files for nothing.
+
 ## Worktree Cleanup & Maintenance (Tidy)
 
 When feature implementation and verification are complete:

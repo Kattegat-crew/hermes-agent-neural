@@ -14,6 +14,7 @@ Clase de trabajo: redactar desde Content los prompts/briefs de imagen que ejecut
 3. **Logos = capa del compositor, jamás quemados** (`no logos burned in`). El brief especifica zonas de aire libres para las capas de texto/logo (p.ej. arriba ~35% oscuro limpio, rincón inf-izq 36%x18% despejado).
 4. **Override banner al cambiar alcance a mitad de campaña:** cuando el user corrige, NO basta con archivo nuevo — poner al tope del archivo viejo `> ⚠️ OVERRIDE <fecha>: <qué cambia> → ver <ruta nueva>`. El producer lee archivos del workspace, no solo chat; sin el banner el prompt obsoleto se re-dispara.
 5. Una sola variable por render (el motor); dirección de arte idéntica entre variantes.
+6. **Arte base antes que piezas derivadas.** Primero aprobar el key visual limpio (sin texto, sin logo) de la campaña; solo después derivar boleta/tarjeta/afiche recortando y componiendo tipografía en local. Saltar directo a una pieza específica fue corrección explícita del Admin (29-oct, campaña El Aguinaldo de la Suerte).
 
 ## Estructura de un entregable de prompts
 - Cabecera: corrección/alcance + fuentes verificadas (ruta del PNG analizado).

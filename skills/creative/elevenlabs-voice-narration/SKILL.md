@@ -53,6 +53,9 @@ El resto del flujo (mix ducking → audit → concat) no cambia. Documentado en 
 - `--list-voices` no gasta.
 
 ## Pitfalls
+- **Cifras con separador de miles** tipo `430.484 pesos` las lee mal eleven_multilingual_v2 (verificado 04/11/2026: «430 en 484» / «432,3484»). Solución: deletrear en el texto TTS («cuatrocientos treinta mil cuatrocientos ochenta y cuatro pesos») y verificar con whisper que oye el número completo. Decimales con coma (`284,8 millones`) y porcentajes (`95,9%`) SÍ los lee bien.
+- El CLI deja además un `out.wav` duplicado del último `--out` en el CWD (byproduct): limpiarlo o ignoraarlo.
+- Voz institucional por marca de la serie casinos: Golden=Angie `YPh7OporwNAJ28F5IQrm`, Paradise=Vivi `huuKaN52HlVabecRQ4Jt`.
 - **Whisper normaliza**: la transcripción NO es verdad absoluta — puede oír correcto algo mal pronunciado. Combinar con oído humano o enfocar en palabras que fallan (nombres propios).
 - No sustituir STTS por edge-tts (robótico, rechazado por usuario) ni re-generar video cuando el problema es solo de audio: el clip ya cuesta y quedó bueno.
 - Seedance NO pronuncia bien nombres propios ni palabras >2 sílabas (Paradise→"Parodise", tragamonedas→"tragamulidas", Chiquinquirá→"Chicunquía"); sin crédito pago, fallback = respelling en DIALOGUE (ver skill video-tts-pronunciation-fix, user-owned).

@@ -70,3 +70,4 @@ The design is done only when:
 - `references/chunking_strategies_comparison.md` — strategy trade-offs the optimizer implements
 - `references/embedding_model_benchmark.md` — benchmark *methodology* (dated snapshot; staleness warning at top)
 - `references/rag_evaluation_framework.md` — metric definitions (faithfulness, relevance, precision/recall/NDCG)
+- `references/reranker_ab_pilot_protocol.md` — frozen-corpus A/B protocol to benchmark a reranker (incl. blind labeling, RRF hybrid arm, v2 lessons)

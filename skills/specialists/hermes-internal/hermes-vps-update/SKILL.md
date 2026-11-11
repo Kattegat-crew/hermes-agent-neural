@@ -18,7 +18,32 @@ pide este procedimiento cuando reporta "update hermes on the remote host".
 ## Disparadores
 
 - «hermes update», «actualizar hermes en el VPS», «update hermes remote host»,
-  «alinear hermes a upstream/main».
+  «alinear hermes a upstream/main», «actualizar el fork», «estudio semanal de
+  actualizaciones de Hermes».
+
+## Decisión previa OBLIGATORIA: ¿el checkout tiene parches propios?
+
+Antes de tocar nada, medir la divergencia. `reset --hard` / `checkout -B main
+upstream/main` solo son válidos si la respuesta es 0:
+
+```bash
+cd /opt/hermes-agent        # o el checkout objetivo
+MB=$(git merge-base HEAD upstream/main)
+echo "propios: $(git rev-list --count $MB..HEAD) | detrás: $(git rev-list --count HEAD..$(git tag -l 'v0.*' | sort -V | tail -1))"
+git log --oneline $MB..HEAD -- agent hermes_cli gateway tools plugins cron | wc -l
+```
+
+- **0 commits propios** → seguir el procedimiento de abajo (reset a upstream).
+- **>0 commits propios** → **PROHIBIDO** `reset --hard` / `checkout -B main`:
+  borra el fork entero. Usar el replay de parches de
+  `references/fork-upstream-replay.md` (rama nueva desde el tag limpio +
+  `cherry-pick -x` de los commits propios, `rerere` activo).
+
+Caso real (nov-2026, `/opt/hermes-agent`): 56 commits propios de código, base
+`v0.22.0`, 9.000 commits detrás de `v0.22.6`, solape en 67 archivos (49 de
+código). Un `reset --hard` ahí habría borrado DSML guard, glm5.3-flash, memoria
+on-demand, heartbeat efímero, frenos Telegram, Config Shield y `skill_route` —
+ninguna existe upstream.
 
 ## Pre-vuelo: backups (obligatorio)
 
@@ -85,8 +110,87 @@ cat /root/hermes-agent-legacy-docker/data/gateway_state.json | python3 -m json.t
 docker exec hermes-agent /opt/hermes/bin/hermes --version
 ```
 
+## Supervisar un replay en curso ejecutado por otro agente
+
+Cuando el replay lo corre un agente externo (Agy/antigravity, Claude Code, otro
+perfil), **su informe de cierre no es evidencia**. Auditar el worktree con
+comandos propios antes de dar el segundo OK; receta completa en
+`references/auditoria-replay-tercero.md`.
+
+Comprobación mínima (3 comandos, ~1 minuto):
+
+```bash
+W=/opt/hermes-agent-worktrees/upgrade-vX.Y.Z
+# 1. ¿están TODOS los commits propios? (sin tr -d '\r' el comm miente)
+cd /opt/hermes-agent; MB=$(git merge-base <rama-propia> vX.Y.Z)
+git log --format='%s' $MB..<rama-propia> -- agent hermes_cli gateway tools plugins cron | tr -d '\r' | sort > /tmp/own.txt
+cd $W; git log --format='%s' vX.Y.Z..HEAD | tr -d '\r' | sort > /tmp/rep.txt
+comm -23 /tmp/own.txt /tmp/rep.txt        # ← debe salir vacío
+# 2. ¿la «suite» que dice haber corrido es la suite?
+python3 -c "import json;print(len(json.load(open('$W/.pytest_cache/v/cache/nodeids'))))"
+git ls-tree -r --name-only HEAD | grep -cE '^tests/.*test_.*\.py$'
+# 3. ¿sobreviven los archivos propios que upstream no tiene?
+comm -23 <(git -C /opt/hermes-agent ls-tree -r --name-only HEAD | sort) \
+         <(git ls-tree -r --name-only HEAD | sort) | head -30
+```
+
+Verde en 5 archivos de test sobre un repo de miles NO es «suite completada»:
+exigir `scripts/run_tests.sh` y su salida.
+
+## Puertas de aceptación que el plan siempre olvida
+
+Un update se declara bueno por lo que arrancó, no por lo que el plan enumeró.
+Estas dos puertas faltan casi siempre y son las que dejan la flota rota en
+silencio:
+
+1. **El dashboard también se verifica.** `systemctl is-active` / `docker ps` dicen
+   `active` aunque el panel devuelva 500. Comprobar el endpoint real (`9119`, o el
+   que corresponda) y exigir `200`/`302`. Un proceso vivo cuyo entorno de runtime
+   fue recolectado responde 500 con el servicio «activo».
+2. **`session_reset` cambió de dueño.** Desde `v0.23.x` el reset por
+   inactividad/horario ya **no lo aplica el core**: `hermes_cli/
+   session_reset_retirement.py` lo delega al plugin de catálogo
+   `hermes-session-reset-policy` (tier community, hook `pre_gateway_dispatch`, sin
+   timers ni escrituras en background; lee el bloque `session_reset` tal cual).
+   Si la config declara `mode: both` y el plugin no está instalado, **el reset
+   simplemente no ocurre**: sesiones y costo crecen sin techo. `hermes doctor` lo
+   avisa, pero hay que decidir antes del cutover: instalar el plugin (y probar la
+   rotación en el canario) o aceptar el nuevo modelo y documentarlo.
+
+3. **Los servidores MCP no vuelven solos.** El contenedor recreado levanta el gateway,
+   pero los MCP que se lanzan con `uvx`/`npx` mueren en silencio y el gateway los deja
+   en *"parking until a reconnect"*. Contar hijos vivos por servidor dentro del
+   contenedor (`ps aux | grep -E 'mcp|npx|uvx'`) antes de declarar el update bueno.
+   Tres causas y su fix:
+   - **Imagen reconstruida sin `uv`/`uvx`** (no estaba en la versión anterior tampoco):
+     montar el `uv` del host en `tools/uv` y un wrapper de una línea
+     (`exec /usr/local/bin/uv tool run "$@"`) como `tools/uvx`, ambos `:ro`, más un
+     `UV_CACHE_DIR` escribible por el uid del servicio.
+   - **Secretos montados `root:root 600`** mientras los servidores corren como uid no-root
+     (10000) → `PermissionError` al arrancar. `chown` al uid del servicio; nunca `chmod 777`.
+   - **Dependencia pineada que ya no resuelve** (una transitiva desaparece de PyPI): el
+     servidor muere en cada arranque hasta que se quita el pin **y** se verifica el
+     contrato nuevo (p. ej. la versión nueva pide el DSN como argumento o `DATABASE_URL`
+     donde la vieja leía `DATABASE_URI`).
+   Con decenas de servidores MCP el arranque tarda minutos: presupuestarlos antes de
+   emitir veredicto y no reiniciar "a ver si ya" en mitad de la ventana.
+
+Correr `hermes doctor` **como puerta**, no como cortesía: sus avisos son
+precisamente los criterios que ningún plan escribió.
+
+
 ## Pitfalls (anotadas: causa raíz de la operación real)
 
+- **`cherry-pick` con conflicto `modify/delete` borra archivos propios en silencio**:
+  si upstream eliminó un archivo que el fork mantiene (`PROJECT_MEMORY.md`,
+  `.skills/`), la resolución natural deja la versión upstream (borrado) y el
+  replay queda verde sin ese contenido. **Fix**: comparar los árboles del repo
+  principal y de la rama nueva y restaurar los archivos del fork antes del cutover.
+- **El trabajo sin commitear no viaja en el replay**: `cherry-pick` solo mueve
+  commits; `gateway/run.py` y compañía con `git status` sucio se pierden o
+  bloquean el `switch`. Contarlos con `git status --porcelain | awk '{print $1}'
+  | sort | uniq -c` y resolverlos (commit temporal o parche exportado) antes de
+  autorizar.
 - **`git checkout upstream/main` sobrescribe `docker-compose.yml` del VPS**: el
   compose genérico de upstream monta `~/.hermes` y crea `hermes` +
   `hermes-dashboard`, NO tu `./data`, `.env`, vault, `mcp_tool.py` → contenedores
@@ -100,6 +204,26 @@ docker exec hermes-agent /opt/hermes/bin/hermes --version
 - **HERMES_HOME explícito**: sin él, `hermes` del host apunta a `~/.hermes`
   (default), NO a la data real del gateway (`/root/hermes-agent-legacy-docker/data`).
 - **Migración sin pérdida**: esperar `env_added: []` y `config_added: []`.
+- **Tags de fecha `v2026.M.D` no son versiones**: un regex `v(\d+)\.(\d+)\.(\d+)`
+  los toma como "la última estable" y el informe concluye falsamente
+  "0 commits por detrás". Filtrar `^v0\.(\d+)\.(\d+)$`.
+- **`reset --hard` en un fork con parches propios destruye el trabajo**: verificar
+  primero `git rev-list --count $MB..HEAD` (ver "Decisión previa") — no asumir
+  que todo checkout de Hermes es descartable.
+- **El árbol del repo puede NO ser lo que corre**: en instalaciones Docker, comparar
+  el sha de 4 archivos dentro del contenedor contra el árbol antes de reconstruir.
+  Si difieren, el build desplegaría otra cosa (normalmente el fork viejo) y el
+  update sería una regresión silenciosa. Receta en
+  `references/docker-prod-update.md`.
+- **`hermes pm sync` no existe**: los subcomandos son `{lock,install,env,doctor,repair,environment,gc,bundle,status,update}`;
+  para preparar el entorno de un checkout es `hermes pm environment <nombre>`.
+- **`gateway run` no acepta `--port`**: sus flags son `[-h] [-v] [-q] [--replace] [--force]`.
+  El puerto del canario se fija en el `config.yaml` del home aislado.
+- **El rebuild del entorno compite con el timeout del servicio**: cambiar de rama
+  cambia el lock y el launcher reconstruye el venv al arrancar; con
+  `TimeoutStartUSec=90s` systemd puede matar el arranque y entrar en bucle. Con los
+  servicios **detenidos**, precalentar el entorno (`hermes pm install --wait`) y, si
+  el rebuild es largo, subir el timeout a 300 s durante la ventana.
 - **`shared:a2a fatal` (bind 9900)**: pre-existente, no es un retroceso del update.
 
 ## Salida
@@ -112,5 +236,17 @@ docker exec hermes-agent /opt/hermes/bin/hermes --version
 
 ## Referencias
 
+- `references/fork-upstream-replay.md` — actualizar un fork con parches propios
+  (replay de parches, medición de solape, ¿upstream ya lo trae?) y cadencia
+  semanal con autorización en dos pasos.
+- `references/docker-prod-update.md` — actualizar una instancia en Docker Compose:
+  deriva imagen↔árbol, transporte del commit validado por bundle, imagen de
+  rollback, canario en proyecto aparte y puertas de cutover.
+- `references/auditoria-replay-tercero.md` — auditar un replay ejecutado por
+  otro agente: leer su transcript, cobertura real de commits, paridad funcional
+  por keyword y los dos agujeros (modify/delete y working tree sucio).
+- `scripts/hermes_upstream_review.py` — informe semanal listo para Discord
+  (≤1900 chars) con veredicto de riesgo; detalle en
+  `/opt/data/logs/hermes-upstream-review-latest.md`.
 - `docs/actualizacion-hermes-vps-2026-08-20.md` — bitácora completa de la operación real.
 - `hermes-desktop-remote-connection/SKILL.md` — diagnóstico de conexión remota Desktop.

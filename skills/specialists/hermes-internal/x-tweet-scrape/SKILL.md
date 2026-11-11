@@ -118,6 +118,37 @@ urllib.request.urlopen(req, timeout=20, context=ssl_ctx)
 - No need to search for external content in this case — the tweet content IS the video
 - Example: `https://x.com/i/status/2085019745221554678` → t.co resolved to `twitter.com/imbabybrooklyn/status/2085019745221554678/video/1`
 
+## Video Tweet: Download + Transcribe + Deliver (verificado 31-oct-2026)
+
+Chain completa probada con tweet de video hablado (talking-head, 4:50):
+
+**1. Descargar el video:** `yt-dlp -f 'bestvideo[height<=1080]+bestaudio/best' --merge-output-format mp4 -o <out.mp4> '<url del tweet>'` (usa la URL del status, x.com o twitter.com). Verificar peso/duración con ffprobe.
+
+**2. Entrega por Telegram:** videos >~50 MB no envían nativo → comprimir antes:
+```bash
+ffmpeg -i in.mp4 -vcodec libx264 -crf 28 -vf scale=-2:720 -preset medium -c:a aac -b:a 128k out_720.mp4
+```
+(1080p/131 MB → 720p/~36 MB.) Entregar con `MEDIA:` y ofrecer el original si lo pide.
+
+**3. Ver el contenido cuando el video es talking-head:** los frames visuales NO contienen la información (es un expositor a cámara) — extraer 5-6 frames con vision_analyze para confirmar el formato y luego TRANSCRIBIR el audio:
+```bash
+ffmpeg -y -v error -i video.mp4 -ar 16000 -ac 1 audio.wav
+```
+
+**4. Transcripción local (faster-whisper) — PITFALL CRÍTICO del host:** el python por defecto es 3.14 y NO hay wheels de PyAV (faster-whisper exige `av<14`; versiones 12/13 fallan el build desde fuente en 3.14). Solución verificada:
+```bash
+uv venv /tmp/whisper_v312 --python 3.12
+VIRTUAL_ENV=/tmp/whisper_v312 uv pip install faster-whisper "av<14"
+```
+```python
+from faster_whisper import WhisperModel
+m = WhisperModel("small", device="cpu", compute_type="int8")
+segs, info = m.transcribe("/tmp/audio.wav", language="es", vad_filter=True)
+```
+Rendimiento medido: video de 4:50 → ~3 min en CPU con modelo `small` int8 (~37 segmentos). Con timestamps por segmento se puede citar minuto exacto en la respuesta.
+
+**5. Análisis del contenido:** separar explícitamente (a) hechos verificables del video, (b) afirmaciones especulativas/conspirativas sin fuente, y evaluar con búsqueda web el anclaje real (p.ej. campañas gubernamentales de preparación sí existen y son anteriores a la escalada; la cadena causal hipotética no tiene evidencia). El Admin valora la distinción honesta hecho-vs-especulación.
+
 ## Notes
 - fixupx.com works without authentication and returns rich metadata including engagement stats
 - X Articles (`/i/article/`) require a logged-in browser — cannot extract body via urllib

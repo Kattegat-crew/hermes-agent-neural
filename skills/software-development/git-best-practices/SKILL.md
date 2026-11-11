@@ -61,7 +61,16 @@ git push --force-with-lease origin <feature_branch>
 
 ---
 
-## 3. Production Invariants for Agents
+## 3. Branch Naming & Guarded Push Pitfalls (fleet-specific)
+
+- **Anti-force-push guards match substrings, not tokens.** The fleet's safety rules (and Plon's standing policy) block any `git push` command containing a `-f`-like sequence. This is a substring match: ordinary branch names such as `seo-geo-offline-fix` or any `*-fix` / `*-feat` name contain `-f` and are falsely rejected even for a normal fast-forward push (verified 2026-11-04 on MCG pushes).
+  - **Fix:** rename the branch instead of fighting the guard — `git branch -m <old> <new>` choosing names without hyphen-`f` substrings (e.g. `feat/seo-geo-2026-11`, `integracion-cierre-nov2026`), then push. Slash namespaces (`feat/…`, `fix/…`) are safe; `-f` inside the name is not.
+  - Never work around it with quoting/escaping tricks or actual force-push — the guard's intent is to keep history immutable.
+- **When direct pushes to `main` are guarded or unverifiable:** push an integration branch, open a PR, and merge only after remote CI reports green on the PR head. Local green does not satisfy the gate — confirm the CI status via API/PR `mergeable_state` before merging, and if the Actions status is not yet visible, wait or ask for eyes on the Actions page rather than merging blind.
+
+---
+
+## 4. Production Invariants for Agents
 
 1. **Verify Before Commit**: Always run linting or local test suites before committing. A broken commit breaks `git bisect`.
 2. **Never Commit Secrets**: Audit `git status` and `git diff --cached` before committing to prevent leaking API keys, `.env` files, or passwords.

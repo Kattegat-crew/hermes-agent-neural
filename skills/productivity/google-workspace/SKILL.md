@@ -18,6 +18,14 @@ metadata:
     related_skills: [himalaya]
 ---
 
+> [!IMPORTANT]
+> **REGLA DE PROTOCOLO CANÓNICO ACTIVA**: El acceso a Google Workspace (Gmail, Drive, Docs, Sheets, Calendar)
+> está centralizado en el servidor MCP  () usando los tokens
+> en  y el mapa en  (gestionados por ActivePieces).
+>  y  están revocados/deprecados. Usa siempre el MCP .
+
+
+
 # Google Workspace
 
 Gmail, Calendar, Drive, Contacts, Sheets, and Docs — through Hermes-managed OAuth and a thin CLI wrapper. When `gws` is installed, the skill uses it as the execution backend for broader Google Workspace coverage; otherwise it falls back to the bundled Python client implementation.
@@ -36,6 +44,11 @@ Gmail, Calendar, Drive, Contacts, Sheets, and Docs — through Hermes-managed OA
 
 The setup is fully non-interactive — you drive it step by step so it works
 on CLI, Telegram, Discord, or any platform.
+
+Run the setup script with Python from the Hermes environment, not an unrelated
+system Python. `--install-deps` syncs Hermes' declared Google extra through PM;
+after syncing, restart Hermes and rerun the OAuth command. If Hermes is not
+importable, use `hermes setup` first rather than installing packages with pip.
 
 Define a shorthand first:
 
@@ -277,8 +290,9 @@ $GAPI sheets append SHEET_ID "Sheet1!A:C" --values '[["new","row","data"]]'
 ### Docs
 
 ```bash
-# Read
+# Read (a tabbed Doc returns a "tabs" array; single-tab and legacy Docs also return "body")
 $GAPI docs get DOC_ID
+$GAPI docs get DOC_ID --tab TAB_ID     # read one tab of a tabbed Doc
 
 # Create a new Doc (optionally seeded with body text)
 $GAPI docs create --title "Meeting Notes"
@@ -286,6 +300,7 @@ $GAPI docs create --title "Draft" --body "First paragraph..."
 
 # Append text to the end of an existing Doc
 $GAPI docs append DOC_ID --text "Additional content to append"
+$GAPI docs append DOC_ID --tab TAB_ID --text "..."   # --tab required when the Doc has multiple tabs
 ```
 
 ## Output Format

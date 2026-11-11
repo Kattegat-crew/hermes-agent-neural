@@ -40,7 +40,7 @@ sesión actual** a mitad de turno.
    restart cuando el turno ya terminó.
 
 ```bash
-# /opt/data/scripts/gateway_restart_once.sh (correcto: apunta a main-hermes)
+# /opt/data/scripts/gateway_restart_once.sh (correcto: apunta a gateway-default)
 #!/bin/bash
 LOG=/opt/data/logs/gateway-restart.log
 echo "$(date '+%Y-%m-%d %H:%M:%S') restarting main-hermes via s6" >> "$LOG"
@@ -69,6 +69,26 @@ Confirmación rápida del supervisor: `ls -la /run/service/` + `ps -eo pid,cmd |
   el gateway (también arregla allowlists que el proceso viejo tenía desactualizadas).
 - Cambios en `/opt/data/.env` solo aplican al ARRANCAR del proceso — verificar el env
   del proceso vivo con `tr '\0' '\n' < /proc/<pid>/environ | grep WHATSAPP`.
+
+## Topología PROD (verificado 19/10/2026): una gateway por host
+
+- El core actual de Hermes **impone una única gateway por host** (multiplex): el host
+  gateway (`gateway-default`) es el inbound de TODOS los perfiles sin `gateway.standalone`.
+- Los servicios por-perfil legacy (ej. `gateway-yulieth`) son **rechazados con exit 78**
+  (`"Profile 'X' does not get a gateway of its own"` — log en
+  `/opt/data/logs/gateways/<perfil>/current`). Si un servicio por-perfil aparece `down
+  (exitcode 78)`, NO es un crash ni un error de config del perfil: dejarlo abajo y
+  verificar que el perfil está servido vía `profile_routes` en `/opt/data/config.yaml`
+  (que el host gateway carga al arrancar).
+- Servicios activos en PROD (`/run/service/` dentro del contenedor `hermes-agent`):
+  `gateway-default`, `gateway-golden-game`, `gateway-lucky-club` (standalone permitidos)
+  y `main-hermes` (dashboard). Rutas de log: `/opt/data/logs/gateways/<perfil>/current`.
+- Desde el HOST de PROD: `ssh prod "docker exec hermes-agent /command/s6-svc -r
+  /run/service/gateway-default"`. Los binarios s6 viven en `/command/` dentro del
+  contenedor (no en `/package/...` del host).
+- Un run manual de diagnóstico (`hermes -p X gateway run --replace`) puede dejar un
+  proceso huérfano que interfiere con el servicio supervisado; tras diagnosticar así,
+  verificar estado con `s6-svstat` y re-levantar con `s6-svc -u` si quedó abajo.
 
 ## Relación con otras skills
 

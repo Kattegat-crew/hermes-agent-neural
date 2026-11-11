@@ -1,13 +1,11 @@
 ---
 name: paquetes-compliance-promociones
-description: "Use when one campaign needs a legal pack per company."
+description: >-
+  Use when one campaign needs a legal pack per company. T&C multi-empresa: un documento legal por organizador. hermes: tags: [legal, compliance, docx, promociones, multi-empresa, casinos, colombia]
 tags: [legal, compliance, docx, promociones, multiempresa, casinos, colombia]
-  T&C multi-empresa: un documento legal por organizador.
 version: 1.0.0
 author: hermes
 metadata:
-  hermes:
-    tags: [legal, compliance, docx, promociones, multi-empresa, casinos, colombia]
 triggers:
   - T&C / términos y condiciones de una promoción que une a DOS o más empresas (cada una con su propio documento)
   - "generar documento legal por empresa / no pueden compartir documentos"
@@ -55,6 +53,14 @@ Patrón validado: campaña Bingo Millonario sept 2026 (Golden Game S.A.S. + Luck
    Operador» y «PUNTOS ABIERTOS / POR VERIFICAR» en un anexo; no reescribir cláusulas ni dejar
    huecos en el borrador. Subir versión nueva solo cuando el cliente lo pida o los puntos
    queden cerrados.
+
+6. **Minimalismo de entregables (corrección del Administrador, Aguinaldo 2026).** El expediente interno de una campaña puede llegar a ~27 archivos (privacidad ×10, controles ×14, calendario ×3), pero los ENTREGABLES al cliente/sede son solo 2–3: un TyC por empresa + UN manual de encargadas común con tabla de premios por sede. El aviso de privacidad y la autorización de datos se INTEGRAN como anexos del TyC, nunca como cuadernillo aparte; el consentimiento comercial solo si hay marketing directo (p. ej. WhatsApp). De las planillas de control, imprimir en sede solo las imprescindibles (registro de tarjetas, control de canje, acta de sorteo); el resto va digital. La guía del cliente es un volante dentro del manual, no un documento adicional.
+7. **Aclaración de mecánica a mitad de producción se propaga a TODAS las capas.** Cuando el operador corrige la mecánica en caliente (p. ej. «el sello se pone UNA VEZ TERMINADO el sorteo, luego se desocupa la urna y se entregan boletas nuevas»), actualizar en la misma pasada: dinámica/documento madre, contract (campaign.yaml), registro de fuentes con el literal, handoff común y aviso a los workers que están redactando en ese momento (comentario en su tarjeta Kanban) — un TyC redactado con la premisa vieja hereda el orden incorrecto. Verificar el documento al cerrar el worker, no confiar en su resumen.
+8. **Ambigüedades de premios se resuelven explícitas, nunca por defecto.** «Premio final $X» sin definir si es POR SEDE o EVENTO CENTRAL cambia el total agregado en 2× (12 sedes: $51,2M vs $29,2M). Preguntar una sola línea al operador, registrar la respuesta en fuentes y recalcular; presentar los agregados como verificación aritmética de componentes, no como presupuesto autorizado.
+9. **Verificación de resúmenes de workers:** los self-reports de tareas Kanban se contrastan con evidencia real antes de reportar (conteo de archivos con find, lectura de los entregables, re-ejecución de la aritmética con python; los run summaries viven en la tabla task_runs del kanban.db, legible en modo read-only). Un resumen verosímil no es evidencia.
+10. **Formato de los documentos operativos de sede (corrección del Administrador, Aguinaldo 2026, dos iteraciones).** El primer intento («folleto» de 15 págs) no lo lee nadie y la versión ultra-corta que lo reemplazó quedó condescendiente y pobre. El estándar aprobado es el patrón Halloween: prosa profesional, secciones numeradas, tablas de control (inventario, registro, contingencias), tono directo sin infantilizar. Simplificar POR AUDIENCIA (operativas completas para encargadas, extractos accionables para cajeras), no recortando el documento a ciegas. Ante duda de extensión, anclarse a los manuales de la campaña anterior aprobados, no inventar un formato nuevo.
+11. **Membrete oficial NeuralCrew Labs:** todo documento formal de cliente lleva el membrete (logo + NEURALCREW LABS en dorado + bloque cliente/fecha/asunto + pie de contacto). El diseño canónico ya existe en el generador de informes del repo: REUTILIZARLO, nunca rediseñarlo de cero (regla de conservación de diseños aprobados).
+12. **Entrega vía Drive — conteo exacto tras cada subida.** Los reintentos de subida a la API de Drive DUPLICAN archivos silenciosamente (verificado: 8 duplicados por marca en una entrega). Después de subir, listar la carpeta y comparar el set de nombres contra lo esperado: nombres exactos, conteo exacto, 0 duplicados; borrar los duplicados y re-verificar antes de reportar. Los entregables van a `01-docs/finales` con nombre `NN-tipo_vX.Y_YYYY-MM-DD.ext` (contrato de carpetas: docs/marketing-factory/CAMPAIGN_FOLDER_CONTRACT.md del repo).
 
 ## Patrón de implementación (scriptable)
 
