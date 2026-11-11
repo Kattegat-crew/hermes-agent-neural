@@ -101,6 +101,83 @@ def fetch_identity(key: str, timeout: float = 20.0) -> dict:
     return _get("/api/auth/me", key, timeout)
 
 
+# ------------------------------------------------------- créditos (con sesión)
+# /api/usage/credits NO acepta la API key (401 session_required): exige la cookie
+# del dashboard. Se obtiene con el magic link al correo y se guarda en el secret.
+SESSION_SECRET = os.environ.get("NAN_SESSION_SECRET", "/opt/data/secrets/nan-session.json")
+
+
+def load_session_cookie(path: str | None = None) -> str | None:
+    """Cookie `nan_session=...` del secret, o None si no hay sesión guardada."""
+    return session_meta(path).get("cookie")
+
+
+def session_meta(path: str | None = None) -> dict:
+    """Cookie y caducidad del secret: permite avisar antes del 401."""
+    try:
+        with open(path or SESSION_SECRET, encoding="utf-8") as fh:
+            data = json.load(fh)
+    except (OSError, ValueError):
+        return {}
+    if not isinstance(data, dict):
+        return {}
+    cookie = str(data.get("cookie") or "").strip()
+    if not cookie:
+        return {}
+    return {"cookie": cookie, "expires_iso": data.get("expires_iso"), "account": data.get("account")}
+
+
+def _get_cookie(path: str, cookie: str, timeout: float = 20.0) -> dict:
+    req = urllib.request.Request(
+        API + path,
+        headers={"Cookie": cookie, "User-Agent": UA, "Accept": "application/json"},
+    )
+    with urllib.request.urlopen(req, timeout=timeout) as resp:
+        return json.loads(resp.read().decode("utf-8"))
+
+
+def fetch_credits(cookie: str | None = None, timeout: float = 20.0) -> dict:
+    """Créditos del plan. Lanza HTTPError 401 si la sesión caducó."""
+    cookie = cookie or load_session_cookie()
+    if not cookie:
+        raise RuntimeError("sin sesión guardada")
+    return _get_cookie("/api/usage/credits", cookie, timeout)
+
+
+def credits_summary(credits: dict) -> dict:
+    """Recorta /api/usage/credits a lo que necesita el informe. Puro."""
+    allowance = float(credits.get("allowanceCredits") or 0)
+    used = float(credits.get("usedCredits") or 0)
+    remaining = credits.get("remainingCredits")
+    pct = round(used / allowance * 100, 1) if allowance > 0 else None
+    models = []
+    for m in credits.get("models") or []:
+        try:
+            models.append(
+                {
+                    "model": m.get("model") or "?",
+                    "credits": float(m.get("creditsThisMonth") or 0),
+                    "tokens": int(m.get("tokensThisMonth") or 0),
+                    "approx_per_m": m.get("approxCreditsPerMTokens"),
+                }
+            )
+        except (TypeError, ValueError):
+            continue
+    return {
+        "enabled": bool(credits.get("enabled")),
+        "allowance": allowance,
+        "used": used,
+        "remaining": float(remaining) if isinstance(remaining, (int, float)) else None,
+        "pct": pct,
+        "period_end": credits.get("periodEnd"),
+        "pack_credits": float(credits.get("packCredits") or 0),
+        "pack_expires_at": credits.get("packExpiresAt"),
+        "frontier_paused": bool(credits.get("frontierPaused")),
+        "frozen": bool(credits.get("frozen")),
+        "models": models,
+    }
+
+
 # ---------------------------------------------------------------------- análise
 def _parse_dt(value) -> _dt.datetime | None:
     if not value:

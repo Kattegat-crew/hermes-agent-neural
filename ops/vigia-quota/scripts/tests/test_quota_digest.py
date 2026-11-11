@@ -126,6 +126,21 @@ class SubscriptionRowsTest(unittest.TestCase):
         self.assertEqual(self.mod._worst_level(None), "ok")
 
 
+NAN_CREDITS_FIXTURE = {
+    "enabled": True,
+    "allowance": 7000.0,
+    "used": 845.6,
+    "remaining": 6154.4,
+    "pct": 12.1,
+    "period_end": "2026-11-14T20:36:42+00:00",
+    "pack_credits": 0.0,
+    "pack_expires_at": None,
+    "frontier_paused": False,
+    "frozen": False,
+    "models": [{"model": "deepseek-v4-flash", "credits": 660.1, "tokens": 694062568, "approx_per_m": 1.075}],
+}
+
+
 class RenderTest(unittest.TestCase):
     def setUp(self):
         self.tmp = tempfile.TemporaryDirectory()
@@ -156,7 +171,39 @@ class RenderTest(unittest.TestCase):
         self.assertIn("1.90B/3.00B", text)
         self.assertIn("proy. 180.3%", text)
         self.assertIn("pack 50M", text)
-        self.assertIn("cookie de sesión", text)
+
+    def test_sin_sesion_lo_dice(self):
+        nan = dict(NAN_FIXTURE, credits=None, credits_state="sin_sesion", credits_available=False, credits_reason="no hay sesión guardada (magic link al correo)")
+        text = self.mod.render(self.mod.subscription_rows(CACHE_FIXTURE), nan, CACHE_FIXTURE["fetched_at"], self.now)
+        self.assertIn("créditos: no hay sesión guardada", text)
+        self.assertNotIn("Plan:", text)
+
+    def test_creditos_del_plan_cuando_hay_sesion(self):
+        nan = dict(NAN_FIXTURE, credits=NAN_CREDITS_FIXTURE, credits_state="ok", credits_available=True, credits_reason="")
+        text = self.mod.render(self.mod.subscription_rows(CACHE_FIXTURE), nan, CACHE_FIXTURE["fetched_at"], self.now)
+        self.assertIn("Plan: 846/7.000 cr (12.1%)", text)
+        self.assertIn("quedan 6.154", text)
+        self.assertIn("14-Nov 15:36", text)  # periodEnd 20:36Z en Bogotá
+        self.assertIn("660.1 cr", text)  # crédito por modelo
+        self.assertNotIn("créditos:", text)  # sin aviso de sesión
+
+    def test_pack_de_creditos_con_caducidad(self):
+        credits = dict(NAN_CREDITS_FIXTURE, pack_credits=500.0, pack_expires_at="2026-12-01T05:00:00+00:00")
+        nan = dict(NAN_FIXTURE, credits=credits, credits_state="ok", credits_available=True, credits_reason="")
+        text = self.mod.render(self.mod.subscription_rows(CACHE_FIXTURE), nan, CACHE_FIXTURE["fetched_at"], self.now)
+        self.assertIn("Pack: 500 cr", text)
+        self.assertIn("caduca 01-Dec 00:00", text)
+
+    def test_aviso_de_sesion_por_caducar(self):
+        nan = dict(NAN_FIXTURE, credits=NAN_CREDITS_FIXTURE, credits_state="ok", credits_available=True, credits_reason="", session_days=3)
+        text = self.mod.render(self.mod.subscription_rows(CACHE_FIXTURE), nan, CACHE_FIXTURE["fetched_at"], self.now)
+        self.assertIn("sesión NaN caduca en 3 días", text)
+
+    def test_sesion_caducada_se_declara(self):
+        nan = dict(NAN_FIXTURE, credits=None, credits_state="sesion_caducada", credits_available=False, credits_reason="sesión caducada (HTTP 401): regenerar magic link")
+        text = self.mod.render(self.mod.subscription_rows(CACHE_FIXTURE), nan, CACHE_FIXTURE["fetched_at"], self.now)
+        self.assertIn("créditos: sesión caducada (HTTP 401)", text)
+        self.assertNotIn("Plan:", text)
 
     def test_nan_caido_no_rompe_el_informe(self):
         broken = {"state": "error", "reason": "HTTPError 500"}

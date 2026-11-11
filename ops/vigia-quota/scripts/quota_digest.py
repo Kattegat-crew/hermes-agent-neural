@@ -26,6 +26,7 @@ import json
 import os
 import subprocess
 import sys
+import urllib.error as _urlerr
 from pathlib import Path
 
 HOME = Path(os.environ.get("HERMES_HOME") or "/opt/hermes-agent-data")
@@ -83,6 +84,17 @@ def _fmt_tokens(n):
     if n >= 1_000:
         return f"{n / 1_000:.0f}k"
     return str(n)
+
+
+def _fmt_credits(n):
+    """Créditos: miles con punto y un decimal cuando son pocos."""
+    try:
+        v = float(n or 0)
+    except (TypeError, ValueError):
+        return "—"
+    if v >= 100:
+        return f"{v:,.0f}".replace(",", ".")
+    return f"{v:.1f}"
 
 
 def cache_age_seconds():
@@ -193,10 +205,44 @@ def nan_summary():
                 "period_resets_at": snap.get("period_end"),
             }
         )
+
+    # Créditos del plan: solo con la cookie del dashboard (la API key da 401).
+    credits = None
+    credits_state = "sin_sesion"
+    credits_reason = "no hay sesión guardada (magic link al correo)"
+    session_days = None
+    try:
+        meta = nan_quota.session_meta()
+        cookie = meta.get("cookie")
+        if cookie:
+            exp = _parse_iso(meta.get("expires_iso"))
+            if exp is not None:
+                session_days = (exp - dt.datetime.now(dt.timezone.utc)).days
+            try:
+                credits = nan_quota.credits_summary(nan_quota.fetch_credits(cookie))
+                credits_state = "ok"
+                credits_reason = ""
+            except _urlerr.HTTPError as exc:
+                if exc.code in (401, 403):
+                    credits_state = "sesion_caducada"
+                    credits_reason = f"sesión caducada (HTTP {exc.code}): regenerar magic link"
+                else:
+                    credits_state = "error"
+                    credits_reason = f"HTTP {exc.code} al leer créditos"
+            except Exception as exc:  # red, timeout, JSON raro
+                credits_state = "error"
+                credits_reason = f"{type(exc).__name__} leyendo créditos"
+    except Exception as exc:  # pragma: no cover - nan_quota roto ya se filtró arriba
+        credits_state = "error"
+        credits_reason = f"{type(exc).__name__} inicializando sesión"
+
     return {
         "state": "ok",
-        "credits_available": False,
-        "credits_reason": "session_required: /api/usage/credits exige cookie de dashboard",
+        "credits_available": credits_state == "ok",
+        "credits_state": credits_state,
+        "credits_reason": credits_reason,
+        "credits": credits,
+        "session_days": session_days,
         "worst_level": snap.get("worst_level"),
         "worst_model": snap.get("worst_model"),
         "period_end": snap.get("period_end"),
@@ -240,6 +286,33 @@ def render(subs, nan, fetched_at, now=None):
     if nan.get("state") != "ok":
         lines.append(f"  no disponible ({nan.get('reason')})")
     else:
+        credits = nan.get("credits") or {}
+        if credits:
+            pct = credits.get("pct")
+            pct_txt = "—" if pct is None else f"{pct}%"
+            left = ""
+            if credits.get("remaining") is not None:
+                left = f" · quedan {_fmt_credits(credits['remaining'])}"
+            lines.append(
+                f"  {ICON[_worst_level(pct)]} Plan: {_fmt_credits(credits.get('used'))}"
+                f"/{_fmt_credits(credits.get('allowance'))} cr ({pct_txt}){left}"
+                f" · reset {_fmt_reset(credits.get('period_end'), now)}"
+            )
+            if credits.get("pack_credits"):
+                exp = credits.get("pack_expires_at")
+                exp_txt = f" · caduca {_fmt_reset(exp, now)}" if exp else ""
+                lines.append(f"  · Pack: {_fmt_credits(credits['pack_credits'])} cr{exp_txt}")
+            flags = [
+                txt
+                for txt, on in (("congelado", credits.get("frozen")), ("frontier en pausa", credits.get("frontier_paused")))
+                if on
+            ]
+            if flags:
+                lines.append(f"  ! {' · '.join(flags)}")
+            days = nan.get("session_days")
+            if isinstance(days, int) and days <= 4:
+                lines.append(f"  ! sesión NaN caduca en {days} día{'s' if days != 1 else ''}: regenerar magic link")
+        cred_by_model = {m.get("model"): m for m in credits.get("models") or []}
         all_models = nan["models"]
         shown = all_models[:MAX_NAN_ROWS]
         for m in shown:
@@ -259,16 +332,19 @@ def render(subs, nan, fetched_at, now=None):
             if m.get("projected_pct") is not None:
                 proj = f" · proy. {m['projected_pct']}% al reset"
             tokens = f"({_fmt_tokens(m.get('tokens_used'))}/{_fmt_tokens(m.get('cap'))}{extra})"
-            lines.append(f"  {ICON.get(m['level'], '·')} {m['model']}: {pct} {tokens}{proj}")
+            cred = ""
+            cm = cred_by_model.get(m["model"])
+            if cm and cm.get("credits"):
+                cred = f" · {cm['credits']:.1f} cr"
+            lines.append(f"  {ICON.get(m['level'], '·')} {m['model']}: {pct} {tokens}{proj}{cred}")
         if nan.get("worst_level") != "ok":
             lines.append(f"  → en riesgo: {nan.get('worst_model')} ({nan['worst_level']})")
         hidden = len(all_models) - len(shown)
         if hidden > 0:
             lines.append(f"  …y {hidden} modelo{'s' if hidden != 1 else ''} más")
-        lines.append(
-            "  · créditos del plan y caducidad de packs: requieren cookie de sesión "
-            "(NaN devuelve 401 session_required con API key)"
-        )
+        if nan.get("credits_state") != "ok":
+            reason = nan.get("credits_reason") or "no disponibles"
+            lines.append(f"  · créditos: {reason}")
 
     age = cache_age_seconds()
     stamp = "?" if fetched_at is None else _fmt_reset(fetched_at, now)
