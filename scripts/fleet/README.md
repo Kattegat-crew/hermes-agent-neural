@@ -8,6 +8,7 @@ a diario y rote sesión**, y que verifican que efectivamente ocurrió.
 | `fleet_daily_memory_audit.py` | Auditoría estática de la flota: exige `guardar-diario-memoria` activo por perfil y `session_reset` en modo real. Exit 1 si hay huecos. | DEV (contenedor) |
 | `session_reset.py` | Cierra sesiones por umbral de tokens (300 k) y/o inactividad, con guarda de memoria fail-closed. Incluye el perfil admin (`state.db` raíz). | PROD (contenedor) |
 | `session_reset_cron.py` | Wrapper del cron 05:00 con flags explícitos (`--clientes --apply --quiet --memory-max-hours 20 --max-tokens 300000`). | PROD (contenedor) |
+| `probe_chat_diario.py` | Prueba funcional del chat web 1×día con `session_id` único (1 turno): verifica que el modelo responde, no solo que el proceso vive. | DEV (contenedor) |
 | `guardar_diario_confirmar.py` | Confirmador diario 00:10: una línea con memoria por perfil en DEV y PROD + evidencia de reset. Es el job `guardar-diario-confirmar` (entrega al hilo de Discord de higiene). | DEV (contenedor) |
 
 ## Uso
@@ -21,6 +22,14 @@ python3 scripts/fleet/guardar_diario_confirmar.py            # DEV + PROD
 python3 scripts/fleet/guardar_diario_confirmar.py --no-prod  # solo DEV
 python3 scripts/fleet/guardar_diario_confirmar.py --now 2026-11-12T00:10:00-05:00
 ```
+
+## Monitoreo: medir no es conversar
+
+Los monitores de disponibilidad (Uptime Kuma) probaban el chat enviando una completion real
+cada 60 s. En PROD eso acumuló sesiones de **3.802 llamadas / 5,68 M tokens**. Regla:
+
+- **Disponibilidad** → sonda barata (`POST /webhook/probe-chat` en las landings), 0 tokens y 0 sesión.
+- **Función** → `probe_chat_diario.py` una vez al día, con `session_id` único por corrida.
 
 ## Reglas que estos scripts hacen cumplir
 
