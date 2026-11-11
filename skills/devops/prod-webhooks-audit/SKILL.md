@@ -97,6 +97,13 @@ Hallazgos confirmados en vivo que cambian el diagnóstico antes de tocar código
 5. **Sonda CORS de un tiro (separa CORS de validación):** repetir el mismo POST cambiando solo el header `Origin` (http vs https). `403 Acceso denegado.` con http + 400/201 con https = CORS funciona y el problema es que los clics aterrizan en `http`. Si `http://` sirve 200 sin redirect, además del 403 hay PII (nombre/cédula/teléfono) viajando en claro y contenido duplicado SEO; el fix es Cloudflare → SSL/TLS → *Always Use HTTPS* (toggle, sin código, rollback de 1 clic).
 6. **Peso de entrada medible sin Lighthouse:** sumar `size_download` de todos los `/assets/*.js` referenciados por el HTML servido — con tráfico in-app de Meta (3G/4G), >300 KB de JS antes del CTA es fricción medible (lazy-load del chat y de librerías de animación).
 
+## Copy del chat: el literal del código NO es lo que responde (verificado 10-nov-2026)
+
+Auditar textos del chat grepeando el gateway da falsos positivos. En `webhook-server-paradise.js` los literales de `getFaqFallback()` (sedes, bono, horario) **solo se ejecutan si TODA la cadena de modelos falla**; la ruta viva es el LLM con `SYSTEM_PROMPT + KNOWLEDGE`. Caso real: el gateway desplegado tenía `SEDES OFICIALES (… 10:00 AM a 10:00 PM)` en `knowledge.js` y el mismo texto en el fallback, y la respuesta en vivo a «¿a qué hora cierran?» fue *«el horario no lo tengo confirmado»* — o sea, tres estados (código, knowledge, respuesta servida) y ninguno coincidía con el sitio.
+
+- **Regla:** para saber qué se publica, sondear el endpoint (`POST /webhook/<marca>-chat` con `session_id` propio, 2-3 formulaciones distintas porque el ruteo al LLM varía). El grep sirve para saber qué *puede* decir en degradación, no qué dice.
+- **Al auditar consistencia de datos de marca:** comparar siempre las tres capas — repo del landing (`src/data/*.js`, que alimenta el HTML/schema), gateway de PROD (`knowledge.js` + `SYSTEM_PROMPT`) y respuesta servida. El landing y el gateway son despliegues independientes con copia propia: cambiar `server/knowledge.js` en el repo del landing **no** cambia el chat de producción.
+
 ## Pipeline de notificación de leads: cron (PG) vs webhook firmado (AP) — verificado 28-oct-2026
 
 Causa raíz del GAP de cobertura (cron veía 100% de leads, webhook 0 eventos): **el webhook firmado a Hermes se agregó al flow equivocado de ActivePieces**.
