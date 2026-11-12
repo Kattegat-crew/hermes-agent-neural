@@ -34,6 +34,10 @@ razonamiento y el JSON nunca llegó (`sin veredicto válido`). El script manda
 `chat_template_kwargs.enable_thinking=false` + `reasoning_effort=none` y `max_tokens=1500`; si el
 gateway rechaza esos campos, reintenta sin ellos y parsea también `reasoning_content`.
 
+Dos corridas del mismo modelo sobre el mismo archivo, `temperature=0`, no coincidieron: una marcó
+subtítulos superpuestos en 18.5 s y la otra no los vio. El VLM no es un instrumento determinista;
+por eso el presupuesto de pasadas y el gate determinista no son opcionales.
+
 ## Uso
 
 ```bash

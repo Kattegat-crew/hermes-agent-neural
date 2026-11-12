@@ -13,6 +13,7 @@ Exit: 0 sin vacíos fuera de las ventanas permitidas · 1 hay vacíos · 2 no se
 import argparse
 import json
 import os
+import shutil
 import subprocess
 import sys
 import tempfile
@@ -73,10 +74,19 @@ def main():
     ap.add_argument("--quiet", action="store_true")
     a = ap.parse_args()
 
+    tmpdir = None
     try:
         meta = probe(a.video)
-        allow = {float(x) for x in a.allow.split(",") if x.strip()}
-        tmp = os.path.join(tempfile.gettempdir(), "qa_gate_frame.png")
+        if a.fps <= 0:
+            raise GateError(f"--fps debe ser > 0 (recibido {a.fps}): con 0 el muestreo no avanza")
+        try:
+            allow = {float(x) for x in a.allow.split(",") if x.strip()}
+        except ValueError as exc:
+            raise GateError(f"--allow ilegible: {a.allow!r}") from exc
+        # Directorio propio por corrida: una ruta fija en /tmp es predecible y se puede
+        # pre-crear (symlink) para escribir donde no se debe.
+        tmpdir = tempfile.mkdtemp(prefix="qa_gate_")
+        tmp = os.path.join(tmpdir, "frame.png")
         empties, rows = [], []
         t = 0.0
         while t < meta["dur"]:
@@ -91,6 +101,9 @@ def main():
     except GateError as exc:
         print(f"ERROR: {exc}", file=sys.stderr)
         sys.exit(2)
+    finally:
+        if tmpdir:
+            shutil.rmtree(tmpdir, ignore_errors=True)
 
     if not a.quiet:
         print(f"{meta['w']}x{meta['h']} · {meta['fps']} fps · {meta['dur']:.2f}s · "

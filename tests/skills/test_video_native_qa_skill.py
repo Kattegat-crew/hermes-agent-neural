@@ -427,3 +427,103 @@ def test_gate_main_exits_two_when_it_cannot_measure(gate, monkeypatch, capsys):
         gate.main()
     assert exc.value.code == 2
     assert "sin ffprobe" in capsys.readouterr().err
+
+
+# ── qa_gate.py: muestreo real (sin ffmpeg, frames sintéticos) ─────────────────
+META = {"w": 8, "h": 8, "fps": 1.0, "dur": 3.0, "size": 1000}
+
+
+def _frame(color):
+    from PIL import Image
+    return Image.new("L", (8, 8), color=color)
+
+
+def _run_gate(gate, monkeypatch, argv, frames):
+    monkeypatch.setattr(gate, "probe", lambda _p: dict(META))
+    it = iter(frames)
+    monkeypatch.setattr(gate, "frame_at", lambda _p, _t, _tmp: next(it))
+    monkeypatch.setattr("sys.argv", ["qa_gate.py", "/tmp/x.mp4", "--quiet", *argv])
+    with pytest.raises(SystemExit) as exc:
+        gate.main()
+    return exc.value.code
+
+
+def test_gate_flags_black_frames(gate, monkeypatch, capsys):
+    code = _run_gate(gate, monkeypatch, [], [_frame(0), _frame(0), _frame(0)])
+    assert code == 1
+    assert "3 frames vacíos" in capsys.readouterr().out
+
+
+def test_gate_allow_covers_intentional_black(gate, monkeypatch):
+    code = _run_gate(gate, monkeypatch, ["--allow", "0,1,2"],
+                     [_frame(0), _frame(0), _frame(0)])
+    assert code == 0
+
+
+def test_gate_light_frames_pass(gate, monkeypatch):
+    code = _run_gate(gate, monkeypatch, [], [_frame(200), _frame(200), _frame(200)])
+    assert code == 0
+
+
+def test_gate_rejects_zero_fps_instead_of_hanging(gate, monkeypatch, capsys):
+    code = _run_gate(gate, monkeypatch, ["--fps", "0"], [_frame(200)])
+    assert code == 2
+    assert "fps" in capsys.readouterr().err
+
+
+def test_gate_rejects_unreadable_allow(gate, monkeypatch, capsys):
+    code = _run_gate(gate, monkeypatch, ["--allow", "0,abc"], [_frame(200)])
+    assert code == 2
+    assert "allow" in capsys.readouterr().err
+
+
+# ── politica de severidades y evidencia declarada (ciclo 2) ───────────────────
+def test_confirmed_low_stays_a_warning(mod):
+    d = mod.decide([
+        {"passed": False, "blocking": [blocking("low", t=5.0)]},
+        {"passed": False, "blocking": [blocking("low", t=5.2)]},
+    ])
+    assert d["passed"] is True and d["blocking"] == [] and d["warnings"]
+
+
+def test_narration_sync_false_blocks_even_with_empty_blocking(mod, video, guion):
+    bad = json.dumps({
+        "passed": True, "score": 7, "voids": [], "collisions": [],
+        "narration_sync": {"ok": False, "mismatches": [
+            {"t": 12.0, "script_line": "el agente recuerda", "seen": "texto de otra escena"}]},
+        "legibility": {"ok": True, "issues": []}, "pacing": {"ok": True, "why": "ok"},
+        "blocking": [],
+    })
+    assert run(mod, video, guion, FakeTransport(bad)) == 1
+
+
+def test_declared_voids_and_collisions_are_findings(mod):
+    v = {"passed": True, "score": 9,
+         "voids": [{"t": 3.0, "why": "negro con voz"}],
+         "collisions": [{"t": 5.0, "why": "caption sobre título"}],
+         "narration_sync": {"ok": True, "mismatches": []},
+         "legibility": {"ok": True, "issues": []},
+         "pacing": {"ok": True, "why": "ok"}, "blocking": []}
+    norm = mod.normalize_pass(v)
+    assert len(norm["blocking"]) == 2
+    assert {f["severity"] for f in norm["blocking"]} == {"high"}
+    assert mod.decide([v])["passed"] is False
+
+
+def test_bad_pacing_is_only_a_warning(mod):
+    v = {"passed": True, "score": 6, "voids": [], "collisions": [],
+         "narration_sync": {"ok": True, "mismatches": []},
+         "legibility": {"ok": True, "issues": []},
+         "pacing": {"ok": False, "why": "diapositivas narradas"}, "blocking": []}
+    d = mod.decide([v])
+    assert d["passed"] is True
+    assert d["warnings"] and d["warnings"][0]["severity"] == "low"
+
+
+def test_bad_legibility_needs_confirmation(mod):
+    v = {"passed": True, "score": 6, "voids": [], "collisions": [],
+         "narration_sync": {"ok": True, "mismatches": []},
+         "legibility": {"ok": False, "issues": [{"t": 9.0, "why": "texto gris sobre gris"}]},
+         "pacing": {"ok": True, "why": "ok"}, "blocking": []}
+    assert mod.decide([v])["passed"] is True, "medium en una pasada no bloquea"
+    assert mod.decide([v, v])["passed"] is False, "medium confirmado sí bloquea"

@@ -31,7 +31,9 @@ import urllib.request
 from pathlib import Path
 
 API_URL = "https://api.nan.builders/v1/chat/completions"
-CONTRACT_VERSION = "1"
+# 2: la decision incorpora voids/collisions/narration_sync/legibility/pacing y
+# solo `medium` escala con dos pasadas. Cambiar la politica exige invalidar cache.
+CONTRACT_VERSION = "2"
 DEFAULT_MODEL = "glm5.3-flash"
 DEFAULT_MAX_PASSES = 2
 DEFAULT_MAX_MB = 40.0
@@ -219,6 +221,77 @@ def parse_verdict(text: str) -> dict | None:
     return out
 
 
+EVIDENCE_SEVERITY = {"voids": "high", "collisions": "high", "narration_sync": "high",
+                     "legibility": "medium", "pacing": "low"}
+
+
+def evidence_findings(v: dict) -> list[dict]:
+    """Convierte las secciones de evidencia en hallazgos.
+
+    Ignorarlas era el agujero: un veredicto podía declarar `narration_sync.ok=false` o una
+    colisión en su lista y aun así pasar con `blocking: []`. La evidencia manda.
+    """
+    out: list[dict] = []
+
+    for item in v.get("voids") or []:
+        if isinstance(item, dict):
+            out.append({"severity": "high", "t": _as_time(item.get("t")),
+                        "what": f"void: {str(item.get('why') or 'nada en pantalla').strip()[:200]}"})
+    for item in v.get("collisions") or []:
+        if isinstance(item, dict):
+            out.append({"severity": "high", "t": _as_time(item.get("t")),
+                        "what": f"colisión: {str(item.get('why') or 'textos superpuestos').strip()[:200]}"})
+
+    ns = v.get("narration_sync")
+    if isinstance(ns, dict) and ns.get("ok") is False:
+        mismatches = [m for m in (ns.get("mismatches") or []) if isinstance(m, dict)]
+        if not mismatches:
+            out.append({"severity": "high", "t": None,
+                        "what": "narration_sync.ok=false sin detalle de desajuste"})
+        for m in mismatches:
+            seen = str(m.get("seen") or "").strip()[:120]
+            line = str(m.get("script_line") or "").strip()[:120]
+            out.append({"severity": "high", "t": _as_time(m.get("t")),
+                        "what": f"voz/imagen no coinciden: guion «{line}» vs pantalla «{seen}»"})
+
+    leg = v.get("legibility")
+    if isinstance(leg, dict) and leg.get("ok") is False:
+        issues = [i for i in (leg.get("issues") or []) if isinstance(i, dict)]
+        if not issues:
+            out.append({"severity": "medium", "t": None, "what": "legibilidad marcada como mala sin detalle"})
+        for i in issues:
+            out.append({"severity": "medium", "t": _as_time(i.get("t")),
+                        "what": f"legibilidad: {str(i.get('why') or 'texto ilegible').strip()[:200]}"})
+
+    pace = v.get("pacing")
+    if isinstance(pace, dict) and pace.get("ok") is False:
+        out.append({"severity": "low", "t": None,
+                    "what": f"ritmo: {str(pace.get('why') or 'se lee como diapositivas').strip()[:200]}"})
+    return out
+
+
+def normalize_pass(v: dict) -> dict:
+    """Une `blocking` con la evidencia declarada, sin duplicar el mismo defecto."""
+    merged: list[dict] = []
+    for f in list(v.get("blocking") or []) + evidence_findings(v):
+        dup = False
+        for c in merged:
+            if c["severity"] != f["severity"]:
+                continue
+            a, b = c.get("t"), f.get("t")
+            same_time = (a is None and b is None) or (
+                a is not None and b is not None and abs(a - b) <= CONFIRM_WINDOW_S)
+            same_head = c["what"].strip().lower()[:40] == f["what"].strip().lower()[:40]
+            if same_time and same_head:
+                dup = True
+                break
+        if not dup:
+            merged.append(dict(f))
+    out = dict(v)
+    out["blocking"] = merged
+    return out
+
+
 def decide(passes: list[dict]) -> dict:
     """Agrega pasadas: critical/high bloquean solos; medium necesita DOS PASADAS distintas.
 
@@ -228,7 +301,7 @@ def decide(passes: list[dict]) -> dict:
     """
     confirmed: list[dict] = []
     for idx, p in enumerate(passes):
-        for f in p.get("blocking", []):
+        for f in normalize_pass(p).get("blocking", []):
             match = None
             for c in confirmed:
                 if c["severity"] != f["severity"]:
@@ -251,7 +324,8 @@ def decide(passes: list[dict]) -> dict:
     for c in confirmed:
         c["passes"] = len(c.pop("_idx"))
 
-    blocking = [f for f in confirmed if f["severity"] in HARD_BLOCK or f["passes"] >= 2]
+    blocking = [f for f in confirmed if f["severity"] in HARD_BLOCK
+                or (f["severity"] == "medium" and f["passes"] >= 2)]
     blocking_ids = {id(f) for f in blocking}
     warnings = [f for f in confirmed if id(f) not in blocking_ids]
 
