@@ -292,8 +292,32 @@ def dry_run(args):
     print("=" * 60)
 
 
+def _repo_root_from_here():
+    """Sube desde este archivo hasta encontrar `scripts/spend_gate.py`.
+
+    Robusto ante el numero de niveles: antes se usaba parents[3], que para este
+    archivo (opencode/skills/reel-pipeline/references/) resuelve a <repo>/opencode
+    y dejaba el import roto con un traceback en vez del exit 3 del gate.
+    """
+    for parent in Path(__file__).resolve().parents:
+        if (parent / "scripts" / "spend_gate.py").exists():
+            return parent
+    return None
+
+
 def api_post(body):
     """POST the request body and return parsed JSON."""
+    # Gate físico compartido del repo: sin firma humana válida NO se postea
+    # (exit 3, antes de tocar la red). Evita que la vía de subprocess/librería
+    # del engine gaste saltándose el CLI.
+    try:
+        from spend_gate import require_gate
+    except ImportError:
+        root = _repo_root_from_here() or _REPO_ROOT
+        if root is not None:
+            sys.path.insert(0, str(root / "scripts"))
+        from spend_gate import require_gate
+    require_gate("monid", "POST /run")
     url = f"{API_BASE}/run"
     data = json.dumps(body).encode("utf-8")
     req = urllib.request.Request(url, data=data, method="POST")

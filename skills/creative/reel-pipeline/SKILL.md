@@ -1,7 +1,10 @@
 ---
 name: reel-pipeline
-description: >-
-  Use when generating a vertical 9:16 AI reel. e imagen-a-video. Usa OpenCode Go para el 90% del trabajo (gratis) y Monid Seedance 2.0 para el realismo final (pago por clip). Pipeline de 3 capas: rustico → refinar → realismo.'
+description: "Use when generating a vertical 9:16 AI reel end to end."
+version: 2.0.0
+author: NeuralCrew
+license: Apache-2.0
+platforms: [linux, macos]
 tags: [reels, seedance, monid, vertical, video, pipeline, 9:16, ia]
 ---
 
@@ -27,6 +30,12 @@ Genera reels verticales 9:16 (TikTok/Shorts/Reels) usando un pipeline de 3 capas
 - Video horizontal 16:9 (usar scroll-world skill en su lugar)
 - Video mas largo de 15 segundos por clip (limite de Seedance)
 - Video que requiere edicion compleja con cortes (usar ffmpeg manual)
+
+## Editorial quality gate before production
+
+Read `docs/reels/editorial-quality-gate.md` in this repository before planning the cut or generating paid clips. It defines inspected references, hook → action → event → CTA structure, music/voice checks, editable captions, and delivery evidence. Compare the first cut to a real reference; assembling attractive clips is not enough. The approved brief overrides historical defaults here, including duration, voice provider and old pricing examples.
+
+For a repair of the user's edit, keep that edit as the base and change only the authorized layer. Consult the Hermes skill `video-reel-pipeline`, reference `reel-version-usuario-comparacion.md`, for frame alignment, clean-plate restoration and caption timing. Never apply Lucky V06-specific windows/geometry to another reel without reanalysis.
 
 ## Pipeline
 
