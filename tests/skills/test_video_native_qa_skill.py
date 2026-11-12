@@ -28,7 +28,7 @@ def mod(tmp_path, monkeypatch):
     assert spec.loader is not None
     spec.loader.exec_module(module)
     monkeypatch.setattr(module, "probe_duration", lambda _p: 12.0)
-    monkeypatch.setattr(module, "run_pre_gate", lambda _v: (0, "ok"))
+    monkeypatch.setattr(module, "run_pre_gate", lambda _v, _allow="": (0, "ok"))
     return module
 
 
@@ -147,8 +147,21 @@ def test_max_passes_one_never_calls_twice(mod, video, guion):
 
 
 # ── CA5: el gate determinista ahorra la llamada ───────────────────────────────
+def test_pre_gate_forwards_allowed_black_seconds(mod, video, guion, monkeypatch):
+    seen = {}
+
+    def fake(video_path, allow=""):
+        seen["allow"] = allow
+        return 0, "ok"
+
+    monkeypatch.setattr(mod, "run_pre_gate", fake)
+    assert run(mod, video, guion, FakeTransport(verdict()), "--pre-gate",
+               "--pre-gate-allow", "0,22,43") == 0
+    assert seen["allow"] == "0,22,43"
+
+
 def test_pre_gate_failure_costs_zero_model_calls(mod, video, guion, monkeypatch):
-    monkeypatch.setattr(mod, "run_pre_gate", lambda _v: (1, "3 frames vacios"))
+    monkeypatch.setattr(mod, "run_pre_gate", lambda _v, _allow="": (1, "3 frames vacios"))
     t = FakeTransport(verdict())
     assert run(mod, video, guion, t, "--pre-gate") == 1
     assert t.calls == []

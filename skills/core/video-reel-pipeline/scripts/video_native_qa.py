@@ -68,12 +68,15 @@ def probe_duration(path: Path) -> float:
         raise QAError(f"duración ilegible en {path.name}: {exc}") from exc
 
 
-def run_pre_gate(video: Path) -> tuple[int, str]:
+def run_pre_gate(video: Path, allow: str = "") -> tuple[int, str]:
+    """Corre qa_gate.py. `allow` son los segundos de negro intencional (frase de apertura, actos)."""
     gate = Path(__file__).with_name("qa_gate.py")
     if not gate.exists():
         raise QAError(f"falta el gate determinista: {gate}")
-    out = subprocess.run([sys.executable, str(gate), str(video), "--quiet"],
-                         capture_output=True, text=True, timeout=600)
+    cmd = [sys.executable, str(gate), str(video), "--quiet"]
+    if allow.strip():
+        cmd += ["--allow", allow.strip()]
+    out = subprocess.run(cmd, capture_output=True, text=True, timeout=600)
     return out.returncode, (out.stdout + out.stderr).strip()
 
 
@@ -292,6 +295,8 @@ def main(argv=None, *, transport=_post) -> int:
     ap.add_argument("--max-mb", type=float, default=DEFAULT_MAX_MB)
     ap.add_argument("--timeout", type=int, default=DEFAULT_TIMEOUT)
     ap.add_argument("--pre-gate", action="store_true", help="corre qa_gate.py antes de gastar tokens")
+    ap.add_argument("--pre-gate-allow", default="",
+                    help="segundos de negro intencional que el gate determinista tolera (0,22,43)")
     ap.add_argument("--force", action="store_true", help="ignora la cache")
     ap.add_argument("--no-json-mode", action="store_true",
                     help="no pide response_format=json_object (para modelos que no lo soportan)")
@@ -332,7 +337,7 @@ def main(argv=None, *, transport=_post) -> int:
 
     if args.pre_gate:
         try:
-            code, detail = run_pre_gate(video)
+            code, detail = run_pre_gate(video, args.pre_gate_allow)
         except (QAError, subprocess.SubprocessError) as exc:
             return _fail(f"pre-gate no ejecutable: {exc}")
         if code != 0:

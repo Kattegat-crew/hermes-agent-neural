@@ -63,6 +63,11 @@ Reeditar el video cambia el hash y obliga a re-revisar.
 `--pre-gate` corre `qa_gate.py` (frames vacíos por segundo, con ventanas toleradas). Si falla, no
 se llama al modelo: un film con voz sobre negro no necesita un VLM para saber que está roto.
 
+Medido sobre el mismo film: el gate determinista bloqueó con **7 segundos vacíos**
+(`0, 22, 30, 31, 43, 58, 59`) coste 0, mientras el VLM lo aprobaba con 8/10. No es que uno se
+equivoque: ven cosas distintas. El negro intencional (frase de apertura, cambio de acto) se declara
+con `--pre-gate-allow "0,22,43"`; lo que quede fuera de esa lista es caída real.
+
 ## Cada vez menos QA
 Los hallazgos que se repiten entre films se **promueven a check determinista**: si tres videos
 seguidos fallan por lo mismo (caption sobre título, logo fuera de margen, cierre en negro), eso se
