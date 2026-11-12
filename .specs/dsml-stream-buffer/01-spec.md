@@ -111,3 +111,18 @@ se fusiona a `prod-stable` sin aprobación explícita.
 - **Fuera de alcance confirmado:** `agent/turn_tool_round.py:194` escribe texto **local**
   (guardrail halt), no contenido del modelo: no es un sumidero del leak.
 
+## 10. Estado del review independiente (opencode, read-only)
+
+| Ronda | Commit revisado | Veredicto | Resultado |
+|---|---|---|---|
+| R1 | `f5e60612de` | REJECT | 3 blockers + 8 majors (break sintético antes de la sonda, cierre antes de los tails, gramática ≠ guard, hooks/registro desalineados, segundo sumidero) |
+| R2 | `5e4c271192` | REJECT | los 12 hallazgos de R1 **FIXED**; 1 major nuevo (bloque >4 KB liberado en crudo) + 4 minors |
+| R3 | `a6b2daa236` | sin veredicto | el proveedor del reviewer (`build · big-pickle`) dejó de responder tras el banner en tres intentos (timeouts de 20, 15 y 10 min, salida vacía). No se sustituye por una autoevaluación |
+
+Los 5 hallazgos de R2 están corregidos en `a6b2daa236` y verificados con probes directos sobre el
+worktree (bloque de 6 KB retenido y descartado; release con hook y registro; break consumido;
+`<||dsml||invoke` mostrado y `<||DSML||invoke` retenido; release `display_only` sin TTS).
+La ronda 3 queda pendiente de repetir cuando el proveedor vuelva: es el único gate del protocolo
+que no tiene veredicto registrado.
+
+
