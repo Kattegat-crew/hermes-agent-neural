@@ -15,6 +15,32 @@ from agent.history_commentary import COMMENTARY_WITHHELD, commentary_items, visi
 # Same logger name as the origin module so log records / caplog filters are unchanged.
 logger = logging.getLogger("run_agent")
 
+# Opening shapes a leaked DeepSeek DSML / toolcalls block can start a response with (the
+# grammar lives in ``agent/dsml_guard.py``; this is the sample it anchors on). A delta that
+# is still a prefix of one of them is HELD: emitting it would show raw markup in a streaming
+# client before the turn-final guard ever sees the block.
+_DSML_STREAM_HOLD_PREFIXES = (
+    "<||DSML||",
+    "<｜｜DSML｜｜",
+    "<｜DSML｜",
+    "<toolcalls>",
+    "||DSML||",
+)
+# A marker prefix is short by construction; this bound only keeps a future constant from
+# holding a real reply hostage.
+_DSML_STREAM_HOLD_MAX = 4096
+
+
+def _is_dsml_stream_prefix(text: str) -> bool:
+    """True while ``text`` may still grow into one of the markers (a proper prefix, or the
+    marker itself — the next delta decides whether a block or ordinary text follows)."""
+    return any(marker.startswith(text) for marker in _DSML_STREAM_HOLD_PREFIXES)
+
+
+def _starts_with_dsml_marker(text: str) -> bool:
+    """True when ``text`` already spells a whole marker: at turn close that is a leaked block."""
+    return any(text.startswith(marker) for marker in _DSML_STREAM_HOLD_PREFIXES)
+
 
 def withhold_held_row(agent: Any, assistant_msg: dict[str, Any]) -> dict[str, Any]:
     """Type a held turn's model row ``display_kind="hidden"`` when it has visible text; returns it.
@@ -64,8 +90,76 @@ class StreamDeliveryMixin:
         Nothing leaves while a ``hold_stream`` plugin holds this turn's reply (``_hold_stream``)."""
         if getattr(self, "_hold_stream", False):
             return False
+        text = self._buffer_dsml_stream_prefix(text)
+        if not text:
+            return False
+        return self._emit_stream_text(text)
+
+    def _emit_stream_text(self, text: str) -> bool:
+        """Hand ``text`` straight to the display + TTS delta callbacks (no prefix buffering)."""
         results = [self._call_quietly(cb, text) for cb in (self.stream_delta_callback, self._stream_callback)]
         return any(results)
+
+    def _buffer_dsml_stream_prefix(self, text: str) -> str:
+        """Withhold a response that opens like DSML markup; return what may be emitted now.
+
+        The turn-final guard (``agent/dsml_guard.py``) needs the whole block, so a streaming
+        client used to receive the raw markup token by token. Only the START of a response is a
+        candidate — a marker mid-prose is ordinary text. Three outcomes per delta:
+
+        * still a partial marker → hold, emit nothing;
+        * the opening already spells a whole marker → it is a leaked block: keep holding to the
+          response boundary (the guard owns recovery), bounded by ``_DSML_STREAM_HOLD_MAX`` so a
+          pathological reply cannot stall the stream;
+        * diverged without ever completing a marker → release the buffer exactly once, in order,
+          and switch to plain passthrough.
+
+        ``""`` means this delta may not be shown yet.
+        """
+        if not isinstance(text, str) or not text:
+            return text
+        if getattr(self, "_dsml_stream_passthrough", False):
+            return text
+        buffer = getattr(self, "_dsml_stream_buffer", "") + text
+        marker_shaped = _is_dsml_stream_prefix(buffer) or _starts_with_dsml_marker(buffer)
+        if marker_shaped and len(buffer) <= _DSML_STREAM_HOLD_MAX:
+            self._dsml_stream_buffer = buffer
+            return ""
+        self._dsml_stream_buffer = ""
+        self._dsml_stream_passthrough = True
+        if buffer != text:  # a prefix really was held — count it for the daily digest
+            self._note_dsml_stream_held(
+                "released over bound" if marker_shaped else "released", len(buffer) - len(text)
+            )
+        return buffer
+
+    def _note_dsml_stream_held(self, why: str, held_bytes: int) -> None:
+        self._dsml_stream_held = int(getattr(self, "_dsml_stream_held", 0) or 0) + 1
+        logger.info(
+            "HERMES-DSML-GUARD: stream buffered (%s, prefix_bytes=%d, model=%s, provider=%s, total holds=%d)",
+            why, held_bytes, getattr(self, "model", "") or "", getattr(self, "provider", "") or "",
+            self._dsml_stream_held,
+        )
+
+    def _close_dsml_stream_buffer(self) -> None:
+        """Response boundary: drop a marker-shaped buffer, release a harmless partial one.
+
+        A buffer that spells a whole marker is a leaked block — the turn-final guard owns it, so
+        nothing is shown. A buffer that is only a partial marker (a reply that legitimately ends
+        with ``<``) is ordinary text and must not be swallowed.
+        """
+        buffer = getattr(self, "_dsml_stream_buffer", "")
+        self._dsml_stream_buffer = ""
+        self._dsml_stream_passthrough = False
+        if not buffer:
+            return
+        if _starts_with_dsml_marker(buffer):
+            self._note_dsml_stream_held("discarded at close", len(buffer))
+            return
+        if getattr(self, "_hold_stream", False):
+            return
+        if self._emit_stream_text(buffer):
+            self._record_streamed_assistant_text(buffer)
 
     def _enqueue_stream_hook(self, event: str, *, label: str | None = None, **fields: Any) -> None:
         """Best-effort plugin stream hook enqueue; never raises into the stream path."""
@@ -84,6 +178,9 @@ class StreamDeliveryMixin:
         """
         think_scrubber = getattr(self, "_stream_think_scrubber", None)
         ctx_scrubber = getattr(self, "_stream_context_scrubber", None)
+        # Response boundary for the DSML prefix buffer: it holds the OPENING bytes, so it is
+        # resolved before any scrubber tail is flushed (see ``_close_dsml_stream_buffer``).
+        self._close_dsml_stream_buffer()
         # Inline <think> text is forwarded to the reasoning pane only while no native reasoning delta
         # arrived for this model response (#89647).
         self._native_reasoning_streamed = False
