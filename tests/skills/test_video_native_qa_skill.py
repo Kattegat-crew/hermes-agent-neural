@@ -1,0 +1,575 @@
+"""Contract tests for the native-video QA script of the video-reel-pipeline skill.
+
+These tests pin behaviour, not prose: the mp4 must travel as a native ``video_url``
+part, an unparseable verdict must never approve, and the pass budget is a hard cap.
+No network: the transport is injected.
+"""
+
+from __future__ import annotations
+
+import importlib.util
+import json
+from pathlib import Path
+
+import pytest
+
+REPO = Path(__file__).resolve().parents[2]
+SCRIPT = REPO / "skills" / "core" / "video-reel-pipeline" / "scripts" / "video_native_qa.py"
+
+SCRIPT_TEXT = "Linea uno: el agente entiende.\nLinea dos: el agente recuerda."
+
+
+@pytest.fixture
+def mod(tmp_path, monkeypatch):
+    monkeypatch.setenv("VIDEO_QA_STATE", str(tmp_path / "state"))
+    monkeypatch.setenv("NAN_BUILDERS_API_KEY", "test-key")
+    spec = importlib.util.spec_from_file_location("video_native_qa_under_test", SCRIPT)
+    module = importlib.util.module_from_spec(spec)
+    assert spec.loader is not None
+    spec.loader.exec_module(module)
+    monkeypatch.setattr(module, "probe_duration", lambda _p: 12.0)
+    monkeypatch.setattr(module, "run_pre_gate", lambda _v, _allow="": (0, "ok"))
+    return module
+
+
+@pytest.fixture
+def video(tmp_path):
+    p = tmp_path / "film.mp4"
+    p.write_bytes(b"\x00\x00\x00\x18ftypmp42" + b"payload" * 32)
+    return p
+
+
+@pytest.fixture
+def guion(tmp_path):
+    p = tmp_path / "guion.txt"
+    p.write_text(SCRIPT_TEXT, encoding="utf-8")
+    return p
+
+
+class FakeTransport:
+    """Returns queued verdicts and records every payload sent."""
+
+    def __init__(self, *texts):
+        self.texts = list(texts)
+        self.calls = []
+
+    def __call__(self, payload, api_key, timeout):
+        self.calls.append(payload)
+        text = self.texts.pop(0) if len(self.texts) > 1 else self.texts[0]
+        return {
+            "choices": [{"message": {"content": text}}],
+            "usage": {"prompt_tokens": 1200, "completion_tokens": 90},
+        }
+
+
+def verdict(**over):
+    base = {
+        "passed": True,
+        "score": 8,
+        "voids": [],
+        "collisions": [],
+        "narration_sync": {"ok": True, "mismatches": []},
+        "legibility": {"ok": True, "issues": []},
+        "pacing": {"ok": True, "why": "ok"},
+        "blocking": [],
+    }
+    base.update(over)
+    return json.dumps(base)
+
+
+def blocking(sev, t=3.0, what="caption overlaps title"):
+    return {"severity": sev, "t": t, "what": what}
+
+
+def run(mod, video, guion, transport, *extra):
+    return mod.main(
+        [str(video), "--script", str(guion), "--json", *extra],
+        transport=transport,
+    )
+
+
+# ── CA1: el video va nativo ────────────────────────────────────────────────────
+def test_video_travels_as_native_video_url_part(mod, video, guion):
+    t = FakeTransport(verdict())
+    assert run(mod, video, guion, t) == 0
+    parts = t.calls[0]["messages"][0]["content"]
+    assert [p["type"] for p in parts] == ["text", "video_url"]
+    url = parts[1]["video_url"]["url"]
+    assert url.startswith("data:video/mp4;base64,")
+    assert SCRIPT_TEXT.splitlines()[0] in parts[0]["text"]
+
+
+# ── CA2: la evidencia manda sobre el flag ─────────────────────────────────────
+def test_critical_blocks_even_when_model_says_passed(mod, video, guion):
+    t = FakeTransport(verdict(passed=True, blocking=[blocking("critical")]))
+    assert run(mod, video, guion, t) == 1
+
+
+def test_high_blocks_on_first_pass(mod, video, guion):
+    t = FakeTransport(verdict(passed=False, blocking=[blocking("high")]))
+    assert run(mod, video, guion, t) == 1
+    assert len(t.calls) == 1, "un hallazgo high no necesita segunda pasada"
+
+
+# ── CA3: medium pide confirmación ─────────────────────────────────────────────
+def test_single_pass_medium_is_warning(mod, video, guion):
+    t = FakeTransport(
+        verdict(passed=False, blocking=[blocking("medium", t=4.0)]),
+        verdict(passed=True),
+    )
+    assert run(mod, video, guion, t) == 0
+    assert len(t.calls) == 2
+
+
+def test_medium_confirmed_in_two_passes_blocks(mod, video, guion):
+    t = FakeTransport(
+        verdict(passed=False, blocking=[blocking("medium", t=4.0)]),
+        verdict(passed=False, blocking=[blocking("medium", t=4.4)]),
+    )
+    assert run(mod, video, guion, t) == 1
+
+
+# ── CA4: presupuesto duro ─────────────────────────────────────────────────────
+def test_pass_budget_is_a_hard_cap(mod, video, guion):
+    t = FakeTransport(
+        verdict(passed=False, blocking=[blocking("medium", t=1.0)]),
+        verdict(passed=False, blocking=[blocking("medium", t=9.0)]),
+        verdict(passed=False, blocking=[blocking("medium", t=9.0)]),
+    )
+    run(mod, video, guion, t, "--max-passes", "2")
+    assert len(t.calls) == 2
+
+
+def test_max_passes_one_never_calls_twice(mod, video, guion):
+    t = FakeTransport(verdict(passed=False, blocking=[blocking("medium")]))
+    run(mod, video, guion, t, "--max-passes", "1")
+    assert len(t.calls) == 1
+
+
+# ── CA5: el gate determinista ahorra la llamada ───────────────────────────────
+def test_pre_gate_forwards_allowed_black_seconds(mod, video, guion, monkeypatch):
+    seen = {}
+
+    def fake(video_path, allow=""):
+        seen["allow"] = allow
+        return 0, "ok"
+
+    monkeypatch.setattr(mod, "run_pre_gate", fake)
+    assert run(mod, video, guion, FakeTransport(verdict()), "--pre-gate",
+               "--pre-gate-allow", "0,22,43") == 0
+    assert seen["allow"] == "0,22,43"
+
+
+def test_pre_gate_failure_costs_zero_model_calls(mod, video, guion, monkeypatch):
+    monkeypatch.setattr(mod, "run_pre_gate", lambda _v, _allow="": (1, "3 frames vacios"))
+    t = FakeTransport(verdict())
+    assert run(mod, video, guion, t, "--pre-gate") == 1
+    assert t.calls == []
+
+
+# ── CA6: cache por hash ───────────────────────────────────────────────────────
+def test_second_identical_run_hits_cache(mod, video, guion):
+    t1 = FakeTransport(verdict())
+    assert run(mod, video, guion, t1) == 0
+    t2 = FakeTransport(verdict())
+    assert run(mod, video, guion, t2) == 0
+    assert len(t1.calls) == 1
+    assert t2.calls == []
+
+
+def test_force_bypasses_cache(mod, video, guion):
+    run(mod, video, guion, FakeTransport(verdict()))
+    t2 = FakeTransport(verdict())
+    assert run(mod, video, guion, t2, "--force") == 0
+    assert len(t2.calls) == 1
+
+
+# ── CA7: fail-closed ──────────────────────────────────────────────────────────
+def test_unparseable_verdict_is_not_an_approval(mod, video, guion):
+    t = FakeTransport("Se ve bien, aprobado. 8/10.")
+    assert run(mod, video, guion, t) == 2
+
+
+def test_passed_false_without_findings_blocks(mod, video, guion):
+    t = FakeTransport(verdict(passed=False, score=3))
+    assert run(mod, video, guion, t) == 1
+
+
+def test_truncated_verdict_missing_keys_is_invalid(mod, video, guion):
+    t = FakeTransport(json.dumps({"passed": True, "score": 9}))
+    assert run(mod, video, guion, t) == 2
+
+
+# ── CA8: guardas de entrada ───────────────────────────────────────────────────
+def test_oversize_video_is_refused_without_network(mod, video, guion):
+    t = FakeTransport(verdict())
+    assert run(mod, video, guion, t, "--max-mb", "0.000001") == 2
+    assert t.calls == []
+
+
+def test_missing_api_key_fails_closed(mod, video, guion, monkeypatch):
+    monkeypatch.delenv("NAN_BUILDERS_API_KEY", raising=False)
+    t = FakeTransport(verdict())
+    assert run(mod, video, guion, t) == 2
+    assert t.calls == []
+
+
+def test_missing_video_is_an_error(mod, tmp_path, guion):
+    t = FakeTransport(verdict())
+    assert run(mod, tmp_path / "nope.mp4", guion, t) == 2
+    assert t.calls == []
+
+
+# ── CA9: dry-run ─────────────────────────────────────────────────────────────
+def test_dry_run_sends_nothing(mod, video, guion, capsys):
+    t = FakeTransport(verdict())
+    assert run(mod, video, guion, t, "--dry-run") == 0
+    assert t.calls == []
+    out = capsys.readouterr().out
+    assert "video/mp4" in out
+
+
+# ── Contrato de decisión como API ────────────────────────────────────────────
+def test_decide_reports_unconfirmed_medium_as_warning(mod):
+    d = mod.decide([
+        {"passed": False, "blocking": [blocking("medium", t=2.0)]},
+        {"passed": True, "blocking": []},
+    ])
+    assert d["passed"] is True
+    assert d["blocking"] == []
+    assert d["warnings"], "el medium no confirmado debe quedar visible"
+
+
+def test_prompt_orders_json_only(mod):
+    p = mod.build_prompt(SCRIPT_TEXT, None, 12.0)
+    assert "ONLY" in p.upper()
+    assert "narration_sync" in p
+    assert SCRIPT_TEXT in p
+
+
+def test_json_mode_rejected_falls_back_without_losing_the_pass(mod, video, guion):
+    class PickyTransport:
+        def __init__(self):
+            self.calls = []
+
+        def __call__(self, payload, api_key, timeout):
+            self.calls.append(payload)
+            if "response_format" in payload:
+                raise mod.QAError("HTTP 400: response_format is not supported")
+            return {"choices": [{"message": {"content": verdict()}}], "usage": {}}
+
+    t = PickyTransport()
+    assert run(mod, video, guion, t) == 0
+    assert len(t.calls) == 2, "reintenta una vez sin response_format"
+    assert "response_format" not in t.calls[1]
+
+
+def test_unparseable_pass_keeps_the_raw_reply_as_evidence(mod, video, guion, capsys):
+    t = FakeTransport("Parece correcto, pero el JSON se cortó: {\"passed\": true, \"sco")
+    assert run(mod, video, guion, t) == 2
+    payload = json.loads(capsys.readouterr().out)
+    assert payload["raw"] and "JSON se cortó" in payload["raw"][0]
+
+
+def test_reasoning_only_reply_is_parsed(mod, video, guion):
+    """GLM con thinking deja content vacío y el texto en reasoning_content."""
+
+    class ReasoningTransport:
+        def __call__(self, payload, api_key, timeout):
+            return {"choices": [{"message": {"content": "", "reasoning_content": verdict()}}],
+                    "usage": {}}
+
+    assert run(mod, video, guion, ReasoningTransport()) == 0
+
+
+# ── Defectos señalados por el gate adversarial (ciclo 1) ──────────────────────
+def test_missing_ffprobe_degrades_instead_of_crashing(tmp_path, monkeypatch, video, guion):
+    """Carga el módulo SIN el stub de probe_duration y rompe el binario."""
+    import subprocess as sp
+
+    monkeypatch.setenv("VIDEO_QA_STATE", str(tmp_path / "state_raw"))
+    monkeypatch.setenv("NAN_BUILDERS_API_KEY", "test-key")
+    spec = importlib.util.spec_from_file_location("video_native_qa_raw", SCRIPT)
+    assert spec is not None and spec.loader is not None
+    raw = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(raw)
+
+    def boom(*a, **k):
+        raise FileNotFoundError("ffprobe")
+
+    monkeypatch.setattr(sp, "run", boom)
+    t = FakeTransport(verdict())
+    assert raw.main([str(video), "--script", str(guion), "--json"], transport=t) == 2
+    assert t.calls == []
+
+
+def test_non_numeric_time_from_model_does_not_crash(mod):
+    v = mod.parse_verdict(json.dumps({
+        "passed": False, "score": 4, "voids": [], "collisions": [],
+        "narration_sync": {"ok": True, "mismatches": []},
+        "legibility": {"ok": True, "issues": []},
+        "pacing": {"ok": True, "why": "ok"},
+        "blocking": [{"severity": "high", "t": "~4s", "what": "caption encima"},
+                     {"severity": "medium", "t": {"min": 1}, "what": "raro"}],
+    }))
+    assert v is not None
+    assert v["blocking"][0]["t"] == 4.0
+    assert v["blocking"][1]["t"] is None
+
+
+def test_duplicate_medium_in_one_pass_is_not_a_confirmation(mod):
+    dup = {"passed": False, "blocking": [blocking("medium", t=4.0),
+                                         blocking("medium", t=4.3)]}
+    d = mod.decide([dup])
+    assert d["passed"] is True, "una sola pasada no confirma medium"
+    assert d["warnings"] and d["blocking"] == []
+
+
+def test_same_medium_in_two_passes_blocks_with_equal_times(mod):
+    d = mod.decide([
+        {"passed": False, "blocking": [blocking("medium", t=4.0)]},
+        {"passed": False, "blocking": [blocking("medium", t=4.2)]},
+    ])
+    assert d["passed"] is False and len(d["blocking"]) == 1
+
+
+def test_compat_retry_cannot_exceed_max_passes_one(mod, video, guion):
+    class Always400:
+        def __init__(self):
+            self.calls = 0
+
+        def __call__(self, payload, api_key, timeout):
+            self.calls += 1
+            raise mod.QAError("HTTP 400: response_format is not supported")
+
+    t = Always400()
+    assert run(mod, video, guion, t, "--max-passes", "1") == 2
+    assert t.calls == 1, "el reintento de compatibilidad no puede saltarse el techo"
+
+
+def test_compat_retry_plus_real_pass_fits_the_budget(mod, video, guion):
+    class Picky:
+        def __init__(self):
+            self.calls = 0
+
+        def __call__(self, payload, api_key, timeout):
+            self.calls += 1
+            if "response_format" in payload:
+                raise mod.QAError("HTTP 422: unsupported field")
+            return {"choices": [{"message": {"content": verdict()}}], "usage": {}}
+
+    t = Picky()
+    assert run(mod, video, guion, t, "--max-passes", "2") == 0
+    assert t.calls == 2
+
+
+def test_unmeasurable_pre_gate_is_an_error_not_a_block(mod, video, guion, monkeypatch):
+    monkeypatch.setattr(mod, "run_pre_gate", lambda _v, _allow="": (2, "ffprobe falta"))
+    t = FakeTransport(verdict())
+    assert run(mod, video, guion, t, "--pre-gate") == 2
+    assert t.calls == []
+
+
+# ── qa_gate.py: el gate determinista también falla cerrado ────────────────────
+GATE = REPO / "skills" / "core" / "video-reel-pipeline" / "scripts" / "qa_gate.py"
+
+
+@pytest.fixture
+def gate(tmp_path):
+    spec = importlib.util.spec_from_file_location("qa_gate_under_test", GATE)
+    assert spec is not None and spec.loader is not None
+    module = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(module)
+    return module
+
+
+def test_gate_missing_ffprobe_raises_gate_error(gate, monkeypatch):
+    import subprocess as sp
+
+    def boom(*a, **k):
+        raise FileNotFoundError("ffprobe")
+
+    monkeypatch.setattr(sp, "run", boom)
+    with pytest.raises(gate.GateError):
+        gate.probe("/tmp/x.mp4")
+
+
+def test_gate_empty_metadata_raises_gate_error(gate, monkeypatch):
+    import subprocess as sp
+
+    class R:
+        returncode = 0
+        stdout = ""
+        stderr = ""
+
+    monkeypatch.setattr(sp, "run", lambda *a, **k: R())
+    with pytest.raises(gate.GateError):
+        gate.probe("/tmp/x.mp4")
+
+
+def test_gate_negative_duration_is_unmeasurable(gate, monkeypatch):
+    import subprocess as sp
+
+    class R:
+        returncode = 0
+        stderr = ""
+        stdout = json.dumps({
+            "streams": [{"width": 1080, "height": 1920, "r_frame_rate": "30/1"}],
+            "format": {"duration": "-1.0", "size": "10"},
+        })
+
+    monkeypatch.setattr(sp, "run", lambda *a, **k: R())
+    with pytest.raises(gate.GateError):
+        gate.probe("/tmp/x.mp4")
+
+
+def test_gate_main_exits_two_when_it_cannot_measure(gate, monkeypatch, capsys):
+    monkeypatch.setattr(gate, "probe", lambda _p: (_ for _ in ()).throw(gate.GateError("sin ffprobe")))
+    monkeypatch.setattr("sys.argv", ["qa_gate.py", "/tmp/x.mp4", "--quiet"])
+    with pytest.raises(SystemExit) as exc:
+        gate.main()
+    assert exc.value.code == 2
+    assert "sin ffprobe" in capsys.readouterr().err
+
+
+# ── qa_gate.py: muestreo real (sin ffmpeg, frames sintéticos) ─────────────────
+META = {"w": 8, "h": 8, "fps": 1.0, "dur": 3.0, "size": 1000}
+
+
+def _frame(color):
+    from PIL import Image
+    return Image.new("L", (8, 8), color=color)
+
+
+def _run_gate(gate, monkeypatch, argv, frames):
+    monkeypatch.setattr(gate, "probe", lambda _p: dict(META))
+    it = iter(frames)
+    monkeypatch.setattr(gate, "frame_at", lambda _p, _t, _tmp: next(it))
+    monkeypatch.setattr("sys.argv", ["qa_gate.py", "/tmp/x.mp4", "--quiet", *argv])
+    with pytest.raises(SystemExit) as exc:
+        gate.main()
+    return exc.value.code
+
+
+def test_gate_flags_black_frames(gate, monkeypatch, capsys):
+    code = _run_gate(gate, monkeypatch, [], [_frame(0), _frame(0), _frame(0)])
+    assert code == 1
+    assert "3 frames vacíos" in capsys.readouterr().out
+
+
+def test_gate_allow_covers_intentional_black(gate, monkeypatch):
+    code = _run_gate(gate, monkeypatch, ["--allow", "0,1,2"],
+                     [_frame(0), _frame(0), _frame(0)])
+    assert code == 0
+
+
+def test_gate_light_frames_pass(gate, monkeypatch):
+    code = _run_gate(gate, monkeypatch, [], [_frame(200), _frame(200), _frame(200)])
+    assert code == 0
+
+
+def test_gate_rejects_zero_fps_instead_of_hanging(gate, monkeypatch, capsys):
+    code = _run_gate(gate, monkeypatch, ["--fps", "0"], [_frame(200)])
+    assert code == 2
+    assert "fps" in capsys.readouterr().err
+
+
+def test_gate_rejects_unreadable_allow(gate, monkeypatch, capsys):
+    code = _run_gate(gate, monkeypatch, ["--allow", "0,abc"], [_frame(200)])
+    assert code == 2
+    assert "allow" in capsys.readouterr().err
+
+
+# ── politica de severidades y evidencia declarada (ciclo 2) ───────────────────
+def test_confirmed_low_stays_a_warning(mod):
+    d = mod.decide([
+        {"passed": False, "blocking": [blocking("low", t=5.0)]},
+        {"passed": False, "blocking": [blocking("low", t=5.2)]},
+    ])
+    assert d["passed"] is True and d["blocking"] == [] and d["warnings"]
+
+
+def test_narration_sync_false_blocks_even_with_empty_blocking(mod, video, guion):
+    bad = json.dumps({
+        "passed": True, "score": 7, "voids": [], "collisions": [],
+        "narration_sync": {"ok": False, "mismatches": [
+            {"t": 12.0, "script_line": "el agente recuerda", "seen": "texto de otra escena"}]},
+        "legibility": {"ok": True, "issues": []}, "pacing": {"ok": True, "why": "ok"},
+        "blocking": [],
+    })
+    assert run(mod, video, guion, FakeTransport(bad)) == 1
+
+
+def test_declared_voids_and_collisions_are_findings(mod):
+    v = {"passed": True, "score": 9,
+         "voids": [{"t": 3.0, "why": "negro con voz"}],
+         "collisions": [{"t": 5.0, "why": "caption sobre título"}],
+         "narration_sync": {"ok": True, "mismatches": []},
+         "legibility": {"ok": True, "issues": []},
+         "pacing": {"ok": True, "why": "ok"}, "blocking": []}
+    norm = mod.normalize_pass(v)
+    assert len(norm["blocking"]) == 2
+    assert {f["severity"] for f in norm["blocking"]} == {"high"}
+    assert mod.decide([v])["passed"] is False
+
+
+def test_bad_pacing_is_only_a_warning(mod):
+    v = {"passed": True, "score": 6, "voids": [], "collisions": [],
+         "narration_sync": {"ok": True, "mismatches": []},
+         "legibility": {"ok": True, "issues": []},
+         "pacing": {"ok": False, "why": "diapositivas narradas"}, "blocking": []}
+    d = mod.decide([v])
+    assert d["passed"] is True
+    assert d["warnings"] and d["warnings"][0]["severity"] == "low"
+
+
+def test_bad_legibility_needs_confirmation(mod):
+    v = {"passed": True, "score": 6, "voids": [], "collisions": [],
+         "narration_sync": {"ok": True, "mismatches": []},
+         "legibility": {"ok": False, "issues": [{"t": 9.0, "why": "texto gris sobre gris"}]},
+         "pacing": {"ok": True, "why": "ok"}, "blocking": []}
+    assert mod.decide([v])["passed"] is True, "medium en una pasada no bloquea"
+    assert mod.decide([v, v])["passed"] is False, "medium confirmado sí bloquea"
+
+
+# ── Contrato completo y evidencia mal tipada (ciclo 3) ────────────────────────
+def test_verdict_missing_evidence_sections_is_invalid(mod, video, guion):
+    partial = json.dumps({"passed": True, "score": 8, "blocking": []})
+    assert run(mod, video, guion, FakeTransport(partial)) == 2
+
+
+def test_verdict_with_only_two_sections_is_invalid(mod):
+    assert mod.parse_verdict(json.dumps({
+        "passed": True, "score": 8, "voids": [], "collisions": [],
+        "narration_sync": {"ok": True, "mismatches": []},
+        "legibility": {"ok": True, "issues": []},
+        "pacing": {"ok": True, "why": "ok"}, "blocking": [],
+    })) is not None
+    assert mod.parse_verdict(json.dumps({
+        "passed": True, "score": 8, "voids": [], "blocking": [],
+    })) is None
+
+
+def test_string_entries_in_voids_are_findings(mod):
+    v = {"passed": True, "score": 8, "voids": ["negro en 3s"], "collisions": [],
+         "narration_sync": {"ok": True, "mismatches": []},
+         "legibility": {"ok": True, "issues": []},
+         "pacing": {"ok": True, "why": "ok"}, "blocking": []}
+    norm = mod.normalize_pass(v)
+    assert len(norm["blocking"]) == 1 and norm["blocking"][0]["severity"] == "high"
+    assert mod.decide([v])["passed"] is False
+
+
+def test_string_false_in_narration_sync_blocks(mod):
+    v = {"passed": True, "score": 7, "voids": [], "collisions": [],
+         "narration_sync": {"ok": "false", "mismatches": ["dice A mientras se ve B"]},
+         "legibility": {"ok": True, "issues": []},
+         "pacing": {"ok": True, "why": "ok"}, "blocking": []}
+    d = mod.decide([v])
+    assert d["passed"] is False
+
+
+def test_cache_key_changes_with_max_passes(mod):
+    a = mod.cache_key("sha", "m", "p", 1)
+    b = mod.cache_key("sha", "m", "p", 2)
+    assert a != b, "un pase con presupuesto 1 no puede servir a una corrida con 2"
