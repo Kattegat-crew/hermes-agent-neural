@@ -49,11 +49,23 @@ Esta skill opera como despacho unificado. El detalle procedural y gotchas espec�
 `references/`
 
 ## QA de video con input nativo
-- `scripts/qa_gate.py` — gate determinista, coste 0: frames vacíos por segundo con ventanas toleradas.
-- `scripts/video_native_qa.py` — manda el mp4 completo al VLM con el guion, devuelve veredicto
-  estructurado, presupuesto de pasadas (máx 2 por defecto), cache por hash y exit 0/1/2.
-  Detalle, evidencia medida y límites: [references/qa-video-nativo.md](references/qa-video-nativo.md)
-- Regla: el gate determinista va delante; el VLM sólo juzga lo que se ve en movimiento.
+- `scripts/qa_gate.py` — gate determinista, coste 0: frames vacíos por segundo, ventanas
+  toleradas con `--allow`, exit 0/1/2 (2 = no pudo medir, nunca pase).
+- `scripts/video_native_qa.py` — manda el mp4 completo al VLM junto al guion, contrato JSON de
+  7 claves, techo de llamadas (`--max-passes`, 2 por defecto), cache por hash del artefacto y
+  exit 0/1/2 fail-closed. La decisión se toma sobre la evidencia declarada (voids, collisions,
+  narration_sync, legibility, pacing), no sobre el flag `passed`.
+- Orden obligatorio: gate determinista primero, VLM después. Si el determinista falla, no se
+  gasta un token.
+- Detalle, evidencia medida, límites y política de pasadas: [references/qa-video-nativo.md](references/qa-video-nativo.md)
+
+## Lecciones duras (pagadas en producción)
+
+- **El entregable viaja en el mismo mensaje que el «listo».** Decir «el video está hecho» sin `MEDIA:/ruta` obliga al humano a pedirlo («A ver el vídeo») y convierte una entrega en dos turnos. Si el resultado es un archivo, la frase de cierre y el adjunto van juntos, siempre.
+- **La estimación de tiempo se desglosa, no se redondea.** El coste real de un corte es `frames/fps medido` (render) + mezcla + encode + QA, y sale de los fps que ya imprimió el render anterior. Decir «14 minutos» cuando el ciclo medido son 5 es una cifra inventada aunque suene prudente: se da el desglose o no se da nada.
+- **Voz de reels de campaña (Golden/Lucky) = SIEMPRE ElevenLabs, NUNCA kokoro.** Corrección dura del Admin (12-nov-2026): para piezas de marca la voz es la del personaje ya contratada en ElevenLabs (`ELEVENLABS_API_KEY` del `.env` del repo, modelo `eleven_multilingual_v2`) — Goldie `qWWAqFomnJ99VwQLREfT` ("Voz-Goldie"), Lucky `lWweqHoPFkas8ijavnVj` ("Lucky final") — cubierta por el plan ($0). Kokoro/nan (ver `voz-es-coste-cero-nan`) es SOLO para drafts internos sin marca; proponerlo para un reel de campaña es un error que ya costó un reproche.
+- **Catálogo de video i2v de fal (precios verificados 12-nov-2026):** `fal-ai/veo3*` está DEPRECADO. Vigentes: Kling v3 Pro y Standard image-to-video $0.14/s, Kling 4.0 $0.157/s (3–30 s, multi-shot), Kling AI Avatar v2 Pro $0.115/s (lipsync con audio propio), MiniMax H3 Max i2v $0.035/s, Wan 3.0 i2v $0.05/s. Estrategia de mezcla por reel: planos hero del personaje en Kling v3 Pro, planos de ambiente/local en Wan 3.0 o H3 Max (4× más barato). Ver `references/reel-campana-video-modelos-voz.md`.
+- **"Gente real" en video IA tiene solo dos vías:** animar la foto real de la persona (image-to-video con su foto) o avatar-lipsync con su audio (Kling Avatar / Omnihuman). Ambas exigen consentimiento de uso de imagen — en publicidad de apuestas, doblemente sensible. Sin foto + permiso, lo único posible es gente fotorrealista generada.
 
 ## Casos de Uso Disponibles
 - **ai-video-model-costing**: Ver [references/ai-video-model-costing.md](file:///root/hermes-agent-legacy-docker/skills/core/video-reel-pipeline/references/ai-video-model-costing.md)
@@ -83,3 +95,7 @@ Esta skill opera como despacho unificado. El detalle procedural y gotchas espec�
 - **reel-preproduccion**: etapa pre-gasto del reel a coste cero: lint de guiones, brief de prompts y render draft three.js — ver [references/reel-preproduccion.md](file:///root/hermes-agent-legacy-docker/skills/core/video-reel-pipeline/references/reel-preproduccion.md)
 - **reel-stills-production**: stills pagados de un reel via fal con dry-run, gate de gasto firmado por humano y verificacion visual — ver [references/reel-stills-production.md](file:///root/hermes-agent-legacy-docker/skills/core/video-reel-pipeline/references/reel-stills-production.md)
 - **gate-de-gasto-media**: protocolo obligatorio antes de lanzar CUALQUIER generacion que consuma saldo (fal, monid, elevenlabs): autorizacion, gate y verificacion del artefacto — ver [references/gate-de-gasto-media.md](file:///root/hermes-agent-legacy-docker/skills/core/video-reel-pipeline/references/gate-de-gasto-media.md)
+- **qa-video-con-modelos**: escalera de QA barata→cara (qa_gate.py determinista → manifiesto de layout → VLM glm5.3-flash → arbitro qwen3.8-max), tokens medidos por pasada y maximo de pasadas por corte; el mp4 puede entrar nativo al VLM sin extraer frames, con contrato estricto de veredicto y decisión sobre la evidencia declarada (no sobre `passed`) — ver [references/qa-video-con-modelos.md](references/qa-video-con-modelos.md) y [references/qa-video-nativo.md](references/qa-video-nativo.md)
+- **voz-es-coste-cero-nan**: voz ES a coste cero sin gate: kokoro (em_alex/ef_dora) + whisper word-level timestamps via nan.builders, verificado 12-nov-2026; fallback tts_aligned.py ElevenLabs /with-timestamps con gate — ver [references/voz-es-coste-cero-nan.md](references/voz-es-coste-cero-nan.md)
+- **film-determinista-canvas**: motor de film 9:16 sin IA de video paga: canvas 2D + puppeteer-core + ffmpeg, cue sheet colgado de la voz, fuentes DM embebidas, ducking −16 LUFS, N renders paralelos como procesos background — ver [references/film-determinista-canvas.md](references/film-determinista-canvas.md)
+- **reel-campana-video-modelos-voz**: producción de reels de campaña casino (lote canónico `lote-preparado.json` como SSOT, voces ElevenLabs por marca, catálogo/precios de video i2v en fal con estrategia de mezcla hero/ambiente, reglas de fotos de sedes como referencia-only y logo compuesto, Codex CLI en host DEV para keyframes) — ver [references/reel-campana-video-modelos-voz.md](references/reel-campana-video-modelos-voz.md)

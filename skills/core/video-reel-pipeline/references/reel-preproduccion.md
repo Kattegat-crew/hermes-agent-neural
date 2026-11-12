@@ -18,6 +18,11 @@ Etapa pre-gasto de la cadena de reels de campañas (casinos Golden/Lucky): lint 
 - Al integrar guiones nuevos (30s/15s por marca) al pipeline del repo.
 - Al diagnosticar un draft que "renderizó" pero sale blanco o roto.
 
+> **Draft three.js opcional (decisión del Administrador, 12-nov-2026).** Cuando el lote ya tiene
+> referencias fotográficas reales del local, héroes generados y lip-sync con audio medido, el draft
+> three.js NO se hace: el timing se valida con la duración real del TTS. No proponerlo por defecto
+> en lotes de ese tipo.
+
 ## Prerequisites
 - Repo marketing-campaign-generator en DEV — resolver la ruta en vivo (candidatos /host/root primero), nunca hardcodearla; `git status`/`pull` pre-flight.
 - `CHROMIUM_BIN=/opt/chrome-for-testing/chrome-linux64/chrome` (Chrome for Testing). NO el chromium snap.
