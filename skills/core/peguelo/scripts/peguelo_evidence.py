@@ -62,10 +62,11 @@ CORRECTION_RE = re.compile(
     r"(\bno,\s|\bno es lo que\b|\bno era eso\b|\best[aá] mal\b|\bas[ií] no\b|\botra vez\b|"
     r"\bde nuevo\b|\bcorrige\b|\bcorr[ií]gelo\b|\bequivoc|\bte equivocaste\b|\bno me entendiste\b|"
     r"\bno ped[ií] eso\b|\bno funciona\b|\bsigue fallando\b|\bno sirve\b|\bte falta\b|"
-    r"\brevisa(lo)? (otra vez|de nuevo|bien)\b|\bya te lo dije\b)", re.I)
+    r"\brevisa(lo)? (otra vez|de nuevo|bien)\b|\bte lo dije\b|\bte dije\b|\bte ped[ií]\b|"
+    r"\bno hay que\b|\bc[oó]mo as[ií] que\b)", re.I)
 CORRECTION_STRONG_RE = re.compile(
     r"(\bno,\s|\best[aá] mal\b|\bas[ií] no\b|\bno es lo que\b|\bno era eso\b|\bcorrige\b|"
-    r"equivoc|no me entendiste)", re.I)
+    r"equivoc|no me entendiste|\bte dije\b|\bte ped[ií]\b|\bc[oó]mo as[ií] que\b)", re.I)
 # Pregunta o pedido de estado. Si no trae rechazo explicito NO es correccion,
 # aunque contenga "falta", "error" o "revisa" (falso positivo medido en sesion real).
 QUESTION_RE = re.compile(
@@ -720,6 +721,13 @@ def selftest():
     add("user", "no, eso esta mal, revisa el archivo")
     # pregunta de estado: NO es correccion, aunque diga "falta" (D3)
     add("user", "mientras arreglamos eso dame un resumen de como vas, que falta")
+    # correccion imperativa sin "no," (medida el 12-nov: «TE DIJE CORRE LA SKILL PEGUELO»
+    # se leyo como pregunta y el detector no la conto)
+    add("user", "TE DIJE CORRE LA SKILL PEGUELO")
+    # desafio retorico y prohibicion directa (medidos el 12-nov: «como asi que no
+    # existe socio <url>» y «No hay que borrar ninguna skill!» salieron con 0)
+    add("user", "como asi que no existe socio https://github.com/x/y")
+    add("user", "No hay que borrar ninguna skill!")
     for i, cid in enumerate(("b1", "b2", "b3")):
         add("assistant", "", calls=[call(cid, "terminal", {"command": "python3 roto.py"})])
         add("tool", '{"error": "hook /x.py failed closed: command not found"}', "terminal", cid)
@@ -741,7 +749,7 @@ def selftest():
         ("ambiguas", len(r["hygiene"].get("ambiguous_writes") or []), 1),
         ("edicion_sin_lectura", len(r["hygiene"]["writes_without_prior_read"]), 1),
         ("verificacion", r["hygiene"]["verification_after_write"], True),
-        ("correcciones", len(r["user"]["corrections"]), 1),
+        ("correcciones", len(r["user"]["corrections"]), 4),
         ("sesiones_utiles", _latest(5), ["S1"]),
         ("sesiones_sin_filtro", sorted(_latest(5, skip=False)), ["S1", "S2"]),
         ("omitidas_vacias", skipped_empty_count(con, 5, ["S1"]), 1),
