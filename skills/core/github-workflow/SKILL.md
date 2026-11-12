@@ -48,6 +48,12 @@ Esta skill opera como despacho unificado. El detalle procedural y gotchas espec�
 - **Remotos en SSH fallan aunque gh esté autenticado**: varios repos tienen `git@github.com:...` y no hay llave SSH. Convertir a HTTPS (`git remote set-url origin https://github.com/<org>/<repo>.git`) y asegurar `gh auth setup-git` con el HOME correcto (`HOME=/opt/hermes-agent-data/home`).
 - **Workspace con archivos de otro usuario bloquea rebase y pull**: si el rebase falla con `Permission denied` al crear o borrar archivos, el árbol tiene ficheros de root. No insistir. Alternativa sin escribir en el árbol: subir el HEAD a una rama (`git push origin HEAD:refs/heads/<rama>`), abrir PR con `gh pr create` y mergear con `gh pr merge <n> --squash --delete-branch`. El remoto queda correcto y el problema de permisos se reporta como pendiente.
 - **Un fetch que muere por timeout deja la ref del remoto obsoleta**: si el push se rechaza por no ser avance rápido pero el conteo local dice 0/0, verificar contra la verdad del servidor con `git ls-remote origin main` antes de concluir.
+- **Antes de pushear una rama, enumera los commits que viajan y separa los ajenos.** `git push <remoto> <rama>`
+  publica **todo** lo que esté entre el remoto y el HEAD, incluidos commits de otra persona nunca publicados.
+  Caso 12-nov-2026: el push de `prod-stable` arrastró `9af2e1e11e` (autor Jemadiar1), que llevaba un día en
+  local y nadie había decidido publicar. Regla: `git log --oneline <remoto>/<rama>..HEAD` antes de cada push;
+  si hay commits de otro autor, o se aíslan en una rama propia (`git push origin <sha>:refs/heads/<rama>`)
+  o se avisa explícitamente en la misma respuesta — nunca se descubren después.
 
 - **Repositorios públicos exigen sanear la plantilla**: al copiar las reglas de gobernanza a un repo público, quitar nombres de clientes, IPs de host y nombres de ítems del gestor de secretos. Verificar con una búsqueda de esos términos sobre el contenido publicado antes de dar por cerrado; una regla interna filtrada revela arquitectura.
 - **Crear gobernanza sin copia local**: cuando el repo no existe en disco, subir los archivos con `gh api --method PUT repos/<org>/<repo>/contents/<ruta>` en base64, y verificar después con `contents/<ruta>`. Evita clones desechables.

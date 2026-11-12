@@ -221,6 +221,13 @@ Corolario de la regla base, y el error más caro de esta clase de tarea: **nunca
 - **Colisión de prefijos de key**: el `.env` puede declarar `OPENAI_API_KEY` con el prefijo de OTRO proveedor (caso real: `sk-JzB…` = NaN-Builders, que solo sirve `flux-2-klein`). Antes de afirmar «tenemos OpenAI», compara el prefijo con el de las keys conocidas y busca `OPENAI_BASE_URL` en el mismo archivo. Y si la línea está **comentada** (`# FAL_KEY=`), el entorno NO tiene esa key: la fuente real es el vault. Un `grep -l` de presencia no distingue activa de comentada — lee la línea.
 - **Vault de secretos ≠ vault de documentación**: «mira en el vault» puede significar Vaultwarden (`vw list`, host-level) o `/opt/vault/*.md` (docs). Son fuentes distintas y pueden divergir: al 11-sep-2026 `/opt/vault/APIS-INTEGRACIONES.md` no mencionaba fal.ai aunque la key existe en Vaultwarden. Revisa ambas y dilo si divergen.
   **Y la bóveda de docs es de SOLO LECTURA** en el runtime del contenedor (`mount` ext4 `ro`; además `write_file` la bloquea por estar fuera de `HERMES_WRITE_SAFE_ROOT` = `/host:/opt/data`). No intentes escribir documentación nueva ahí: va al **repo del proyecto** (`docs/arquitectura/<TEMA>.md` + `docs/arquitectura/assets/…`) o a `/opt/data/`. Si ya escribiste una ruta de la bóveda en memoria/chat, corrígela en la misma respuesta.
+- **«No existe» y «no tengo acceso» son dos claims distintos y ninguno se sostiene con una sola medida.**
+  Caso 12-nov-2026: el Admin preguntó por un repo que no estaba clonado en el host; `git ls-remote` devolvió
+  sus tres ramas una vez, tres reintentos posteriores dieron `Repository not found` (128), y aun así se
+  respondió «no existe ningún repo con ese nombre». El repo existía. Regla: (a) `ls-remote` dos veces
+  separadas antes de afirmar nada; (b) si una pasada lista refs y otra falla, el veredicto es **acceso
+  intermitente o llave sin permiso**, nunca inexistencia; (c) la ausencia en los clones locales solo prueba
+  ausencia **en ese host**, y así hay que decirlo.
 - Si la capacidad depende de un script de repo (p. ej. el pipeline de reels usa `scripts/nan_client.py` con `NAN_API_KEY`) y no del toolset de Hermes, dilo explícitamente: son dos cadenas distintas y el claim suele mezclarlas.
 
 ## Soporte
