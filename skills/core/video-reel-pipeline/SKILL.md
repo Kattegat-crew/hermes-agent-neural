@@ -1,8 +1,10 @@
 ---
 name: video-reel-pipeline
-description: "Use when producing an AI video reel end to end"
+description: "Use when producing an AI video reel end to end."
 version: 2.0.0
 author: NeuralCrew
+license: Apache-2.0
+platforms: [linux, macos]
 tags: [reel, video, ia, pipeline, voz, lipsync, fal, produccion]
 
 ---
@@ -45,6 +47,13 @@ Habilidad consolidada de clase que centraliza los flujos de:
 ## Arquitectura y Protocolos
 Esta skill opera como despacho unificado. El detalle procedural y gotchas específicos de cada caso se encuentran preservados en:
 `references/`
+
+## QA de video con input nativo
+- `scripts/qa_gate.py` — gate determinista, coste 0: frames vacíos por segundo con ventanas toleradas.
+- `scripts/video_native_qa.py` — manda el mp4 completo al VLM con el guion, devuelve veredicto
+  estructurado, presupuesto de pasadas (máx 2 por defecto), cache por hash y exit 0/1/2.
+  Detalle, evidencia medida y límites: [references/qa-video-nativo.md](references/qa-video-nativo.md)
+- Regla: el gate determinista va delante; el VLM sólo juzga lo que se ve en movimiento.
 
 ## Casos de Uso Disponibles
 - **ai-video-model-costing**: Ver [references/ai-video-model-costing.md](file:///root/hermes-agent-legacy-docker/skills/core/video-reel-pipeline/references/ai-video-model-costing.md)
