@@ -280,3 +280,150 @@ def test_reasoning_only_reply_is_parsed(mod, video, guion):
                     "usage": {}}
 
     assert run(mod, video, guion, ReasoningTransport()) == 0
+
+
+# ── Defectos señalados por el gate adversarial (ciclo 1) ──────────────────────
+def test_missing_ffprobe_degrades_instead_of_crashing(tmp_path, monkeypatch, video, guion):
+    """Carga el módulo SIN el stub de probe_duration y rompe el binario."""
+    import subprocess as sp
+
+    monkeypatch.setenv("VIDEO_QA_STATE", str(tmp_path / "state_raw"))
+    monkeypatch.setenv("NAN_BUILDERS_API_KEY", "test-key")
+    spec = importlib.util.spec_from_file_location("video_native_qa_raw", SCRIPT)
+    assert spec is not None and spec.loader is not None
+    raw = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(raw)
+
+    def boom(*a, **k):
+        raise FileNotFoundError("ffprobe")
+
+    monkeypatch.setattr(sp, "run", boom)
+    t = FakeTransport(verdict())
+    assert raw.main([str(video), "--script", str(guion), "--json"], transport=t) == 2
+    assert t.calls == []
+
+
+def test_non_numeric_time_from_model_does_not_crash(mod):
+    v = mod.parse_verdict(json.dumps({
+        "passed": False, "score": 4,
+        "blocking": [{"severity": "high", "t": "~4s", "what": "caption encima"},
+                     {"severity": "medium", "t": {"min": 1}, "what": "raro"}],
+    }))
+    assert v is not None
+    assert v["blocking"][0]["t"] == 4.0
+    assert v["blocking"][1]["t"] is None
+
+
+def test_duplicate_medium_in_one_pass_is_not_a_confirmation(mod):
+    dup = {"passed": False, "blocking": [blocking("medium", t=4.0),
+                                         blocking("medium", t=4.3)]}
+    d = mod.decide([dup])
+    assert d["passed"] is True, "una sola pasada no confirma medium"
+    assert d["warnings"] and d["blocking"] == []
+
+
+def test_same_medium_in_two_passes_blocks_with_equal_times(mod):
+    d = mod.decide([
+        {"passed": False, "blocking": [blocking("medium", t=4.0)]},
+        {"passed": False, "blocking": [blocking("medium", t=4.2)]},
+    ])
+    assert d["passed"] is False and len(d["blocking"]) == 1
+
+
+def test_compat_retry_cannot_exceed_max_passes_one(mod, video, guion):
+    class Always400:
+        def __init__(self):
+            self.calls = 0
+
+        def __call__(self, payload, api_key, timeout):
+            self.calls += 1
+            raise mod.QAError("HTTP 400: response_format is not supported")
+
+    t = Always400()
+    assert run(mod, video, guion, t, "--max-passes", "1") == 2
+    assert t.calls == 1, "el reintento de compatibilidad no puede saltarse el techo"
+
+
+def test_compat_retry_plus_real_pass_fits_the_budget(mod, video, guion):
+    class Picky:
+        def __init__(self):
+            self.calls = 0
+
+        def __call__(self, payload, api_key, timeout):
+            self.calls += 1
+            if "response_format" in payload:
+                raise mod.QAError("HTTP 422: unsupported field")
+            return {"choices": [{"message": {"content": verdict()}}], "usage": {}}
+
+    t = Picky()
+    assert run(mod, video, guion, t, "--max-passes", "2") == 0
+    assert t.calls == 2
+
+
+def test_unmeasurable_pre_gate_is_an_error_not_a_block(mod, video, guion, monkeypatch):
+    monkeypatch.setattr(mod, "run_pre_gate", lambda _v, _allow="": (2, "ffprobe falta"))
+    t = FakeTransport(verdict())
+    assert run(mod, video, guion, t, "--pre-gate") == 2
+    assert t.calls == []
+
+
+# ── qa_gate.py: el gate determinista también falla cerrado ────────────────────
+GATE = REPO / "skills" / "core" / "video-reel-pipeline" / "scripts" / "qa_gate.py"
+
+
+@pytest.fixture
+def gate(tmp_path):
+    spec = importlib.util.spec_from_file_location("qa_gate_under_test", GATE)
+    assert spec is not None and spec.loader is not None
+    module = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(module)
+    return module
+
+
+def test_gate_missing_ffprobe_raises_gate_error(gate, monkeypatch):
+    import subprocess as sp
+
+    def boom(*a, **k):
+        raise FileNotFoundError("ffprobe")
+
+    monkeypatch.setattr(sp, "run", boom)
+    with pytest.raises(gate.GateError):
+        gate.probe("/tmp/x.mp4")
+
+
+def test_gate_empty_metadata_raises_gate_error(gate, monkeypatch):
+    import subprocess as sp
+
+    class R:
+        returncode = 0
+        stdout = ""
+        stderr = ""
+
+    monkeypatch.setattr(sp, "run", lambda *a, **k: R())
+    with pytest.raises(gate.GateError):
+        gate.probe("/tmp/x.mp4")
+
+
+def test_gate_negative_duration_is_unmeasurable(gate, monkeypatch):
+    import subprocess as sp
+
+    class R:
+        returncode = 0
+        stderr = ""
+        stdout = json.dumps({
+            "streams": [{"width": 1080, "height": 1920, "r_frame_rate": "30/1"}],
+            "format": {"duration": "-1.0", "size": "10"},
+        })
+
+    monkeypatch.setattr(sp, "run", lambda *a, **k: R())
+    with pytest.raises(gate.GateError):
+        gate.probe("/tmp/x.mp4")
+
+
+def test_gate_main_exits_two_when_it_cannot_measure(gate, monkeypatch, capsys):
+    monkeypatch.setattr(gate, "probe", lambda _p: (_ for _ in ()).throw(gate.GateError("sin ffprobe")))
+    monkeypatch.setattr("sys.argv", ["qa_gate.py", "/tmp/x.mp4", "--quiet"])
+    with pytest.raises(SystemExit) as exc:
+        gate.main()
+    assert exc.value.code == 2
+    assert "sin ffprobe" in capsys.readouterr().err

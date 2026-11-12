@@ -7,39 +7,60 @@ frames realmente vacíos (voz sobre negro) frente a diseño oscuro intencional.
 Uso:
   python3 qa_gate.py video.mp4 [--fps 1] [--std 9] [--mean 13] [--allow 0,22,30,43]
 
-Salida: tabla por segundo + lista de frames vacíos + exit code 1 si hay vacíos
-fuera de las ventanas permitidas.
+Salida: tabla por segundo + lista de frames vacíos.
+Exit: 0 sin vacíos fuera de las ventanas permitidas · 1 hay vacíos · 2 no se pudo medir.
 """
 import argparse
+import json
+import os
 import subprocess
 import sys
 import tempfile
-import os
 
 try:
     from PIL import Image, ImageStat, ImageFilter
 except ImportError:
-    sys.exit("falta Pillow: pip install pillow")
+    print("ERROR: falta Pillow (pip install pillow)", file=sys.stderr)
+    sys.exit(2)
+
+
+class GateError(RuntimeError):
+    """El artefacto no se puede medir: no hay veredicto posible (nunca se aprueba)."""
 
 
 def probe(path):
-    out = subprocess.run(
-        ["ffprobe", "-v", "error", "-select_streams", "v:0",
-         "-show_entries", "stream=width,height,r_frame_rate,nb_frames",
-         "-show_entries", "format=duration,size", "-of", "json", path],
-        capture_output=True, text=True).stdout
-    import json
-    d = json.loads(out)
-    st = d["streams"][0]
-    num, den = st["r_frame_rate"].split("/")
-    return {"w": st["width"], "h": st["height"], "fps": round(int(num) / int(den), 2),
-            "dur": float(d["format"]["duration"]), "size": int(d["format"]["size"])}
+    try:
+        out = subprocess.run(
+            ["ffprobe", "-v", "error", "-select_streams", "v:0",
+             "-show_entries", "stream=width,height,r_frame_rate,nb_frames",
+             "-show_entries", "format=duration,size", "-of", "json", str(path)],
+            capture_output=True, text=True, timeout=60)
+    except (FileNotFoundError, OSError, subprocess.SubprocessError) as exc:
+        raise GateError(f"ffprobe no ejecutable: {exc}") from exc
+    if out.returncode != 0:
+        raise GateError(f"ffprobe falló: {(out.stderr or '').strip()[:200]}")
+    try:
+        d = json.loads(out.stdout or "{}")
+        st = d["streams"][0]
+        num, den = str(st["r_frame_rate"]).split("/")
+        fps = round(int(num) / int(den), 2)
+        duration = float(d["format"]["duration"])
+        size = int(d["format"]["size"])
+        width, height = int(st["width"]), int(st["height"])
+    except (json.JSONDecodeError, KeyError, IndexError, ValueError, TypeError, ZeroDivisionError) as exc:
+        raise GateError(f"metadatos ilegibles en {path}: {exc}") from exc
+    if duration <= 0 or fps <= 0 or width <= 0 or height <= 0:
+        raise GateError(f"metadatos no positivos en {path}: {duration}s {fps}fps {width}x{height}")
+    return {"w": width, "h": height, "fps": fps, "dur": duration, "size": size}
 
 
 def frame_at(path, t, tmp):
-    subprocess.run(["ffmpeg", "-v", "error", "-y", "-ss", f"{t}", "-i", path,
-                    "-frames:v", "1", tmp], check=True)
-    return Image.open(tmp).convert("L")
+    try:
+        subprocess.run(["ffmpeg", "-v", "error", "-y", "-ss", f"{t}", "-i", str(path),
+                        "-frames:v", "1", tmp], check=True, capture_output=True, timeout=120)
+        return Image.open(tmp).convert("L")
+    except (OSError, subprocess.SubprocessError) as exc:
+        raise GateError(f"no se pudo extraer el frame {t}s: {exc}") from exc
 
 
 def main():
@@ -52,20 +73,24 @@ def main():
     ap.add_argument("--quiet", action="store_true")
     a = ap.parse_args()
 
-    meta = probe(a.video)
-    allow = {float(x) for x in a.allow.split(",") if x.strip()}
-    tmp = os.path.join(tempfile.gettempdir(), "qa_gate_frame.png")
-    empties, rows = [], []
-    t = 0.0
-    while t < meta["dur"]:
-        im = frame_at(a.video, round(t, 2), tmp)
-        st = ImageStat.Stat(im)
-        edge = ImageStat.Stat(im.filter(ImageFilter.FIND_EDGES)).mean[0]
-        empty = st.stddev[0] < a.std and st.mean[0] < a.mean
-        rows.append((t, st.mean[0], st.stddev[0], edge, empty))
-        if empty and not any(abs(t - x) <= 0.5 for x in allow):
-            empties.append(round(t, 1))
-        t += a.fps
+    try:
+        meta = probe(a.video)
+        allow = {float(x) for x in a.allow.split(",") if x.strip()}
+        tmp = os.path.join(tempfile.gettempdir(), "qa_gate_frame.png")
+        empties, rows = [], []
+        t = 0.0
+        while t < meta["dur"]:
+            im = frame_at(a.video, round(t, 2), tmp)
+            st = ImageStat.Stat(im)
+            edge = ImageStat.Stat(im.filter(ImageFilter.FIND_EDGES)).mean[0]
+            empty = st.stddev[0] < a.std and st.mean[0] < a.mean
+            rows.append((t, st.mean[0], st.stddev[0], edge, empty))
+            if empty and not any(abs(t - x) <= 0.5 for x in allow):
+                empties.append(round(t, 1))
+            t += a.fps
+    except GateError as exc:
+        print(f"ERROR: {exc}", file=sys.stderr)
+        sys.exit(2)
 
     if not a.quiet:
         print(f"{meta['w']}x{meta['h']} · {meta['fps']} fps · {meta['dur']:.2f}s · "

@@ -62,6 +62,8 @@ Reeditar el video cambia el hash y obliga a re-revisar.
 ## Gate determinista delante
 `--pre-gate` corre `qa_gate.py` (frames vacíos por segundo, con ventanas toleradas). Si falla, no
 se llama al modelo: un film con voz sobre negro no necesita un VLM para saber que está roto.
+`qa_gate.py` sale `0` limpio · `1` con vacíos · `2` cuando no pudo medir (ffprobe ausente,
+metadatos ilegibles, ffmpeg roto); el `2` se reporta como error, nunca como pase.
 
 Medido sobre el mismo film: el gate determinista bloqueó con **7 segundos vacíos**
 (`0, 22, 30, 31, 43, 58, 59`) coste 0, mientras el VLM lo aprobaba con 8/10. No es que uno se

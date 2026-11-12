@@ -22,6 +22,7 @@ import base64
 import hashlib
 import json
 import os
+import re
 import subprocess
 import sys
 import time
@@ -56,16 +57,22 @@ def sha256_file(path: Path) -> str:
 
 
 def probe_duration(path: Path) -> float:
-    out = subprocess.run(
-        ["ffprobe", "-v", "error", "-show_entries", "format=duration", "-of", "json", str(path)],
-        capture_output=True, text=True, timeout=60,
-    )
-    if out.returncode != 0:
-        raise QAError(f"ffprobe falló: {out.stderr.strip()[:200]}")
     try:
-        return float(json.loads(out.stdout)["format"]["duration"])
-    except (KeyError, ValueError) as exc:
+        out = subprocess.run(
+            ["ffprobe", "-v", "error", "-show_entries", "format=duration", "-of", "json", str(path)],
+            capture_output=True, text=True, timeout=60,
+        )
+    except (FileNotFoundError, OSError, subprocess.SubprocessError) as exc:
+        raise QAError(f"ffprobe no ejecutable: {exc}") from exc
+    if out.returncode != 0:
+        raise QAError(f"ffprobe falló: {(out.stderr or '').strip()[:200]}")
+    try:
+        duration = float(json.loads(out.stdout)["format"]["duration"])
+    except (KeyError, ValueError, TypeError) as exc:
         raise QAError(f"duración ilegible en {path.name}: {exc}") from exc
+    if duration <= 0:
+        raise QAError(f"duración no positiva en {path.name}: {duration}")
+    return duration
 
 
 def run_pre_gate(video: Path, allow: str = "") -> tuple[int, str]:
@@ -164,6 +171,18 @@ def _post(payload: dict, api_key: str, timeout: int) -> dict:
 
 
 # ── veredicto ────────────────────────────────────────────────────────────────
+def _as_time(value) -> float | None:
+    """Tiempo del modelo: nunca lanza. Acepta 4, 4.2, "4.2", "~4s"; lo demás es desconocido."""
+    if value is None or isinstance(value, bool):
+        return None
+    if isinstance(value, (int, float)):
+        return float(value)
+    if isinstance(value, str):
+        match = re.search(r"-?\d+(?:\.\d+)?", value)
+        return float(match.group()) if match else None
+    return None
+
+
 def parse_verdict(text: str) -> dict | None:
     """Parseo estricto: sin las claves del contrato no hay veredicto, y sin veredicto no hay pase."""
     if not isinstance(text, str):
@@ -194,40 +213,47 @@ def parse_verdict(text: str) -> dict | None:
         what = str(item.get("what", "")).strip()
         if sev not in SEVERITIES or not what:
             return None
-        t = item.get("t", None)
-        clean.append({"severity": sev, "t": None if t is None else float(t), "what": what})
+        clean.append({"severity": sev, "t": _as_time(item.get("t")), "what": what})
     out = dict(data)
     out["blocking"] = clean
     return out
 
 
 def decide(passes: list[dict]) -> dict:
-    """Agrega pasadas: critical/high bloquean solos; medium necesita confirmación."""
+    """Agrega pasadas: critical/high bloquean solos; medium necesita DOS PASADAS distintas.
+
+    El contador es el conjunto de índices de pasada donde apareció, no el número de
+    ocurrencias: dos hallazgos medium idénticos dentro de la misma respuesta son una
+    sola pasada y no confirman nada.
+    """
     confirmed: list[dict] = []
-    for p in passes:
+    for idx, p in enumerate(passes):
         for f in p.get("blocking", []):
-            if f["severity"] in HARD_BLOCK:
-                if not any(c["severity"] == f["severity"] and c["what"] == f["what"] for c in confirmed):
-                    confirmed.append(dict(f, passes=1))
-                    continue
             match = None
             for c in confirmed:
                 if c["severity"] != f["severity"]:
                     continue
                 a, b = c.get("t"), f.get("t")
-                if a is None and b is None:
+                same_what = c["what"].strip().lower() == f["what"].strip().lower()
+                if a is None and b is None and same_what:
                     match = c
                 elif a is not None and b is not None and abs(a - b) <= CONFIRM_WINDOW_S:
                     match = c
                 if match:
                     break
             if match:
-                match["passes"] += 1
+                match["_idx"].add(idx)
             else:
-                confirmed.append(dict(f, passes=1))
+                entry = dict(f)
+                entry["_idx"] = {idx}
+                confirmed.append(entry)
+
+    for c in confirmed:
+        c["passes"] = len(c.pop("_idx"))
 
     blocking = [f for f in confirmed if f["severity"] in HARD_BLOCK or f["passes"] >= 2]
-    warnings = [f for f in confirmed if f not in blocking]
+    blocking_ids = {id(f) for f in blocking}
+    warnings = [f for f in confirmed if id(f) not in blocking_ids]
 
     unnamed = [p for p in passes if not p.get("passed") and not p.get("blocking")]
     passed = not blocking and not unnamed
@@ -332,14 +358,16 @@ def main(argv=None, *, transport=_post) -> int:
 
     try:
         duration = probe_duration(video)
-    except (QAError, subprocess.SubprocessError) as exc:
+    except (QAError, OSError, subprocess.SubprocessError) as exc:
         return _fail(str(exc))
 
     if args.pre_gate:
         try:
             code, detail = run_pre_gate(video, args.pre_gate_allow)
-        except (QAError, subprocess.SubprocessError) as exc:
+        except (QAError, OSError, subprocess.SubprocessError) as exc:
             return _fail(f"pre-gate no ejecutable: {exc}")
+        if code == 2:
+            return _fail(f"el gate determinista no pudo medir el film: {detail[:300]}")
         if code != 0:
             report = {"passed": False, "reason": "gate determinista", "detail": detail,
                       "model_calls": 0, "video": str(video)}
@@ -378,14 +406,20 @@ def main(argv=None, *, transport=_post) -> int:
     payload = build_payload(video, args.model, prompt, args.max_tokens, json_mode=json_mode)
     passes: list[dict] = []
     tokens_in = tokens_out = 0
+    attempts = 0
     started = time.time()
-    for _ in range(args.max_passes):
+    # `attempts` cuenta LLAMADAS al modelo, no veredictos: el reintento de compatibilidad
+    # también gasta presupuesto. `--max-passes` es un techo de llamadas, no de bucles.
+    while attempts < args.max_passes and len(passes) < args.max_passes:
+        attempts += 1
         try:
             resp = transport(payload, api_key, args.timeout)
         except QAError as exc:
             msg = str(exc)
-            if ("HTTP 400" in msg or "HTTP 422" in msg) and (
-                    "response_format" in payload or "chat_template_kwargs" in payload):
+            optional = "response_format" in payload or "chat_template_kwargs" in payload
+            retryable = optional and ("HTTP 400" in msg or "HTTP 422" in msg)
+            if retryable and attempts < args.max_passes:
+                attempts += 1
                 payload = _without_optional(payload)
                 try:
                     resp = transport(payload, api_key, args.timeout)
@@ -423,7 +457,7 @@ def main(argv=None, *, transport=_post) -> int:
     valid = [p for p in passes if not p.get("invalid")]
     if not valid:
         report = {"passed": False, "reason": "sin veredicto válido (degradado)",
-                  "model": args.model, "model_calls": len(passes),
+                  "model": args.model, "model_calls": attempts,
                   "tokens": {"in": tokens_in, "out": tokens_out},
                   "raw": [p["raw"] for p in passes if p.get("raw")],
                   "message_keys": [p["message_keys"] for p in passes if p.get("message_keys")],
@@ -435,7 +469,7 @@ def main(argv=None, *, transport=_post) -> int:
     report = {
         **decision,
         "model": args.model,
-        "model_calls": len(passes),
+        "model_calls": attempts,
         "invalid_passes": len(passes) - len(valid),
         "tokens": {"in": tokens_in, "out": tokens_out},
         "latency_s": round(time.time() - started, 1),
