@@ -98,6 +98,16 @@ se fusiona a `prod-stable` sin aprobación explícita.
 - **Observabilidad.** `HERMES-DSML-GUARD: stream buffered (why, prefix, bytes, model, provider,
   total holds)` sólo cuenta retenciones reales (bloque descartado o liberado por tope); una
   divergencia benigna (`<h1>…`) va a `debug` y no infla el digest.
+- **El tope no aplica a un bloque completo** (ronda 2): un tool-call de >4 KB es el caso normal
+  (`execute_code`); retenerlo entero es lo único que permite al guard recuperarlo. El tope sólo
+  protege a un `partial` que nunca resuelve.
+- **El release del boundary es un delta real**: pasa por el fence de single-writer, emite el hook
+  `on_stream_delta` y se registra en el texto mostrado. Si el texto entró por la ruta suprimida
+  (`display_only`), el release se queda en el callback de display y no toca TTS.
+- **Caso exacto del guard** (ronda 2): el clasificador es case-sensitive como `_LEAK_START_RE`;
+  `<||dsml||invoke` no se retiene, igual que hoy, porque el guard no lo recuperaría.
+- **El break diferido no queda colgado**: al descartar un bloque en el boundary se consume
+  `_stream_needs_break`, para que la respuesta siguiente no empiece con un `"\n\n"` huérfano.
 - **Fuera de alcance confirmado:** `agent/turn_tool_round.py:194` escribe texto **local**
   (guardrail halt), no contenido del modelo: no es un sumidero del leak.
 

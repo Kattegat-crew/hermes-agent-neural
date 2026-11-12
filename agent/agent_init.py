@@ -534,6 +534,7 @@ _STREAM_STATE: dict[str, Any] = {
     # instead of being streamed raw; "passthrough" flips once the opening can no longer be one.
     "_dsml_stream_buffer": "",
     "_dsml_stream_passthrough": False,
+    "_dsml_stream_display_only": False,  # suppress "block" from alignment
     "_dsml_stream_held": 0,  # responses held for the daily digest (spec §6)
     # Stateful scrubbers: <memory-context> / thinking spans split across deltas defeat
     # per-delta regexes (both tags must be in one string).

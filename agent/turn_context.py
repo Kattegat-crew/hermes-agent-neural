@@ -730,6 +730,7 @@ def _reset_per_turn_agent_state(agent: Any) -> None:
     # must not inherit a stale buffer or passthrough flag from the previous one.
     agent._dsml_stream_buffer = ""
     agent._dsml_stream_passthrough = False
+    agent._dsml_stream_display_only = False
 
 
 def _stage_turn_user_message(

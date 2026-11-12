@@ -30,11 +30,14 @@ _DSML_STREAM_HOLD_MAX = 4096
 
 def _consume_marker_word(rest: str, word: str) -> tuple[str | None, str]:
     """Advance over ``word`` at the head of ``rest``: ('ok', remainder) when it is spelled out,
-    ('partial', '') while ``rest`` may still grow into it, (None, '') when it cannot."""
-    head = rest.lower()
-    if head.startswith(word):
+    ('partial', '') while ``rest`` may still grow into it, (None, '') when it cannot.
+
+    Case-sensitive on purpose: ``_LEAK_START_RE`` is, and the delivery layer must never hold text
+    the guard would not recover (``<||dsml||invoke`` is shown, exactly as it is today).
+    """
+    if rest.startswith(word):
         return "ok", rest[len(word):]
-    if word.startswith(head):
+    if word.startswith(rest):
         return "partial", ""
     return None, ""
 
@@ -82,7 +85,7 @@ def _dsml_marker_state(text: str) -> str | None:
         return None  # three pipes is not a marker
     while i < len(s) and s[i].isspace():
         i += 1
-    state, rest = _consume_marker_word(s[i:], "dsml")
+    state, rest = _consume_marker_word(s[i:], "DSML")
     if state != "ok":
         return state  # 'partial' while DSML is incomplete, None when the text cannot be one
     i = 0
@@ -170,15 +173,35 @@ class StreamDeliveryMixin:
         results = [self._call_quietly(cb, text) for cb in (self.stream_delta_callback, self._stream_callback)]
         return any(results)
 
-    def _buffer_dsml_stream_prefix(self, text: str) -> str:
+    def _release_stream_text(self, text: str, *, display_only: bool = False, record: bool = True) -> bool:
+        """Emit text that was withheld by the DSML buffer: fence, callbacks, plugin hook, record.
+
+        A boundary release is a real delta for every consumer, so it goes through the same
+        single-writer fence and ``on_stream_delta`` hook as a live delta. ``display_only`` keeps
+        a suppressed-content release off the TTS sink it never belonged to.
+        """
+        if self._stream_writer_superseded():
+            self._note_dropped_stream_writer("_release_stream_text")
+            return False
+        if display_only:
+            delivered = bool(self._call_quietly(getattr(self, "stream_delta_callback", None), text))
+        else:
+            delivered = self._emit_stream_text(text)
+        self._enqueue_stream_hook("on_stream_delta", delta=text, kind="text")
+        if delivered and record:
+            self._record_streamed_assistant_text(text)
+        return delivered
+
+    def _buffer_dsml_stream_prefix(self, text: str, *, display_only: bool = False) -> str:
         """Withhold a response that opens like DSML markup; return what may be emitted now.
 
         The turn-final guard (``agent/dsml_guard.py``) needs the whole block, so a streaming
         client used to receive the raw markup token by token. Only the START of a response is a
         candidate — a marker mid-prose is ordinary text. Once the buffer is a marker without a
-        divergence it keeps holding to the response boundary (``_close_dsml_stream_buffer``),
-        bounded by ``_DSML_STREAM_HOLD_MAX``; a response that diverges before completing a
-        marker is released exactly once, in order, and then passes straight through.
+        divergence it keeps holding to the response boundary (``_close_dsml_stream_buffer``); a
+        response that diverges before completing a marker is released exactly once, in order, and
+        then passes straight through. A block that is already ``complete`` is never released early
+        — however large — because the guard can only recover what it receives whole.
 
         ``""`` means this delta may not be shown yet.
         """
@@ -191,15 +214,18 @@ class StreamDeliveryMixin:
         held = getattr(self, "_dsml_stream_buffer", "")
         buffer = held + text
         state = _dsml_marker_state(buffer)
-        if state is not None and len(buffer) <= _DSML_STREAM_HOLD_MAX:
+        # The cap only guards a PARTIAL opening that never resolves (a future grammar change);
+        # a complete block is what the guard recovers, so size must not turn it into a leak.
+        if state == "complete" or (state == "partial" and len(buffer) <= _DSML_STREAM_HOLD_MAX):
             self._dsml_stream_buffer = buffer
+            self._dsml_stream_display_only = display_only or bool(
+                getattr(self, "_dsml_stream_display_only", False) and held
+            )
             return ""
         self._dsml_stream_buffer = ""
+        self._dsml_stream_display_only = False
         self._dsml_stream_passthrough = True
-        if state == "complete":
-            # A real block that outgrew the bound: show it once, the guard still owns recovery.
-            self._note_dsml_stream_held("released over bound", buffer)
-        elif held:
+        if held:
             # A benign prefix ('<', '\\n<') that turned out not to be a marker: not a hold.
             logger.debug("HERMES-DSML-GUARD: benign stream prefix released (prefix=%r)", held)
         return buffer
@@ -221,17 +247,20 @@ class StreamDeliveryMixin:
         marker, or that simply ends on ``<``, is ordinary text and must be shown.
         """
         buffer = getattr(self, "_dsml_stream_buffer", "")
+        display_only = bool(getattr(self, "_dsml_stream_display_only", False))
         self._dsml_stream_buffer = ""
+        self._dsml_stream_display_only = False
         self._dsml_stream_passthrough = False
         if not buffer:
             return
         if _LEAK_START_RE.match(buffer.lstrip()):
             self._note_dsml_stream_held("discarded at close", buffer)
+            # The deferred paragraph break belonged to a block nobody will ever see.
+            self._stream_needs_break = False
             return
         if getattr(self, "_hold_stream", False):
             return
-        if self._emit_stream_text(buffer):
-            self._record_streamed_assistant_text(buffer)
+        self._release_stream_text(buffer, display_only=display_only)
 
     def _enqueue_stream_hook(self, event: str, *, label: str | None = None, **fields: Any) -> None:
         """Best-effort plugin stream hook enqueue; never raises into the stream path."""

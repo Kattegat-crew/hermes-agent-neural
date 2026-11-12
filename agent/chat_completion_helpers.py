@@ -2829,8 +2829,9 @@ class _StreamingCall(StreamingWaitMonitor):
         if self.agent.stream_delta_callback and not getattr(self.agent, "_hold_stream", False):
             def deliver() -> None:
                 # Same DSML prefix buffer as the ordinary delta path: suppressed-content turns
-                # carry model text too, so they must not be a second leak sink.
-                shown = self.agent._buffer_dsml_stream_prefix(text)
+                # carry model text too, so they must not be a second leak sink. This route only
+                # ever fed the display callback, so a boundary release stays off TTS as well.
+                shown = self.agent._buffer_dsml_stream_prefix(text, display_only=True)
                 if shown:
                     self.agent.stream_delta_callback(shown)
                     self.agent._record_streamed_assistant_text(shown)

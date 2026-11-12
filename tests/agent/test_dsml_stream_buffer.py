@@ -195,7 +195,7 @@ def test_tool_break_prefix_does_not_leak_the_markup():
     assert _feed(agent, '<||DSML||invoke name="terminal">') == []
     agent._close_dsml_stream_buffer()
     assert agent.shown == []
-    assert agent._stream_needs_break is True  # the break was never emitted
+    assert agent._stream_needs_break is False  # dropped with the block nobody will see
 
 
 def test_tool_break_is_kept_for_the_next_real_delta():
@@ -311,3 +311,53 @@ def test_benign_angle_bracket_is_not_counted_as_a_hold():
     agent = _Agent()
     _feed(agent, "<", "h1>x</h1>")
     assert getattr(agent, "_dsml_stream_held", 0) == 0
+
+
+# ── round-2 findings ─────────────────────────────────────────────────────────────────
+
+
+def test_large_complete_block_is_still_withheld():
+    """A >4 KB tool-call block is the normal case (code in execute_code): the cap must not leak it."""
+    agent = _Agent()
+    payload = '<||DSML||invoke name="execute_code"><||DSML||parameter name="code" string="true">' + "x" * 5000
+    assert _feed(agent, payload[:2000], payload[2000:]) == []
+    agent._close_dsml_stream_buffer()
+    assert agent.shown == []
+    assert getattr(agent, "_dsml_stream_held", 0) == 1
+
+
+def test_boundary_release_enqueues_the_delta_hook():
+    """A released buffer is a real delta: plugin stream hooks must see it, like any other."""
+    agent = _Agent()
+    assert agent._buffer_dsml_stream_prefix("<") == ""
+    agent._close_dsml_stream_buffer()
+    assert agent.shown == ["<"]
+    assert [f["delta"] for e, f in agent.hooks if e == "on_stream_delta"] == ["<"]
+
+
+def test_discarded_block_does_not_leave_the_paragraph_break_pending():
+    """The deferred break belonged to a block nobody sees; the next reply must not start with it."""
+    agent = _Agent()
+    agent._stream_needs_break = True
+    assert _feed(agent, "<||DSML||invoke", ' name="terminal">') == []
+    agent._close_dsml_stream_buffer()
+    assert agent._stream_needs_break is False
+    assert _feed(agent, "Respuesta limpia") == ["Respuesta limpia"]
+
+
+def test_lowercase_marker_is_not_held():
+    """The guard is case-sensitive; holding text it cannot recover would only delay the leak."""
+    agent = _Agent()
+    assert _feed(agent, "<||dsml||invoke") == ["<||dsml||invoke"]
+
+
+def test_suppressed_route_release_stays_off_tts():
+    """`_route_suppressed_text` never fed TTS; a boundary release must not start doing so."""
+    agent = _Agent()
+    spoken: list[str] = []
+    agent._stream_callback = spoken.append
+    shown = agent._buffer_dsml_stream_prefix("<", display_only=True)
+    assert shown == ""
+    agent._close_dsml_stream_buffer()
+    assert agent.shown == ["<"]
+    assert spoken == []
