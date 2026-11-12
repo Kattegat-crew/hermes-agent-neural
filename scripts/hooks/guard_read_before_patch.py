@@ -11,12 +11,21 @@ Eventos:
   Permitido solo si la huella (mtime_ns, size) del archivo coincide con la última
   lectura/escritura registrada (CA2-CA4). Ruta inexistente -> allow (CA5).
   Rutas relativas contra `cwd` del payload; symlinks vía realpath (CA6).
+  Sin cwd y ruta relativa -> 'unknown_cwd', se permite, NUNCA se resuelve contra
+  os.getcwd() del proceso (ronda 2 / L2). Sin clave 'path' -> 'no_path' en el
+  ledger, se permite con rastro (ronda 2 / L3).
 - post_tool_call (read_file|write_file|patch|edit_file): registra la huella actual.
+  Registra SOLO si extra.status == 'ok' o si la clave no viene (payload legacy con
+  'ok'; sin ninguna de las dos se asume exitoso). Con status 'error'|'cancelled'|'blocked'
+  NUNCA registra: un patch bloqueado (status='blocked') dispara post_tool_call y no
+  debe marcar la ruta como vista, o el reintento idéntico pasaría (ronda 2 / H1).
   Cualquier otra tool no toca el ledger.
 
 Modos (CA7/CA8): env READ_BEFORE_PATCH_MODE=shadow|enforce o archivo MODE junto al
 ledger; default shadow. En shadow: exit 0 siempre, {"ev":"would_block"} en el ledger,
-payload sin 'decision':'block'. Kill switch: archivo DISABLED -> permite todo (CA9).
+payload sin 'decision':'block'. Kill switch: archivo DISABLED -> permite todo (CA9);
+el evento 'disabled' se loguea UNA vez por sesión (se consulta el ledger bajo LOCK_SH
+entre procesos, ronda 2 / L1).
 
 Uso: python3 guard_read_before_patch.py < event.json   (main() -> exit code)
 """
@@ -33,17 +42,32 @@ RECORD_TOOLS = {"read_file", "write_file", "patch", "edit_file"}
 _disabled_logged = set()  # "lo registra una vez" (CA9): por sesión y proceso
 
 
-def _resolve(event: dict) -> str:
-    """Ruta real contra la que comparar: realpath(join(cwd del payload, path))."""
-    tool_input = event.get("tool_input") if isinstance(event.get("tool_input"), dict) else {}
-    raw = tool_input.get("path") if isinstance(tool_input, dict) else None
-    if not isinstance(raw, str) or not raw:
-        return ""
-    cwd = event.get("cwd") or os.getcwd()
+def _raw_path(event: dict):
+    tool_input = event.get("tool_input")
+    if not isinstance(tool_input, dict):
+        return None
+    raw = tool_input.get("path")
+    return raw if isinstance(raw, str) and raw else None
+
+
+def _resolve(event: dict):
+    """Ruta real contra la que comparar: realpath(join(cwd del payload, path)).
+    Devuelve (ruta, problema) con problema en {None, 'no_path', 'unknown_cwd'}:
+    - sin clave 'path' (o vacía) -> ('', 'no_path')  (ronda 2 / L3)
+    - cwd ausente/vacío y path relativo -> ('', 'unknown_cwd'): jamás se resuelve
+      contra os.getcwd() del proceso, el hook puede correr en otro directorio
+      (ronda 2 / L2). Un path ABSOLUTO no necesita cwd y se resuelve igual."""
+    raw = _raw_path(event)
+    if not raw:
+        return "", "no_path"
+    cwd = event.get("cwd")
+    has_cwd = isinstance(cwd, str) and bool(cwd.strip())
+    if not has_cwd and not os.path.isabs(raw):
+        return "", "unknown_cwd"
     try:
-        return os.path.realpath(os.path.join(str(cwd), raw))
+        return os.path.realpath(os.path.join(str(cwd) if has_cwd else "", raw)), None
     except Exception:
-        return os.path.realpath(raw)
+        return os.path.realpath(raw), None
 
 
 def _log_error(session_id, root, exc: Exception) -> None:
@@ -63,8 +87,17 @@ def _pre(event: dict, session_id, root=None):
     if tool not in EDIT_TOOLS:
         return 0, {}
 
-    resolved = _resolve(event)
-    if not resolved:
+    resolved, issue = _resolve(event)
+    if issue == "no_path":
+        # L3: sin qué editar no hay decisión que tomar; se permite CON rastro.
+        state.log_event(session_id, "no_path", root=root, tool=str(tool))
+        return 0, {}
+    if issue == "unknown_cwd":
+        # L2: cwd ausente/vacío y path relativo -> no se resuelve contra
+        # os.getcwd(); se registra y se permite.
+        state.log_event(
+            session_id, "unknown_cwd", root=root, tool=str(tool), path=_raw_path(event)
+        )
         return 0, {}
     if not session_id:
         # Sin sesión no se puede atribuir la lectura: allow + log (02-design §2.4).
@@ -119,12 +152,21 @@ def _post(event: dict, session_id, root=None):
         return 0, {}
 
     extra = event.get("extra")
-    ok = bool(extra.get("ok", True)) if isinstance(extra, dict) else True
-    if not ok:
-        return 0, {}  # solo lecturas/escrituras exitosas marcan la ruta como vista
+    if isinstance(extra, dict):
+        status = extra.get("status")
+        if status is not None:
+            # H1: el payload real trae status ('ok'|'error'|'cancelled'|'blocked').
+            # Solo un resultado 'ok' vio/escribió contenido. Crítico para 'blocked':
+            # un patch bloqueado dispara post_tool_call y NO debe marcar la ruta
+            # como vista, o el reintento idéntico pasaría.
+            if str(status).strip().lower() != "ok":
+                return 0, {}
+        elif "ok" in extra and not extra.get("ok"):
+            return 0, {}  # payload legacy con ok=False
+        # Sin 'status' ni 'ok': payload antiguo mínimo -> se asume exitoso (H1).
 
-    resolved = _resolve(event)
-    if not resolved or not os.path.exists(resolved):
+    resolved, issue = _resolve(event)
+    if issue or not resolved or not os.path.exists(resolved):
         return 0, {}
 
     try:
@@ -143,7 +185,10 @@ def handle(event, root=None):
 
         if state.disabled(root):  # CA9: kill switch, permite todo
             sid = str(event.get("session_id") or "unknown")
-            if sid not in _disabled_logged:
+            # L1: 'disabled' una vez por SESIÓN, no por proceso. Los hooks son
+            # one-shot: la memoria del proceso (_disabled_logged) no basta, se
+            # consulta el ledger bajo LOCK_SH antes de escribir.
+            if sid not in _disabled_logged and not state.has_event(sid, "disabled", root=root):
                 _disabled_logged.add(sid)
                 state.log_event(sid, "disabled", root=root)
             return 0, {}

@@ -35,7 +35,11 @@ Los tests NO usan pytest.importorskip: si falta la implementación deben FALLAR.
 import importlib
 import json
 import os
+import sqlite3
+import subprocess
 import sys
+import threading
+import time
 from pathlib import Path
 from types import SimpleNamespace
 
@@ -480,3 +484,431 @@ def test_state_module_record_and_last_seen_roundtrip(state_root, tmp_path):
     assert mods.state.last_seen(SESSION, str(target), root=state_root)["tool"] == "write_file"
 
     assert mods.state.fingerprint(target) == (st.st_mtime_ns, st.st_size)
+
+
+# ══════════════════════════════════════════════════════════════════════════════
+#  Hallazgos de revisores — ronda RED 2
+#  (payload status real, flock de lectura, poda oportunista, kill switch entre
+#   procesos, cwd vacío, patch sin path, replay sobre state.db)
+# ══════════════════════════════════════════════════════════════════════════════
+
+
+def make_post_event(tool: str, path, cwd, status=None, session: str = SESSION, extra=None) -> dict:
+    """Evento post_tool_call con el payload REAL de outcome (agent/tool_executor.py
+    emit_post → shell_hooks _payload_fields): los kwargs de resultado aterrizan bajo
+    ``extra`` como {'status': 'ok'|'error'|'cancelled'|'blocked', 'error_type',
+    'error_message', 'duration_ms'} — SIN clave 'ok'."""
+    ev = make_event("post_tool_call", tool, path, cwd, session=session)
+    payload: dict = {"duration_ms": 5}
+    if status is not None:
+        payload["status"] = status
+        if status != "ok":
+            payload["error_type"] = "simulated"
+            payload["error_message"] = "fallo simulado por el test"
+    if extra:
+        payload.update(extra)
+    ev["extra"] = payload
+    return ev
+
+
+# ── H1: el payload real de post_tool_call trae 'status', no 'ok' ─────────────
+
+
+def test_h1_post_read_file_status_error_does_not_record_and_next_patch_blocks(
+    state_root, enforce, tmp_path
+):
+    mods = load_modules()
+    """H1: post_tool_call de read_file con status='error' NO registró nada (la lectura
+    falló): la ruta no queda como vista y el patch siguiente se bloquea (exit 2)."""
+    target = tmp_path / "app.py"
+    target.write_text("value = 1\n", encoding="utf-8")
+
+    code, _payload = mods.guard.handle(
+        make_post_event("read_file", target, tmp_path, status="error"), root=state_root
+    )
+    assert code == 0
+    assert mods.state.last_seen(SESSION, str(target), root=state_root) is None, (
+        "un read_file con status='error' no vio contenido: no debe registrar la ruta"
+    )
+
+    code2, payload2 = mods.guard.handle(
+        make_event("pre_tool_call", "patch", target, tmp_path), root=state_root
+    )
+    assert code2 == 2, "el patch tras una lectura fallida debe bloquearse"
+    assert payload2["decision"] == "block"
+
+
+def test_h1_post_read_file_status_cancelled_does_not_record(state_root, tmp_path):
+    mods = load_modules()
+    """H1: post_tool_call de read_file con status='cancelled' (KeyboardInterrupt a mitad
+    de la tool) tampoco vio el contenido: NO registra la ruta."""
+    target = tmp_path / "app.py"
+    target.write_text("value = 1\n", encoding="utf-8")
+
+    code, _payload = mods.guard.handle(
+        make_post_event("read_file", target, tmp_path, status="cancelled"), root=state_root
+    )
+    assert code == 0
+    assert mods.state.last_seen(SESSION, str(target), root=state_root) is None, (
+        "un read_file cancelado no debe registrar la ruta como vista"
+    )
+
+
+def test_h1_post_read_file_status_ok_records_fingerprint(state_root, tmp_path):
+    mods = load_modules()
+    """H1: post_tool_call de read_file con status='ok' (payload real, sin clave 'ok')
+    SÍ registra la huella actual del archivo."""
+    target = tmp_path / "app.py"
+    target.write_text("value = 1\n", encoding="utf-8")
+
+    code, _payload = mods.guard.handle(
+        make_post_event("read_file", target, tmp_path, status="ok"), root=state_root
+    )
+    assert code == 0
+    seen = mods.state.last_seen(SESSION, str(target), root=state_root)
+    assert seen is not None, "status='ok' debe registrar la ruta como vista"
+    st = target.stat()
+    assert (seen["mtime_ns"], seen["size"]) == (st.st_mtime_ns, st.st_size)
+
+
+def test_h1_post_patch_status_blocked_does_not_record_path_and_retry_still_blocks(
+    state_root, enforce, tmp_path
+):
+    mods = load_modules()
+    """H1 (el bypass): un patch BLOQUEADO por el guard dispara igual su post_tool_call
+    con status='blocked'; como la edición nunca ocurrió, NO debe registrar la ruta como
+    vista — si la registrara, el reintento del patch pasaría sin read_file previo."""
+    target = tmp_path / "app.py"
+    target.write_text("value = 1\n", encoding="utf-8")
+
+    code, _payload = mods.guard.handle(
+        make_post_event("patch", target, tmp_path, status="blocked"), root=state_root
+    )
+    assert code == 0
+    assert mods.state.last_seen(SESSION, str(target), root=state_root) is None, (
+        "un patch con status='blocked' no escribió nada: no debe marcarse la ruta"
+    )
+
+    code2, payload2 = mods.guard.handle(
+        make_event("pre_tool_call", "patch", target, tmp_path), root=state_root
+    )
+    assert code2 == 2, "el reintento sin read_file previo debe seguir bloqueado"
+    assert payload2["decision"] == "block"
+
+
+def test_h1_post_without_status_key_legacy_ok_false_does_not_record(state_root, tmp_path):
+    mods = load_modules()
+    """H1 (payload viejo, contrato explícito): un evento legacy sin 'status' pero con la
+    clave antigua extra={'ok': False} se respeta: NO registra la ruta."""
+    target = tmp_path / "app.py"
+    target.write_text("value = 1\n", encoding="utf-8")
+
+    code, _payload = mods.guard.handle(
+        make_post_event("read_file", target, tmp_path, extra={"ok": False}), root=state_root
+    )
+    assert code == 0
+    assert mods.state.last_seen(SESSION, str(target), root=state_root) is None, (
+        "payload legacy con ok=False: la ruta no debe quedar como vista"
+    )
+
+
+def test_h1_post_without_status_or_ok_defaults_to_recorded(state_root, tmp_path):
+    mods = load_modules()
+    """H1 (payload viejo, contrato explícito): un evento sin 'status' ni 'ok' (payload
+    mínimo antiguo) se asume exitoso por defecto y SÍ registra la ruta."""
+    target = tmp_path / "app.py"
+    target.write_text("value = 1\n", encoding="utf-8")
+
+    ev = make_post_event("read_file", target, tmp_path)
+    ev["extra"] = {}  # sin ninguna marca de outcome
+    code, _payload = mods.guard.handle(ev, root=state_root)
+    assert code == 0
+    assert mods.state.last_seen(SESSION, str(target), root=state_root) is not None, (
+        "sin 'status' ni 'ok' el default explícito es tratarlo como exitoso y registrar"
+    )
+
+
+# ── H2: last_seen debe leer bajo flock compartido (LOCK_SH) ──────────────────
+
+
+def test_h2_last_seen_reads_under_shared_flock_lock_sh(state_root, monkeypatch, tmp_path):
+    mods = load_modules()
+    """H2: last_seen() debe tomar el ledger con flock COMPARTIDO (LOCK_SH), nunca sin
+    lock: un record() concurrente no debe poder dejarlo leyendo un estado a medias."""
+    import fcntl as fcntl_mod
+
+    target = tmp_path / "app.py"
+    target.write_text("value = 1\n", encoding="utf-8")
+    mods.state.record(SESSION, "read_file", str(target), root=state_root)
+
+    ops = []
+    real_flock = mods.state.fcntl.flock
+
+    def spy(fd, operation, *args, **kwargs):
+        ops.append(operation)
+        return real_flock(fd, operation, *args, **kwargs)
+
+    monkeypatch.setattr(mods.state.fcntl, "flock", spy)
+
+    seen = mods.state.last_seen(SESSION, str(target), root=state_root)
+    assert seen is not None
+    assert fcntl_mod.LOCK_SH in ops, (
+        "last_seen debe tomar flock compartido (LOCK_SH) sobre el ledger; "
+        "operaciones observadas: %r" % (ops,)
+    )
+
+
+def test_h2_concurrent_record_writer_and_20_last_seen_readers_never_miss_existing_entry(
+    state_root, tmp_path
+):
+    mods = load_modules()
+    """H2 (carrera lectura/poda): un writer hace record() en bucle mientras 20 last_seen()
+    leen. Ninguna lectura debe devolver None cuando la entrada ya existía. El patrón se
+    repite 3 veces y se exigen 0 fallos (sin flakiness); deadline total de 60s y join
+    con timeout de 30s por hilo."""
+    target = tmp_path / "race.py"
+    target.write_text("value = 1\n", encoding="utf-8")
+    REPEATS, READERS = 3, 20
+    misses = []
+    overall_deadline = time.monotonic() + 60.0
+
+    for rep in range(REPEATS):
+        session = "%s-h2-%d" % (SESSION, rep)
+        # la entrada YA existe antes de que arranquen los lectores
+        mods.state.record(session, "read_file", str(target), root=state_root)
+
+        stop = threading.Event()
+        results = [None] * READERS
+
+        def _writer():
+            n = 0
+            while not stop.is_set() and n < 400:
+                mods.state.record(session, "write_file", str(target), root=state_root)
+                n += 1
+
+        def _reader(i):
+            results[i] = mods.state.last_seen(session, str(target), root=state_root)
+
+        wt = threading.Thread(target=_writer)
+        rts = [threading.Thread(target=_reader, args=(i,)) for i in range(READERS)]
+        wt.start()
+        for t in rts:
+            t.start()
+        for t in rts:
+            t.join(timeout=30)
+        stop.set()
+        wt.join(timeout=30)
+        alive = [t for t in rts + [wt] if t.is_alive()]
+        assert not alive, "lectores/escritor no terminaron a tiempo (timeout 30s)"
+        assert time.monotonic() < overall_deadline, "el patrón de carrera excedió el deadline de 60s"
+        misses.extend((rep, i) for i, r in enumerate(results) if r is None)
+
+    assert misses == [], (
+        "last_seen devolvió None con la entrada ya existente en %d lectura(s): %r"
+        % (len(misses), misses)
+    )
+
+
+# ── H3: la poda no debe correr en cada invocación ────────────────────────────
+
+
+def test_h3_record_with_fresh_process_and_small_recent_ledger_does_not_rewrite_file(
+    state_root, tmp_path
+):
+    mods = load_modules()
+    """H3: la poda oportunista no debe correr en cada invocación del hook (cada hook es
+    un proceso de un solo uso, así que un contador en memoria la dispara SIEMPRE). Se
+    simula un proceso fresco (reload del módulo de estado, que reinicia su contador) y
+    record() sobre un ledger de 10 líneas con mtime reciente NO debe reescribir el
+    archivo. Marcador observable: una línea corrupta sembrada a propósito sobrevive a un
+    append puro pero la poda la descarta al reescribir; el mtime_ns cambia por el append
+    en ambos casos, así que el contenido (y no solo el mtime) es el discriminante."""
+    session = "%s-h3" % SESSION
+    ledger = mods.state.ledger_path(session, state_root)
+    for i in range(10):
+        target = tmp_path / ("f%d.py" % i)
+        target.write_text("value = %d\n" % i, encoding="utf-8")
+        mods.state.record(session, "read_file", str(target), root=state_root)
+    corrupt = "{linea corrupta deliberada\n"
+    with open(ledger, "a", encoding="utf-8") as f:
+        f.write(corrupt)
+    assert len(ledger.read_text(encoding="utf-8").splitlines()) == 11
+
+    mtime_before = ledger.stat().st_mtime_ns
+    time.sleep(0.05)
+    saved_appends = getattr(mods.state, "_appends", 0)
+    try:
+        fresh = importlib.reload(mods.state)  # proceso de hook fresco: contador a 0
+        new_target = tmp_path / "f_new.py"
+        new_target.write_text("value = new\n", encoding="utf-8")
+        fresh.record(session, "read_file", str(new_target), root=state_root)
+    finally:
+        mods.state._appends = saved_appends
+
+    mtime_after = ledger.stat().st_mtime_ns
+    assert mtime_after > mtime_before, "record() debió hacer append de la nueva entrada"
+    lines_after = ledger.read_text(encoding="utf-8").splitlines()
+    assert len(lines_after) == 12 and corrupt.rstrip("\n") in lines_after, (
+        "record() sobre un ledger de 10 líneas recientes no debe reescribirlo (la poda "
+        "oportunista reescribe y descarta la línea corrupta); líneas: %r" % (lines_after,)
+    )
+    valid = 0
+    for line in lines_after:
+        try:
+            if json.loads(line).get("ev") == "post_tool_call":
+                valid += 1
+        except (json.JSONDecodeError, ValueError):
+            continue
+    assert valid == 11, "las 10 entradas originales + la nueva deben seguir intactas"
+
+
+# ── L1: el kill switch deja UNA línea 'disabled' entre procesos ──────────────
+
+
+def test_l1_kill_switch_logs_disabled_once_across_separate_processes(state_root, tmp_path):
+    mods = load_modules()
+    """L1: con DISABLED presente, dos invocaciones en PROCESOS SEPARADOS (el caso real:
+    cada hook es un proceso nuevo, el set en memoria no cruza procesos) deben dejar UNA
+    sola línea 'disabled' en el ledger, no dos."""
+    (state_root / "DISABLED").write_text("", encoding="utf-8")
+    target = tmp_path / "app.py"
+    target.write_text("value = 1\n", encoding="utf-8")
+
+    child = tmp_path / "guard_child.py"
+    child.write_text(
+        "import json, sys\n"
+        "sys.path.insert(0, %r)\n"
+        "import guard_read_before_patch as guard\n"
+        "event = json.load(sys.stdin)\n"
+        "code, payload = guard.handle(event, root=%r)\n"
+        "print(json.dumps({'code': code, 'payload': payload}))\n"
+        % (str(HOOKS_SRC), str(state_root)),
+        encoding="utf-8",
+    )
+    session = "%s-l1" % SESSION
+    event = make_event("pre_tool_call", "patch", target, tmp_path, session=session)
+
+    for _ in range(2):
+        proc = subprocess.run(
+            [sys.executable, str(child)],
+            input=json.dumps(event),
+            capture_output=True,
+            text=True,
+            timeout=30,
+        )
+        assert proc.returncode == 0, proc.stderr
+        out = json.loads(proc.stdout.strip().splitlines()[-1])
+        assert out["code"] == 0, out
+        assert out["payload"].get("decision") != "block"
+
+    disabled_lines = [
+        e for e in ledger_events(mods, state_root, session=session) if e.get("ev") == "disabled"
+    ]
+    assert len(disabled_lines) == 1, (
+        "con DISABLED, N invocaciones en procesos separados deben dejar UNA sola línea "
+        "'disabled' en el ledger, no %d" % len(disabled_lines)
+    )
+
+
+# ── L2: evento sin 'cwd' y path relativo ─────────────────────────────────────
+
+
+@pytest.mark.parametrize("cwd_variant", ["missing", "empty"])
+def test_l2_relative_path_without_cwd_records_unknown_cwd_and_allows(
+    state_root, enforce, monkeypatch, tmp_path, cwd_variant
+):
+    mods = load_modules()
+    """L2: un evento sin 'cwd' (o con cwd vacío) y path relativo NUNCA debe resolverse
+    contra el cwd del proceso: el guard permite y deja evento 'unknown_cwd' en el ledger.
+    El chdir al tmp coloca el archivo exactamente donde un resolver buggy lo encontraría
+    y bloquearía."""
+    monkeypatch.chdir(tmp_path)
+    target = tmp_path / "app.py"
+    target.write_text("value = 1\n", encoding="utf-8")
+
+    ev = make_event("pre_tool_call", "patch", "app.py", tmp_path)
+    if cwd_variant == "missing":
+        ev.pop("cwd")
+    else:
+        ev["cwd"] = ""
+
+    code, payload = mods.guard.handle(ev, root=state_root)
+
+    assert code == 0, payload
+    assert payload.get("decision") != "block"
+    unknown = [e for e in ledger_events(mods, state_root) if e.get("ev") == "unknown_cwd"]
+    assert unknown, (
+        "el guard debe dejar evento 'unknown_cwd' en el ledger y permitir; "
+        "jamás resolver la ruta relativa contra el cwd del proceso"
+    )
+
+
+# ── L3: patch sin clave 'path' ───────────────────────────────────────────────
+
+
+def test_l3_patch_without_path_key_allows_but_leaves_no_path_event(state_root, enforce, tmp_path):
+    mods = load_modules()
+    """L3: patch/edit_file sin clave 'path' en tool_input: permite (exit 0) pero deja
+    evento 'no_path' en el ledger — nada de allow silencioso."""
+    ev = make_event("pre_tool_call", "patch", tmp_path / "x.py", tmp_path)
+    ev["tool_input"] = {}  # sin 'path'
+
+    code, payload = mods.guard.handle(ev, root=state_root)
+
+    assert code == 0
+    assert payload.get("decision") != "block"
+    assert has_event(ledger_events(mods, state_root), "no_path"), (
+        "un patch sin 'path' debe dejar evento 'no_path' en el ledger"
+    )
+
+
+# ── CA11 (regresión del replay): conteos contra una state.db temporal ────────
+
+
+def test_ca11_replay_over_sqlite_db_treats_prior_write_and_own_patch_as_seen(tmp_path):
+    mods = load_modules()
+    """CA11: ejecutar el replay de read_before_patch_report.py contra una DB sqlite
+    temporal (tabla messages con tool_calls JSON) y verificar patch_total, would_block y
+    sessions_affected. El replay debe aplicar la MISMA regla que el guard: una escritura
+    previa cuenta como 'visto' — incluida la del propio patch/edit_file exitoso."""
+    db = tmp_path / "state.db"
+    con = sqlite3.connect(str(db))
+    try:
+        con.execute(
+            "CREATE TABLE messages (id INTEGER PRIMARY KEY AUTOINCREMENT, "
+            "session_id TEXT, active INTEGER, tool_calls TEXT)"
+        )
+
+        def _call(name, path):
+            return {"function": {"name": name, "arguments": json.dumps({"path": path})}}
+
+        rows = [
+            # s1: write_file previo → el patch de /a/x.py cuenta como visto
+            ("s1", [_call("write_file", "/a/x.py"), _call("patch", "/a/x.py")]),
+            # s1: /a/y.py nunca visto → would_block
+            ("s1", [_call("patch", "/a/y.py")]),
+            # s2: primer patch de /b/p.py → would_block
+            ("s2", [_call("patch", "/b/p.py")]),
+            # s2: el propio patch ya escribió /b/p.py → el segundo cuenta como visto
+            ("s2", [_call("patch", "/b/p.py")]),
+            # s3: read_file previo → el edit_file de /c/q.py cuenta como visto
+            ("s3", [_call("read_file", "/c/q.py"), _call("edit_file", "/c/q.py")]),
+        ]
+        for sid, calls in rows:
+            con.execute(
+                "INSERT INTO messages (session_id, active, tool_calls) VALUES (?, 1, ?)",
+                (sid, json.dumps(calls)),
+            )
+        con.commit()
+    finally:
+        con.close()
+
+    data = mods.report.replay(str(db))
+
+    assert data["patch_total"] == 5
+    assert data["would_block"] == 2, (
+        "solo /a/y.py y el primer /b/p.py se bloquean; el segundo /b/p.py cuenta como "
+        "visto porque el propio patch ya escribió la ruta (misma regla que el guard): %r"
+        % (data,)
+    )
+    assert data["sessions_affected"] == 2

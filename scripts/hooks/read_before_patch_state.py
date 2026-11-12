@@ -10,9 +10,14 @@ Una línea por evento:
      "tool": "read_file", "path": "/abs/x.py", "mtime_ns": ..., "size": ..., "ok": true}
 
 - Escritura bajo `fcntl.flock` exclusivo (turnos concurrentes).
+- Lectura bajo `fcntl.flock` COMPARTIDO (LOCK_SH, ronda 2 / H2): los hooks son
+  procesos one-shot y un record() concurrente puede estar reescribiendo el
+  archivo durante la poda; sin lock compartido la lectura ve el archivo a medias.
 - Lectura tolerante: las líneas corruptas se ignoran, nunca rompen el hook.
-- Retención: 7 días o 5.000 líneas por sesión; limpieza oportunista (1 de cada 50
-  escrituras) bajo el mismo lock.
+- Retención: 7 días o 5.000 líneas por sesión; poda oportunista (ronda 2 / H3):
+  se intenta SOLO si el mtime del ledger tiene más de 1 hora o su tamaño sugiere
+  que supera MAX_LINES (comprobado con os.stat antes de abrir); y no se reescribe
+  el archivo si no hay nada que podar.
 - Última entrada por `path` gana (comparación por `os.path.realpath`).
 
 Solo stdlib. Ninguna función de este módulo debe lanzar hacia el hook:
@@ -23,18 +28,21 @@ import fcntl
 import hashlib
 import json
 import os
+import sys
 import time
 from pathlib import Path
 
 DEFAULT_ROOT = Path("/opt/hermes-agent-data/state/hooks/read-before-patch")
 RETENTION_DAYS = 7
 MAX_LINES = 5000
-CLEANUP_EVERY = 50  # 1 de cada 50 escrituras dispara limpieza oportunista
+PRUNE_IDLE_S = 3600  # poda solo si el ledger lleva > 1 hora sin tocar (mtime)
+# Cota inferior conservadora de bytes por línea JSONL (~40): si el archivo pesa
+# menos que MAX_LINES * MIN_LINE_BYTES, seguro tiene menos de MAX_LINES líneas
+# y la poda no hace falta ni intentarla (chequeo barato con os.stat, sin abrir).
+MIN_LINE_BYTES = 40
 DIGEST_CAP = 32 * 1024 * 1024  # no hashear archivos gigantes; fp-only arriba del cap
 
 _EV_POST = "post_tool_call"
-
-_appends = 0  # contador de proceso para la limpieza oportunista
 
 
 def _safe_session(session_id) -> str:
@@ -64,7 +72,9 @@ def fingerprint(path) -> tuple:
 def file_digest(path, cap=DIGEST_CAP):
     """sha256 del contenido (o None si no se puede/convine: archivo > cap).
     Desempata la ventana de granularidad del reloj: dos escrituras del mismo
-    tamaño dentro del mismo tick comparten (mtime_ns, size) pero no contenido."""
+    tamaño dentro del mismo tick comparten (mtime_ns, size) pero no contenido.
+    Se guarda SOLO el hexdigest (nunca contenido) y se calcula en cada record()
+    y en el pre únicamente cuando (mtime_ns, size) coinciden (02-design §4)."""
     try:
         if os.path.getsize(str(path)) > cap:
             return None
@@ -82,13 +92,26 @@ def _iso(epoch: float) -> str:
 
 
 def _read_entries(ledger: Path) -> list:
-    """Lee el ledger tolerando líneas corruptas/vacías (se ignoran, no rompen)."""
+    """Lee el ledger tolerando líneas corruptas/vacías (se ignoran, no rompen).
+
+    Toma flock COMPARTIDO (LOCK_SH) mientras lee (ronda 2 / H2): los procesos
+    del hook son one-shot sin estado en memoria, y la poda del writer trabaja
+    bajo LOCK_EX reescribiendo el archivo; sin el lock compartido la lectura
+    ve el archivo a medias y devuelve None para entradas que ya existían."""
     try:
-        text = ledger.read_text(encoding="utf-8")
+        f = open(str(ledger), "r", encoding="utf-8")
+    except OSError:
+        return []
+    try:
+        fcntl.flock(f.fileno(), fcntl.LOCK_SH)
+        try:
+            raw = f.read()
+        finally:
+            fcntl.flock(f.fileno(), fcntl.LOCK_UN)
     except OSError:
         return []
     entries = []
-    for line in text.splitlines():
+    for line in raw.splitlines():
         line = line.strip()
         if not line:
             continue
@@ -101,30 +124,56 @@ def _read_entries(ledger: Path) -> list:
     return entries
 
 
-def _cleanup_locked(f, now: float) -> None:
+def _should_attempt_prune(ledger: Path, now: float):
+    """Chequeo barato con os.stat ANTES de abrir (ronda 2 / H3). Devuelve la razón
+    de la poda o None: 'stale' (ledger sin tocar hace más de PRUNE_IDLE_S) o
+    'size' (su tamaño hace posible que supere MAX_LINES). Un hook one-shot con
+    un ledger pequeño y reciente (el caso común) no toca la poda en absoluto."""
+    try:
+        st = os.stat(str(ledger))
+    except OSError:
+        return None
+    if now - st.st_mtime > PRUNE_IDLE_S:
+        return "stale"
+    if st.st_size > MAX_LINES * MIN_LINE_BYTES:
+        return "size"
+    return None
+
+
+def _cleanup_locked(f, now: float, reason: str = "stale") -> None:
     """Poda por retención (7 días o 5.000 líneas). Debe llamarse con el lock tomado
-    y `f` en modo 'a+' (lectura y append)."""
+    y `f` en modo 'a+' (lectura y append). NO reescribe si no hay nada que podar."""
     try:
         f.seek(0)
         raw = f.read()
     except OSError:
         return
-    cutoff = now - RETENTION_DAYS * 86400
-    kept = []
-    for line in raw.splitlines():
-        line = line.strip()
-        if not line:
-            continue
-        try:
-            entry = json.loads(line)
-        except (json.JSONDecodeError, ValueError):
-            continue  # línea corrupta: se descarta en la poda
-        ts = entry.get("ts") if isinstance(entry, dict) else None
-        if isinstance(ts, (int, float)) and ts < cutoff:
-            continue
-        kept.append(line)
-    if len(kept) > MAX_LINES:
-        kept = kept[-MAX_LINES:]
+    if reason == "size":
+        # Gatillado solo por tamaño: recorte textual FIFO al tope de MAX_LINES,
+        # sin parsear JSON (las líneas recientes del tope se conservan tal cual).
+        lines = raw.splitlines()
+        if len(lines) <= MAX_LINES:
+            return  # sin exceso real: no reescribir
+        kept = lines[-MAX_LINES:]
+    else:
+        # Gatillado por mtime (> 1 h): poda por retención (7 días) + tope.
+        cutoff = now - RETENTION_DAYS * 86400
+        total = 0
+        kept = []
+        for line in raw.splitlines():
+            total += 1
+            try:
+                entry = json.loads(line)
+            except (json.JSONDecodeError, ValueError):
+                continue  # línea corrupta: se descarta en la poda
+            ts = entry.get("ts") if isinstance(entry, dict) else None
+            if isinstance(ts, (int, float)) and ts < cutoff:
+                continue
+            kept.append(line)
+        if len(kept) > MAX_LINES:
+            kept = kept[-MAX_LINES:]
+        if len(kept) == total:
+            return  # nada que podar: no reescribir el archivo
     try:
         f.seek(0)
         f.truncate()
@@ -136,20 +185,21 @@ def _cleanup_locked(f, now: float) -> None:
 
 
 def _append(session_id, entry: dict, root=None) -> None:
-    """Escribe una línea en el ledger bajo flock exclusivo, con poda oportunista."""
-    global _appends
+    """Escribe una línea en el ledger bajo flock exclusivo. La poda oportunista
+    se decide ANTES de abrir con os.stat (mtime > 1 h o posible exceso de
+    líneas); el caso común (ledger reciente y pequeño) es un append puro."""
     ledger = ledger_path(session_id, root)
     ledger.parent.mkdir(parents=True, exist_ok=True)
     line = json.dumps(entry, ensure_ascii=False)
     now = float(entry.get("ts") or time.time())
+    prune_reason = _should_attempt_prune(ledger, now)
     with open(ledger, "a+", encoding="utf-8") as f:
         fcntl.flock(f.fileno(), fcntl.LOCK_EX)
         try:
             f.write(line + "\n")
             f.flush()
-            _appends += 1
-            if _appends % CLEANUP_EVERY == 1:
-                _cleanup_locked(f, now)
+            if prune_reason:
+                _cleanup_locked(f, now, reason=prune_reason)
         finally:
             fcntl.flock(f.fileno(), fcntl.LOCK_UN)
 
@@ -176,13 +226,20 @@ def record(session_id, tool, path, ok=True, root=None) -> None:
             entry["sha256"] = digest
     try:
         _append(session_id, entry, root=root)
-    except Exception:
-        pass  # sin ledger no hay guard: el hook sigue (fail-open)
+    except Exception as exc:
+        # fail-open: sin ledger no hay guard y el hook sigue, pero el fallo no
+        # se traga en silencio (ronda 2 / L7): va a stderr para el runner.
+        print(
+            "read-before-patch: record() no pudo escribir el ledger (%s): %s"
+            % (type(exc).__name__, exc),
+            file=sys.stderr,
+        )
 
 
 def last_seen(session_id, path, root=None):
     """Última entrada registrada para la ruta (por realpath) o None.
-    Devuelve {'path', 'mtime_ns', 'size', 'tool', 't'} (más campos extra del ledger)."""
+    Devuelve {'path', 'mtime_ns', 'size', 'tool', 't'} (más campos extra del ledger).
+    Lectura bajo flock compartido vía _read_entries (ronda 2 / H2)."""
     ledger = ledger_path(session_id, root)
     if not ledger.exists():
         return None
@@ -206,6 +263,19 @@ def last_seen(session_id, path, root=None):
     return found
 
 
+def has_event(session_id, ev, root=None) -> bool:
+    """True si el ledger de la sesión ya contiene un evento administrativo `ev`
+    (lectura bajo LOCK_SH). Lo usa el kill switch para no loguear 'disabled'
+    más de una vez entre procesos (ronda 2 / L1)."""
+    ledger = ledger_path(session_id, root)
+    if not ledger.exists():
+        return False
+    for entry in _read_entries(ledger):
+        if entry.get("ev") == ev:
+            return True
+    return False
+
+
 def log_event(session_id, ev, root=None, **fields) -> None:
     """Registra un evento administrativo del guard (would_block / error / disabled).
     Nunca lanza: sin ledger no hay registro, pero el hook sigue."""
@@ -214,8 +284,12 @@ def log_event(session_id, ev, root=None, **fields) -> None:
     entry.update(fields)
     try:
         _append(session_id, entry, root=root)
-    except Exception:
-        pass
+    except Exception as exc:
+        print(
+            "read-before-patch: log_event(%s) no pudo escribir el ledger (%s): %s"
+            % (ev, type(exc).__name__, exc),
+            file=sys.stderr,
+        )
 
 
 def mode(root=None) -> str:

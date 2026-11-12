@@ -111,7 +111,7 @@ hooks:
 | Lectura parcial cuenta como lectura | límite declarado en la spec; v2 evalúa rangos |
 | Turnos concurrentes corrompen el ledger | `flock` + tolerancia a líneas rotas |
 | Bug del guard tumba la edición | `fail_closed: false` + `except → exit 0` + kill switch |
-| Coste por llamada | lectura de un JSONL por sesión; < 5 ms medido en el prototipo del replay |
+| Coste por llamada | lectura de un JSONL por sesión; el sha256 se guarda SOLO como hexdigest (nunca contenido del archivo), con cap de 32 MB (archivos mayores no se hashean: quedan protegidos solo por huella mtime+size). Rango medido del `sha256` en esta máquina: ~0,02 ms (10 KB) / ~0,08 ms (100 KB) / ~1,4 ms (1 MB). Se calcula en CADA `record()` (post_tool_call) y en el pre ÚNICAMENTE cuando `(mtime_ns, size)` coinciden con la huella registrada — si la huella ya difiere, no hay digest y la decisión de bloquear es inmediata. `record()` completo típico: ~0,1 ms (fingerprint + digest + append con `flock`); con ledger de ~4.900 líneas, ~5 ms (lectura + conteo de líneas de la poda oportunista, sin reescritura); en el tope de 5.000 líneas, ~11 ms (reescritura inherente del recorte FIFO) |
 
 ## 5. Rollback
 

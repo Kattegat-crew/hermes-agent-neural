@@ -142,6 +142,12 @@ def replay(db_path, last=None):
                     per_sess_block[sid] += 1
                     if any(f != form for f in st["forms"].get(base, ())):
                         suspects += 1
+                # replay = guard (ronda 2): un patch/edit_file exitoso escribe la
+                # ruta, así que el guard registra la huella posterior y un segundo
+                # patch de la misma ruta NO se bloquea. Sin esto el replay infla
+                # los bloqueos (cuenta reintentos idénticos que el guard permite).
+                (st["rel"] if is_rel else st["abs"]).add(p if is_rel else real)
+                st["forms"][base].add(form)
 
     pct = round(100.0 * would_block / writes_total, 1) if writes_total else 0.0
     return {
