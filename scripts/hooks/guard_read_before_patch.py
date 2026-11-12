@@ -32,6 +32,7 @@ Uso: python3 guard_read_before_patch.py < event.json   (main() -> exit code)
 
 import json
 import os
+import re
 import sys
 
 import read_before_patch_state as state
@@ -40,6 +41,55 @@ EDIT_TOOLS = {"patch", "edit_file"}
 RECORD_TOOLS = {"read_file", "write_file", "patch", "edit_file"}
 
 _disabled_logged = set()  # "lo registra una vez" (CA9): por sesión y proceso
+
+# V4A: cabeceras de parche multi-archivo. Anclada a línea; admite espacios
+# sobrantes y rutas con espacios. NO matchea '*** Move to:', '*** Begin Patch'
+# ni '*** End Patch' (solo Update/Delete/Add File).
+_V4A_HEADER_RE = re.compile(
+    r"^\*\*\*[ \t]+(Update|Delete|Add)[ \t]+File:[ \t]*(.+?)[ \t]*$",
+    re.MULTILINE,
+)
+
+
+def _v4a_file_ops(patch_text: str):
+    """Extrae [(accion, ruta)] de las cabeceras V4A, en orden de aparición.
+    accion en {'Update', 'Delete', 'Add'}; rutas crudas (relativas o absolutas)."""
+    ops = []
+    for match in _V4A_HEADER_RE.finditer(patch_text or ""):
+        action = match.group(1)
+        raw_path = match.group(2)
+        if raw_path:
+            ops.append((action, raw_path))
+    return ops
+
+
+def _fingerprint_ok(session_id, resolved, root=None):
+    """(huella_vigente, last, current): True si el ledger registra una lectura
+    de `resolved` con huella (mtime_ns, size) igual a la actual en disco
+    (CA2-CA4); desempata por contenido si hay digest (mismo tamaño en el
+    mismo tick del reloj)."""
+    last = state.last_seen(session_id, resolved, root=root)
+    current = state.fingerprint(resolved)
+    if last and (last.get("mtime_ns"), last.get("size")) == tuple(current):
+        lsha = last.get("sha256")
+        csha = state.file_digest(resolved)
+        if not (lsha and csha) or lsha == csha:
+            return True, last, current
+    return False, last, current
+
+
+def _stale_reason(resolved, last, current) -> str:
+    return (
+        "Ejecuta read_file %s antes de editarlo: cambió desde la última lectura "
+        "(o no la hubo en esta sesión). Huella registrada: %s/%s. Actual: %s/%s."
+        % (
+            resolved,
+            last.get("mtime_ns") if last else "-",
+            last.get("size") if last else "-",
+            current[0],
+            current[1],
+        )
+    )
 
 
 def _raw_path(event: dict):
@@ -82,10 +132,80 @@ def _log_error(session_id, root, exc: Exception) -> None:
         pass
 
 
+def _pre_v4a(event: dict, session_id, root=None, tool_input=None):
+    """pre_tool_call de `patch` en modo V4A: tool_input={'mode': 'patch',
+    'patch': <texto>} y SIN 'path'. Parsea las cabeceras del parche y aplica la
+    misma regla por archivo que mode='replace':
+    - Add File (creación) -> no exige lectura (crear no es ciego).
+    - Update/Delete File de archivo existente -> exige huella vigente (CA2-CA4).
+    - Varias rutas: basta UNA sin huella para bloquear; el reason nombra SOLO
+      la primera ruta fallida (no las ya leídas).
+    - Sin cabeceras reconocibles -> se permite con evento 'unparsed_patch'."""
+    tool = "patch"
+    patch_text = (tool_input or {}).get("patch")
+    ops = _v4a_file_ops(patch_text) if isinstance(patch_text, str) else []
+    if not ops:
+        state.log_event(session_id, "unparsed_patch", root=root, tool=tool)
+        return 0, {}
+
+    if not session_id:
+        # Sin sesión no se puede atribuir la lectura: allow + log (02-design §2.4).
+        state.log_event(None, "no_session", root=root, tool=tool, path=ops[0][1])
+        return 0, {}
+
+    cwd = event.get("cwd")
+    has_cwd = isinstance(cwd, str) and bool(cwd.strip())
+
+    for action, raw_path in ops:
+        if action == "Add":
+            continue  # crear no es ciego
+        if not has_cwd and not os.path.isabs(raw_path):
+            # L2: no se resuelve contra os.getcwd() del proceso; se registra y
+            # esa ruta no exige huella (las demás rutas del parche siguen).
+            state.log_event(
+                session_id, "unknown_cwd", root=root, tool=tool, path=raw_path
+            )
+            continue
+        try:
+            resolved = os.path.realpath(
+                os.path.join(str(cwd) if has_cwd else "", raw_path)
+            )
+        except Exception:
+            resolved = os.path.realpath(raw_path)
+        if not os.path.exists(resolved):
+            continue  # CA5: la herramienta de edición reportará su propio error
+
+        try:
+            ok, last, current = _fingerprint_ok(session_id, resolved, root=root)
+        except Exception as exc:  # CA10: fail-open
+            _log_error(session_id, root, exc)
+            continue
+        if ok:
+            continue  # vio exactamente el contenido que hay ahora
+
+        reason = _stale_reason(resolved, last, current)
+        if state.mode(root) == "enforce":
+            state.log_event(session_id, "block", root=root, tool=tool, path=resolved)
+            return 2, {"decision": "block", "reason": reason}
+        # shadow: registra lo que habría bloqueado y NO bloquea (CA7)
+        state.log_event(
+            session_id, "would_block", root=root, tool=tool, path=resolved, reason=reason
+        )
+        return 0, {"ev": "would_block", "reason": reason}
+
+    return 0, {}
+
+
 def _pre(event: dict, session_id, root=None):
     tool = event.get("tool_name")
     if tool not in EDIT_TOOLS:
         return 0, {}
+
+    tool_input = event.get("tool_input")
+    if tool == "patch" and isinstance(tool_input, dict) and tool_input.get("mode") == "patch":
+        # Bypass V4A: mode='patch' con SOLO la clave 'patch' (sin 'path').
+        # La decisión sale de las cabeceras del texto, no de la clave 'path'.
+        return _pre_v4a(event, session_id, root, tool_input)
 
     resolved, issue = _resolve(event)
     if issue == "no_path":

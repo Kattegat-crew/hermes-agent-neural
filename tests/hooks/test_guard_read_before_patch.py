@@ -735,7 +735,12 @@ def test_h3_record_with_fresh_process_and_small_recent_ledger_does_not_rewrite_f
     assert len(ledger.read_text(encoding="utf-8").splitlines()) == 11
 
     mtime_before = ledger.stat().st_mtime_ns
-    time.sleep(0.05)
+    # HX013: sin time.sleep — el mtime del ledger se atrasa 60 s (bien bajo el
+    # umbral de poda PRUNE_IDLE_S=3600) para que el append posterior tenga un
+    # mtime estrictamente mayor de forma determinista, sin esperar el reloj.
+    past_ns = mtime_before - 60_000_000_000  # 60 s atrás
+    os.utime(ledger, ns=(past_ns, past_ns))
+    mtime_before = ledger.stat().st_mtime_ns
     saved_appends = getattr(mods.state, "_appends", 0)
     try:
         fresh = importlib.reload(mods.state)  # proceso de hook fresco: contador a 0
@@ -912,3 +917,190 @@ def test_ca11_replay_over_sqlite_db_treats_prior_write_and_own_patch_as_seen(tmp
         % (data,)
     )
     assert data["sessions_affected"] == 2
+
+
+# ══════════════════════════════════════════════════════════════════════════════
+#  Hallazgos de revisores — ronda RED 3
+#  V4A: la tool real `patch` acepta mode='patch' con SOLO la clave 'patch'
+#  (texto multi-archivo) y SIN 'path' (file_tools.py _PATCH_V4A_PARAMS, ~1253).
+#  El guard actual ve tool_input sin 'path', registra 'no_path' y PERMITE:
+#  cualquier patch V4A edita archivos existentes a ciegas. El guard debe parsear
+#  las cabeceras del parche y aplicar la MISMA regla por archivo que con 'path':
+#  Update/Delete de un archivo existente exigen lectura (huella vigente);
+#  Add File (creación) no la exige.
+# ══════════════════════════════════════════════════════════════════════════════
+
+
+def make_v4a_event(patch_text: str, cwd, session: str = SESSION, **tool_input_extra) -> dict:
+    """Evento pre_tool_call de patch en modo V4A: tool_input con SOLO
+    {'mode': 'patch', 'patch': <texto>} — SIN la clave 'path' (la forma real
+    que la tool acepta según _PATCH_V4A_PARAMS)."""
+    return {
+        "hook_event_name": "pre_tool_call",
+        "tool_name": "patch",
+        "tool_input": {"mode": "patch", "patch": patch_text, **tool_input_extra},
+        "session_id": session,
+        "cwd": str(cwd),
+    }
+
+
+def _v4a(*lines: str) -> str:
+    """Arma un parche V4A mínimo con Begin/End alrededor de las secciones."""
+    return "\n".join(["*** Begin Patch", *lines, "*** End Patch"])
+
+
+def test_v4a_update_file_existing_without_read_is_blocked(state_root, enforce, tmp_path):
+    mods = load_modules()
+    """V4A (a): mode='patch' sin 'path' con `*** Update File:` de un archivo EXISTENTE
+    sin lectura previa ⇒ exit 2 y el reason contiene la ruta EXACTA del archivo."""
+    target = tmp_path / "app.py"
+    target.write_text("value = 1\n", encoding="utf-8")
+    ev = make_v4a_event(
+        _v4a("*** Update File: app.py", "@@ @@", "-value = 1", "+value = 2"),
+        tmp_path,
+    )
+
+    code, payload = mods.guard.handle(ev, root=state_root)
+
+    assert code == 2, (
+        "un patch V4A que actualiza un archivo existente sin lectura previa debe "
+        "bloquearse como cualquier patch con 'path'; payload=%r" % (payload,)
+    )
+    assert payload["decision"] == "block"
+    assert str(target) in payload["reason"], payload["reason"]
+    assert "read_file" in payload["reason"], payload["reason"]
+
+
+def test_v4a_update_file_allowed_after_read_file_record(state_root, enforce, tmp_path):
+    mods = load_modules()
+    """V4A (b): `*** Update File:` tras record() de read_file de esa ruta y sin
+    cambios en disco ⇒ permitido (exit 0)."""
+    target = tmp_path / "app.py"
+    target.write_text("value = 1\n", encoding="utf-8")
+    mods.state.record(SESSION, "read_file", str(target), root=state_root)
+    ev = make_v4a_event(
+        _v4a("*** Update File: app.py", "@@ @@", "-value = 1", "+value = 2"),
+        tmp_path,
+    )
+
+    code, payload = mods.guard.handle(ev, root=state_root)
+
+    assert code == 0, payload
+    assert payload.get("decision") != "block"
+
+
+def test_v4a_add_file_only_creation_requires_no_read(state_root, enforce, tmp_path):
+    mods = load_modules()
+    """V4A (c): solo `*** Add File:` de un archivo NUEVO que no existe ⇒ exit 0
+    (crear no requiere lectura previa)."""
+    assert not (tmp_path / "nuevo.py").exists()
+    ev = make_v4a_event(
+        _v4a("*** Add File: nuevo.py", "+contenido nuevo"),
+        tmp_path,
+    )
+
+    code, payload = mods.guard.handle(ev, root=state_root)
+
+    assert code == 0, payload
+    assert payload.get("decision") != "block"
+
+
+def test_v4a_delete_file_existing_without_read_is_blocked(state_root, enforce, tmp_path):
+    mods = load_modules()
+    """V4A (d): `*** Delete File:` de un archivo EXISTENTE sin lectura previa ⇒ exit 2
+    (borrar a ciegas también es editar a ciegas); el reason nombra la ruta."""
+    target = tmp_path / "viejo.py"
+    target.write_text("value = 1\n", encoding="utf-8")
+    ev = make_v4a_event(_v4a("*** Delete File: viejo.py"), tmp_path)
+
+    code, payload = mods.guard.handle(ev, root=state_root)
+
+    assert code == 2, (
+        "borrar un archivo existente sin haberlo leído debe bloquearse; payload=%r"
+        % (payload,)
+    )
+    assert payload["decision"] == "block"
+    assert str(target) in payload["reason"], payload["reason"]
+
+
+def test_v4a_multi_file_block_reason_names_only_the_unread_file(state_root, enforce, tmp_path):
+    mods = load_modules()
+    """V4A (e): parche multi-archivo con un archivo ya leído y otro sin leer ⇒ exit 2
+    y el reason nombra SOLO el no leído (no el leído)."""
+    read_target = tmp_path / "leido.py"
+    read_target.write_text("value = 1\n", encoding="utf-8")
+    unread_target = tmp_path / "no_leido.py"
+    unread_target.write_text("value = 1\n", encoding="utf-8")
+    mods.state.record(SESSION, "read_file", str(read_target), root=state_root)
+    ev = make_v4a_event(
+        _v4a(
+            "*** Update File: leido.py",
+            "@@ @@", "-value = 1", "+value = 2",
+            "*** Update File: no_leido.py",
+            "@@ @@", "-value = 1", "+value = 3",
+        ),
+        tmp_path,
+    )
+
+    code, payload = mods.guard.handle(ev, root=state_root)
+
+    assert code == 2, payload
+    assert payload["decision"] == "block"
+    reason = payload["reason"]
+    assert str(unread_target) in reason, reason
+    assert str(read_target) not in reason, (
+        "el reason no debe nombrar el archivo que SÍ fue leído: %r" % (reason,)
+    )
+
+
+def test_v4a_update_file_blocked_when_file_changed_on_disk_after_read(
+    state_root, enforce, tmp_path
+):
+    mods = load_modules()
+    """V4A (f): `*** Update File:` tras read_file registrado pero el archivo cambió
+    en disco después (huella desactualizada) ⇒ exit 2, igual que con 'path' (CA3)."""
+    target = tmp_path / "app.py"
+    target.write_text("value = 1\n", encoding="utf-8")
+    mods.state.record(SESSION, "read_file", str(target), root=state_root)
+    target.write_text("value = 2\n", encoding="utf-8")  # otro proceso escribió
+    ev = make_v4a_event(
+        _v4a("*** Update File: app.py", "@@ @@", "-value = 1", "+value = 9"),
+        tmp_path,
+    )
+
+    code, payload = mods.guard.handle(ev, root=state_root)
+
+    assert code == 2, payload
+    assert payload["decision"] == "block"
+    assert str(target) in payload["reason"], payload["reason"]
+
+
+def test_v4a_replace_mode_with_path_keeps_existing_behavior(state_root, enforce, tmp_path):
+    mods = load_modules()
+    """V4A (g, regresión): mode='replace' con path+old_string+new_string sigue la regla
+    de siempre — sin lectura previa ⇒ exit 2; tras read_file ⇒ exit 0. El parsing V4A
+    no debe romper el modo por defecto de la tool."""
+    target = tmp_path / "app.py"
+    target.write_text("value = 1\n", encoding="utf-8")
+
+    ev = {
+        "hook_event_name": "pre_tool_call",
+        "tool_name": "patch",
+        "tool_input": {
+            "mode": "replace",
+            "path": str(target),
+            "old_string": "value = 1",
+            "new_string": "value = 2",
+        },
+        "session_id": SESSION,
+        "cwd": str(tmp_path),
+    }
+    code, payload = mods.guard.handle(ev, root=state_root)
+    assert code == 2, payload
+    assert payload["decision"] == "block"
+    assert str(target) in payload["reason"]
+
+    mods.state.record(SESSION, "read_file", str(target), root=state_root)
+    code2, payload2 = mods.guard.handle(ev, root=state_root)
+    assert code2 == 0, payload2
+    assert payload2.get("decision") != "block"
