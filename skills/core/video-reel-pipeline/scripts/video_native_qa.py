@@ -38,7 +38,7 @@ DEFAULT_MODEL = "glm5.3-flash"
 DEFAULT_MAX_PASSES = 2
 DEFAULT_MAX_MB = 40.0
 DEFAULT_TIMEOUT = 300
-MAX_TOKENS = 3000
+MAX_TOKENS = 1500
 MIME = {".mp4": "video/mp4", ".m4v": "video/mp4", ".mov": "video/quicktime", ".webm": "video/webm"}
 SEVERITIES = ("critical", "high", "medium", "low")
 HARD_BLOCK = ("critical", "high")
@@ -207,6 +207,15 @@ def parse_verdict(text: str) -> dict | None:
     blocking = data.get("blocking")
     if not isinstance(blocking, list):
         return None
+    # El contrato son siete claves. Si falta una sección, no hay veredicto: un modelo
+    # que no responde el contrato no es un instrumento válido para aprobar nada.
+    for key in ("voids", "collisions"):
+        if not isinstance(data.get(key), list):
+            return None
+    for key in ("narration_sync", "legibility", "pacing"):
+        section = data.get(key)
+        if not isinstance(section, dict) or not isinstance(section.get("ok"), bool):
+            return None
     clean = []
     for item in blocking:
         if not isinstance(item, dict):
@@ -225,6 +234,13 @@ EVIDENCE_SEVERITY = {"voids": "high", "collisions": "high", "narration_sync": "h
                      "legibility": "medium", "pacing": "low"}
 
 
+def _is_false(value) -> bool:
+    """Un modelo puede mandar false como false, "false" o 0. Ninguno es un pase."""
+    if value is False or value == 0:
+        return True
+    return isinstance(value, str) and value.strip().lower() in ("false", "no", "0", "nunca")
+
+
 def evidence_findings(v: dict) -> list[dict]:
     """Convierte las secciones de evidencia en hallazgos.
 
@@ -233,19 +249,23 @@ def evidence_findings(v: dict) -> list[dict]:
     """
     out: list[dict] = []
 
-    for item in v.get("voids") or []:
-        if isinstance(item, dict):
-            out.append({"severity": "high", "t": _as_time(item.get("t")),
-                        "what": f"void: {str(item.get('why') or 'nada en pantalla').strip()[:200]}"})
-    for item in v.get("collisions") or []:
-        if isinstance(item, dict):
-            out.append({"severity": "high", "t": _as_time(item.get("t")),
-                        "what": f"colisión: {str(item.get('why') or 'textos superpuestos').strip()[:200]}"})
+    for key, label in (("voids", "void"), ("collisions", "colisión")):
+        for item in v.get(key) or []:
+            if isinstance(item, str) and item.strip():
+                out.append({"severity": "high", "t": None,
+                            "what": f"{label}: {item.strip()[:200]}"})
+            elif isinstance(item, dict):
+                out.append({"severity": "high", "t": _as_time(item.get("t")),
+                            "what": f"{label}: {str(item.get('why') or label).strip()[:200]}"})
 
     ns = v.get("narration_sync")
-    if isinstance(ns, dict) and ns.get("ok") is False:
-        mismatches = [m for m in (ns.get("mismatches") or []) if isinstance(m, dict)]
-        if not mismatches:
+    if isinstance(ns, dict) and _is_false(ns.get("ok")):
+        raw = ns.get("mismatches") or []
+        mismatches = [m for m in raw if isinstance(m, dict)]
+        for text in [m for m in raw if isinstance(m, str) and m.strip()]:
+            out.append({"severity": "high", "t": None,
+                        "what": f"voz/imagen: {text.strip()[:200]}"})
+        if not raw:
             out.append({"severity": "high", "t": None,
                         "what": "narration_sync.ok=false sin detalle de desajuste"})
         for m in mismatches:
@@ -255,16 +275,20 @@ def evidence_findings(v: dict) -> list[dict]:
                         "what": f"voz/imagen no coinciden: guion «{line}» vs pantalla «{seen}»"})
 
     leg = v.get("legibility")
-    if isinstance(leg, dict) and leg.get("ok") is False:
-        issues = [i for i in (leg.get("issues") or []) if isinstance(i, dict)]
-        if not issues:
+    if isinstance(leg, dict) and _is_false(leg.get("ok")):
+        raw = leg.get("issues") or []
+        for text in [i for i in raw if isinstance(i, str) and i.strip()]:
+            out.append({"severity": "medium", "t": None,
+                        "what": f"legibilidad: {text.strip()[:200]}"})
+        issues = [i for i in raw if isinstance(i, dict)]
+        if not raw:
             out.append({"severity": "medium", "t": None, "what": "legibilidad marcada como mala sin detalle"})
         for i in issues:
             out.append({"severity": "medium", "t": _as_time(i.get("t")),
                         "what": f"legibilidad: {str(i.get('why') or 'texto ilegible').strip()[:200]}"})
 
     pace = v.get("pacing")
-    if isinstance(pace, dict) and pace.get("ok") is False:
+    if isinstance(pace, dict) and _is_false(pace.get("ok")):
         out.append({"severity": "low", "t": None,
                     "what": f"ritmo: {str(pace.get('why') or 'se lee como diapositivas').strip()[:200]}"})
     return out
@@ -354,9 +378,9 @@ def state_dir() -> Path:
     return Path(home) / "video-qa"
 
 
-def cache_key(video_sha: str, model: str, prompt: str) -> str:
+def cache_key(video_sha: str, model: str, prompt: str, max_passes: int) -> str:
     h = hashlib.sha256()
-    for part in (video_sha, model, CONTRACT_VERSION, prompt):
+    for part in (video_sha, model, CONTRACT_VERSION, str(max_passes), prompt):
         h.update(part.encode("utf-8"))
         h.update(b"\x00")
     return h.hexdigest()
@@ -450,7 +474,7 @@ def main(argv=None, *, transport=_post) -> int:
 
     prompt = build_prompt(script, cues, duration)
     video_sha = sha256_file(video)
-    key = cache_key(video_sha, args.model, prompt)
+    key = cache_key(video_sha, args.model, prompt, args.max_passes)
 
     if args.dry_run:
         payload = build_payload(video, args.model, prompt, args.max_tokens)
@@ -518,12 +542,15 @@ def main(argv=None, *, transport=_post) -> int:
         text = message.get("content") or message.get("reasoning_content") or message.get("reasoning") or ""
         v = parse_verdict(text)
         if v is None:
+            choice = resp["choices"][0] if isinstance(resp.get("choices"), list) and resp["choices"] else {}
             passes.append({"passed": False, "score": 0, "blocking": [], "invalid": True,
                            "raw": text[:400] if isinstance(text, str) else "",
+                           "content_chars": len(text) if isinstance(text, str) else 0,
+                           "finish_reason": choice.get("finish_reason") if isinstance(choice, dict) else None,
                            "message_keys": sorted(message)})
             continue
         passes.append(v)
-        if any(f["severity"] in HARD_BLOCK for f in v["blocking"]):
+        if any(f["severity"] in HARD_BLOCK for f in normalize_pass(v)["blocking"]):
             break
         if v["passed"]:
             break
@@ -535,6 +562,8 @@ def main(argv=None, *, transport=_post) -> int:
                   "tokens": {"in": tokens_in, "out": tokens_out},
                   "raw": [p["raw"] for p in passes if p.get("raw")],
                   "message_keys": [p["message_keys"] for p in passes if p.get("message_keys")],
+                  "content_chars": [p.get("content_chars") for p in passes if p.get("content_chars")],
+                  "finish_reason": [p.get("finish_reason") for p in passes if p.get("finish_reason")],
                   "errors": [p["error"] for p in passes if p.get("error")]}
         _emit(report, args.json)
         return 2

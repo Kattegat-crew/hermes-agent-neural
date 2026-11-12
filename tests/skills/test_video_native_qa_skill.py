@@ -305,7 +305,10 @@ def test_missing_ffprobe_degrades_instead_of_crashing(tmp_path, monkeypatch, vid
 
 def test_non_numeric_time_from_model_does_not_crash(mod):
     v = mod.parse_verdict(json.dumps({
-        "passed": False, "score": 4,
+        "passed": False, "score": 4, "voids": [], "collisions": [],
+        "narration_sync": {"ok": True, "mismatches": []},
+        "legibility": {"ok": True, "issues": []},
+        "pacing": {"ok": True, "why": "ok"},
         "blocking": [{"severity": "high", "t": "~4s", "what": "caption encima"},
                      {"severity": "medium", "t": {"min": 1}, "what": "raro"}],
     }))
@@ -527,3 +530,46 @@ def test_bad_legibility_needs_confirmation(mod):
          "pacing": {"ok": True, "why": "ok"}, "blocking": []}
     assert mod.decide([v])["passed"] is True, "medium en una pasada no bloquea"
     assert mod.decide([v, v])["passed"] is False, "medium confirmado sí bloquea"
+
+
+# ── Contrato completo y evidencia mal tipada (ciclo 3) ────────────────────────
+def test_verdict_missing_evidence_sections_is_invalid(mod, video, guion):
+    partial = json.dumps({"passed": True, "score": 8, "blocking": []})
+    assert run(mod, video, guion, FakeTransport(partial)) == 2
+
+
+def test_verdict_with_only_two_sections_is_invalid(mod):
+    assert mod.parse_verdict(json.dumps({
+        "passed": True, "score": 8, "voids": [], "collisions": [],
+        "narration_sync": {"ok": True, "mismatches": []},
+        "legibility": {"ok": True, "issues": []},
+        "pacing": {"ok": True, "why": "ok"}, "blocking": [],
+    })) is not None
+    assert mod.parse_verdict(json.dumps({
+        "passed": True, "score": 8, "voids": [], "blocking": [],
+    })) is None
+
+
+def test_string_entries_in_voids_are_findings(mod):
+    v = {"passed": True, "score": 8, "voids": ["negro en 3s"], "collisions": [],
+         "narration_sync": {"ok": True, "mismatches": []},
+         "legibility": {"ok": True, "issues": []},
+         "pacing": {"ok": True, "why": "ok"}, "blocking": []}
+    norm = mod.normalize_pass(v)
+    assert len(norm["blocking"]) == 1 and norm["blocking"][0]["severity"] == "high"
+    assert mod.decide([v])["passed"] is False
+
+
+def test_string_false_in_narration_sync_blocks(mod):
+    v = {"passed": True, "score": 7, "voids": [], "collisions": [],
+         "narration_sync": {"ok": "false", "mismatches": ["dice A mientras se ve B"]},
+         "legibility": {"ok": True, "issues": []},
+         "pacing": {"ok": True, "why": "ok"}, "blocking": []}
+    d = mod.decide([v])
+    assert d["passed"] is False
+
+
+def test_cache_key_changes_with_max_passes(mod):
+    a = mod.cache_key("sha", "m", "p", 1)
+    b = mod.cache_key("sha", "m", "p", 2)
+    assert a != b, "un pase con presupuesto 1 no puede servir a una corrida con 2"

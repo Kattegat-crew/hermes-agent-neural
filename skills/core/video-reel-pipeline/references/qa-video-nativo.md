@@ -38,6 +38,11 @@ Dos corridas del mismo modelo sobre el mismo archivo, `temperature=0`, no coinci
 subtítulos superpuestos en 18.5 s y la otra no los vio. El VLM no es un instrumento determinista;
 por eso el presupuesto de pasadas y el gate determinista no son opcionales.
 
+Y una tercera corrida devolvió `blocking: []` con `score: 8` mientras sus propias secciones de
+evidencia listaban colisiones de subtítulos en 10, 20, 24, 48 y 54 s y un vacío de 55.5 a 59 s.
+Por eso la decisión se toma sobre la evidencia declarada y no sobre el flag `passed` ni sobre la
+lista `blocking` sola: sin ese cruce, el film se publicaba con subtítulos ilegibles.
+
 ## Uso
 
 ```bash
