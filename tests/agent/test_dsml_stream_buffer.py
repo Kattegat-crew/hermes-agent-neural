@@ -361,3 +361,33 @@ def test_suppressed_route_release_stays_off_tts():
     agent._close_dsml_stream_buffer()
     assert agent.shown == ["<"]
     assert spoken == []
+
+
+# ── end to end: the real agent loop, a real SSE stream ────────────────────────────────
+
+
+def test_e2e_leaked_markup_never_reaches_a_streaming_client():
+    """The production shape: the provider streams the DSML block as ordinary content."""
+    from run_agent import AIAgent
+    from tests.fakes.fake_llm_provider import FakeLLMServer, Text
+
+    payload = (
+        '<||DSML||invoke name="execute_code">\n'
+        '<||DSML||parameter name="code" string="true">print("hola")</||DSML||parameter>\n'
+        "</||DSML||invoke>"
+    )
+    with FakeLLMServer([Text(payload, chunk_chars=4)]) as srv:
+        agent = AIAgent(
+            base_url=srv.base_url, api_key="sk-fake-e2e", provider="custom", model="fake-model",
+            quiet_mode=True, skip_context_files=True, skip_memory=True, enabled_toolsets=["todo"],
+        )
+        shown: list[str] = []
+        agent.stream_delta_callback = shown.append
+        result = agent.run_conversation("saluda")
+
+    streamed = "".join(t for t in shown if t)
+    assert "DSML" not in streamed, "the client must never see the block, not even partially"
+    # The guard still owns recovery: it strips the block and re-prompts (a second main turn),
+    # which is exactly the behaviour this buffer must not change.
+    assert len(srv.main_requests()) >= 1
+    assert "DSML" not in (result.get("final_response") or "")
