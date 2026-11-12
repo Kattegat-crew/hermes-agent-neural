@@ -20,7 +20,9 @@ logger = logging.getLogger("run_agent")
 # (``agent/dsml_guard.py``), otherwise it either shows markup or swallows a real reply. The
 # guard's own opener regex is the single source of truth; these are its terminals.
 _DSML_PIPES = "|｜"
-_DSML_KEYWORDS = ("invoke", "calls", "tool_calls", "toolcalls")
+# Ordered most-specific-first; "inv" mirrors the guard's ``inv(?:ok\w*)?`` so a leak truncated
+# mid-keyword (``<||DSML||inv name="…">``) is still recognised as a block.
+_DSML_KEYWORDS = ("invoke", "calls", "tool_calls", "toolcalls", "inv")
 # A marker prefix is short by construction; this bound only keeps a future grammar change from
 # holding a whole reply hostage.
 _DSML_STREAM_HOLD_MAX = 4096

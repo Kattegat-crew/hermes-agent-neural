@@ -142,6 +142,14 @@ def test_marker_at_start_of_a_real_answer_is_released_not_swallowed():
     assert agent.shown == ["<||DSML|| es el marcador que documentamos"]
 
 
+def test_truncated_invoke_keyword_is_treated_as_a_block():
+    """The dominant production leak is cut mid-token; `inv` alone is what the guard matches."""
+    agent = _Agent()
+    assert _feed(agent, "<||DSML||inv", ' name="terminal">') == []
+    agent._close_dsml_stream_buffer()
+    assert agent.shown == []
+
+
 # ── CA-2: a genuine divergence flushes once, then passthrough ─────────────────────────
 
 
@@ -253,11 +261,14 @@ def test_clean_text_reaches_every_registered_callback_identically():
 def test_plugin_hook_never_receives_withheld_markup():
     agent = _Agent()
     _feed(agent, "<||DSML||inv")
+    agent._close_dsml_stream_buffer()  # a real block: dropped at the boundary
     assert [f["delta"] for e, f in agent.hooks if e == "on_stream_delta"] == []
-    _feed(agent, " es el marcador")  # divergence: the held bytes are shown, in order
-    assert [f["delta"] for e, f in agent.hooks if e == "on_stream_delta"] == [
-        "<||DSML||inv es el marcador"
-    ]
+
+
+def test_plugin_hook_receives_the_released_buffer_in_order():
+    agent = _Agent()
+    _feed(agent, "<", "div>x</div>")
+    assert [f["delta"] for e, f in agent.hooks if e == "on_stream_delta"] == ["<div>x</div>"]
 
 
 def test_released_buffer_is_recorded_as_streamed_text():
