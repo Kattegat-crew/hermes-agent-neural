@@ -530,6 +530,11 @@ _SESSION_STATE: dict[str, Any] = {
 _STREAM_STATE: dict[str, Any] = {
     "_stream_callback": None,  # streaming TTS; set early so _vprint can reference it
     "_stream_needs_break": False,  # one "\n\n" before the next real text delta after tools
+    # DSML prefix buffer: a response that opens like the guard's leak grammar is withheld here
+    # instead of being streamed raw; "passthrough" flips once the opening can no longer be one.
+    "_dsml_stream_buffer": "",
+    "_dsml_stream_passthrough": False,
+    "_dsml_stream_held": 0,  # responses held for the daily digest (spec §6)
     # Stateful scrubbers: <memory-context> / thinking spans split across deltas defeat
     # per-delta regexes (both tags must be in one string).
     "_stream_context_scrubber": StreamingContextScrubber,

@@ -725,6 +725,11 @@ def _reset_per_turn_agent_state(agent: Any) -> None:
         scrubber = getattr(agent, name, None)
         if scrubber is not None:
             scrubber.reset()
+    # DSML prefix buffer state is per response, not per session: a turn that starts on a
+    # delivery path which never calls ``_reset_stream_delivery_tracking`` (codex app-server)
+    # must not inherit a stale buffer or passthrough flag from the previous one.
+    agent._dsml_stream_buffer = ""
+    agent._dsml_stream_passthrough = False
 
 
 def _stage_turn_user_message(

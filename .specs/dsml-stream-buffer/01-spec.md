@@ -72,3 +72,32 @@ percibida ni el contrato de los callbacks.
 
 Revertir el commit del worktree; no hay migración de datos ni cambios de config. La rama no
 se fusiona a `prod-stable` sin aprobación explícita.
+
+## 9. Diseño implementado (fase GREEN)
+
+- **Gramática, no lista de literales.** El clasificador (`agent/stream_delivery.py::_dsml_marker_state`)
+  replica la gramática de `_LEAK_START_RE` del guard en lugar de una tupla de marcadores: pipes ASCII
+  o fullwidth, 1–2 por lado, espacios entre tokens, y palabra de invocación **truncable** (`inv`,
+  `invoke`, `call(s)`, `toolcalls`) — el leak dominante en producción está cortado a mitad de token.
+  Se importa `_LEAK_START_RE` para que el descarte final use exactamente el mismo criterio que la
+  recuperación.
+- **Tres estados por delta:** `partial` (retener), `complete` (bloque: retener hasta el cierre),
+  `None` (divergencia real: liberar una vez y pasar a passthrough).
+- **Prosa con marcador al inicio no se traga.** Sólo se descarta en el cierre lo que
+  `_LEAK_START_RE` reconoce; `<||DSML|| es el marcador…` se libera como texto normal.
+- **El break sintético no derrota la sonda.** `_fire_stream_delta` aplica el `"\n\n"` de iteración
+  de tools *después* del buffer y sólo si algo se emite; el break pendiente no se consume mientras
+  el delta esté retenido.
+- **El cierre corre al final del boundary.** `_reset_stream_delivery_tracking` flushea los tails de
+  los scrubbers a través del mismo buffer y cierra después; `_emit_stream_end` cierra también al
+  terminar el stream del modelo, que es el boundary que faltaba para el turno final.
+- **Segundo sumidero cubierto.** `_route_suppressed_text` (texto suprimido en turnos con tool_call)
+  pasa por el mismo buffer en vez de escribir directo al callback.
+- **Estado por respuesta.** `_dsml_stream_buffer` / `_dsml_stream_passthrough` / `_dsml_stream_held`
+  viven en `_STREAM_STATE` y se resetean al inicio de cada turno (`turn_context`).
+- **Observabilidad.** `HERMES-DSML-GUARD: stream buffered (why, prefix, bytes, model, provider,
+  total holds)` sólo cuenta retenciones reales (bloque descartado o liberado por tope); una
+  divergencia benigna (`<h1>…`) va a `debug` y no infla el digest.
+- **Fuera de alcance confirmado:** `agent/turn_tool_round.py:194` escribe texto **local**
+  (guardrail halt), no contenido del modelo: no es un sumidero del leak.
+
