@@ -2168,3 +2168,350 @@ def test_b4_replay_v4a_multi_file_unseen_counts_one_block_per_call(tmp_path):
         % (data,)
     )
     assert data["sessions_affected"] == 1, data
+
+
+# ══════════════════════════════════════════════════════════════════════════════
+#  Hallazgos de revisores — ronda RED 7
+#
+#  H-A (high, guard_read_before_patch.py:256): el snapshot previo del pre de
+#    patch/edit_file guardaba el CONTENIDO COMPLETO del archivo dentro del
+#    ledger JSONL persistente (retención 7 días): duplica secretos en claro y
+#    contradice 02-design §4 ('solo huellas'). Fix: el ledger JSONL deja de
+#    contener JAMÁS contenido de archivo; el snapshot va a un archivo efímero
+#    fuera del ledger: <root>/snapshots/<session>/<call_id>.snap con
+#    directorio 0700 y archivo 0600, borrado en el post que lo consume y
+#    barrido por TTL corto (SNAP_TTL_S = 10 min) en la poda existente. Si el
+#    snapshot no se puede escribir (permisos/ENOSPC), el post cae fail-closed
+#    (no certificar) en vez de certificar la huella de disco.
+#  H-B (high, guard_read_before_patch.py:535): cuando la reconstrucción del
+#    contenido esperado falla DESPUÉS de un patch que reportó éxito, el post
+#    caía al fallback legacy (huella de disco actual) y certificaba una
+#    versión potencialmente ajena; un hunk V4A que no empieza en la primera
+#    línea activaba ese camino. Fix: fail-closed real — con tool_input
+#    utilizable y reconstrucción/verificación fallida (hunk no aplicable, sha
+#    distinto, snapshot ausente para ese path, pendiente ambigua) NO se
+#    registra nada y se anota 'write_unverifiable' en el ledger; el fallback
+#    legacy queda SOLO para payload sin pendiente (post sin pre, imposible en
+#    producción).
+# ══════════════════════════════════════════════════════════════════════════════
+
+SECRETO_R7 = "sk-live-SECRETO-ABC123"
+
+
+def _h7_read_and_pre(mods, state_root, tmp_path, target, patch_text):
+    """Deja la ruta vista (post de read_file ok) y corre el pre V4A (que debe
+    capturar el snapshot). Devuelve la huella que la lectura registró."""
+    code, _ = mods.guard.handle(
+        _post_event("read_file", {"path": str(target)}, tmp_path), root=state_root
+    )
+    assert code == 0
+    seen = mods.state.last_seen(SESSION, str(target), root=state_root)
+    assert seen is not None
+    code, payload = mods.guard.handle(
+        make_v4a_event(patch_text, tmp_path), root=state_root
+    )
+    assert code == 0, payload
+    return (seen["mtime_ns"], seen["size"])
+
+
+def _h7_v4a_post_ok(mods, state_root, tmp_path, patch_text):
+    """Post_tool_call ok de un patch V4A con resultado estructurado exitoso."""
+    return mods.guard.handle(
+        _post_event_with_result(
+            "patch", {"mode": "patch", "patch": patch_text}, tmp_path,
+            result={"success": True, "diff": "--- a/x.py\n+++ b/x.py"},
+        ),
+        root=state_root,
+    )
+
+
+# ── H-A: el snapshot previo vive FUERA del ledger (efímero, privado) ─────────
+
+
+def test_ha1_pre_post_patch_ledger_never_stores_file_content_and_snap_is_private(
+    state_root, enforce, tmp_path
+):
+    mods = load_modules()
+    """H-A: tras pre+post de un patch sobre un archivo con un secreto, el JSONL
+    del ledger NO contiene el secreto (solo huellas); el contenido previo vive
+    SOLO en el snapshot efímero fuera del ledger, con archivo 0600 y
+    directorio 0700."""
+    target = tmp_path / "secrets.py"
+    target.write_text("API_TOKEN = '%s'\n" % SECRETO_R7, encoding="utf-8")
+    patch_text = _v4a(
+        "*** Update File: secrets.py",
+        "@@",
+        "-API_TOKEN = '%s'" % SECRETO_R7,
+        "+API_TOKEN = 'rotado'",
+    )
+
+    code, _ = mods.guard.handle(
+        _post_event("read_file", {"path": str(target)}, tmp_path), root=state_root
+    )
+    assert code == 0
+    code, payload = mods.guard.handle(
+        make_v4a_event(patch_text, tmp_path), root=state_root
+    )
+    assert code == 0, payload
+
+    # tras el PRE: el snapshot existe, fuera del ledger y con permisos privados
+    snaps = list((state_root / "snapshots").rglob("*.snap"))
+    assert len(snaps) == 1, (
+        "el pre debe dejar exactamente un snapshot efímero: %r" % (snaps,)
+    )
+    assert (snaps[0].stat().st_mode & 0o777) == 0o600, (
+        "el archivo de snapshot debe ser 0600: %o"
+        % (snaps[0].stat().st_mode & 0o777,)
+    )
+    assert (snaps[0].parent.stat().st_mode & 0o777) == 0o700, (
+        "el directorio de snapshots de la sesión debe ser 0700: %o"
+        % (snaps[0].parent.stat().st_mode & 0o777,)
+    )
+    assert SECRETO_R7 in snaps[0].read_text(encoding="utf-8", errors="replace"), (
+        "el contenido previo debe vivir SOLO en el snapshot efímero"
+    )
+
+    # la tool aplicó el parche; llega el post ok
+    target.write_text("API_TOKEN = 'rotado'\n", encoding="utf-8")
+    code, _ = _h7_v4a_post_ok(mods, state_root, tmp_path, patch_text)
+    assert code == 0
+    assert mods.state.last_seen(SESSION, str(target), root=state_root) is not None
+
+    # tras pre+post: el JSONL del ledger NO contiene el secreto sembrado
+    ledgers = list(state_root.glob("*.jsonl"))
+    assert ledgers, "la sesión debe haber escrito su ledger"
+    for ledger in ledgers:
+        assert SECRETO_R7 not in ledger.read_text(encoding="utf-8", errors="replace"), (
+            "el ledger JSONL persistente (retención 7 días) jamás debe contener "
+            "contenido de archivo: %s" % ledger.name
+        )
+
+
+def test_ha2_snap_file_removed_after_consuming_post(state_root, enforce, tmp_path):
+    mods = load_modules()
+    """H-A: el post que consume el snapshot (certificación del patch) DEBE
+    borrar el archivo .snap: no quedan residuos de contenido en disco."""
+    target = tmp_path / "app.py"
+    target.write_text("a = 1\n", encoding="utf-8")
+    patch_text = _v4a("*** Update File: app.py", "@@", "-a = 1", "+a = 22")
+
+    _h7_read_and_pre(mods, state_root, tmp_path, target, patch_text)
+    assert list((state_root / "snapshots").rglob("*.snap")), (
+        "el pre debe dejar el snapshot efímero antes del post"
+    )
+
+    target.write_text("a = 22\n", encoding="utf-8")  # la tool aplicó el parche
+    code, _ = _h7_v4a_post_ok(mods, state_root, tmp_path, patch_text)
+    assert code == 0
+    assert mods.state.last_seen(SESSION, str(target), root=state_root) is not None
+
+    assert list((state_root / "snapshots").rglob("*.snap")) == [], (
+        "el post que consume el snapshot debe borrar el .snap"
+    )
+
+
+def test_ha3_prune_sweeps_orphan_snap_older_than_ttl(state_root, tmp_path):
+    mods = load_modules()
+    """H-A: un .snap huérfano (crash antes del post) con mtime anterior al TTL
+    corto (SNAP_TTL_S) lo elimina la poda existente; los snapshots dentro del
+    TTL sobreviven."""
+    target = tmp_path / "app.py"
+    target.write_text("a = 1\n", encoding="utf-8")
+    snap_dir = mods.state.snapshots_dir(SESSION, state_root)
+    snap_dir.mkdir(parents=True, exist_ok=True)
+    fresh = snap_dir / "fresco.snap"
+    fresh.write_text("nuevo\n", encoding="utf-8")
+    orphan = snap_dir / "huerfano.snap"
+    orphan.write_text("viejo\n", encoding="utf-8")
+    past = time.time() - (mods.state.SNAP_TTL_S + 60)
+    ost = orphan.stat()
+    os.utime(orphan, ns=(int(past * 1e9), int(past * 1e9)))
+    assert orphan.stat().st_mtime < fresh.stat().st_mtime
+
+    # la poda oportunista solo dispara si el ledger lleva > PRUNE_IDLE_S sin
+    # tocar: se envejece el mtime del ledger como hace el test H3.
+    mods.state.record(SESSION, "read_file", str(target), root=state_root)
+    ledger = mods.state.ledger_path(SESSION, state_root)
+    past_ledger = time.time() - (mods.state.PRUNE_IDLE_S + 60)
+    os.utime(ledger, ns=(int(past_ledger * 1e9), int(past_ledger * 1e9)))
+
+    mods.state.record(SESSION, "write_file", str(target), root=state_root)
+
+    assert not orphan.exists(), (
+        "la poda debe barrer el .snap huérfano con mtime anterior a SNAP_TTL_S"
+    )
+    assert fresh.exists(), (
+        "el snapshot dentro del TTL no debe ser barrido"
+    )
+
+
+# ── H-B: fail-closed real cuando la reconstrucción no es verificable ─────────
+
+
+def test_hb1_v4a_hunk_not_at_start_with_third_party_overwrite_fails_closed(
+    state_root, enforce, tmp_path
+):
+    mods = load_modules()
+    """H-B: patch V4A válido cuyo hunk NO empieza en la primera línea del
+    archivo (reconstrucción no determinista) + un tercero sobrescribe antes
+    del post: el post NO registra nada (anota 'write_unverifiable') y el pre
+    posterior se bloquea (exit 2) en vez de dejar pasar la edición a ciegas."""
+    target = tmp_path / "app.py"
+    target.write_text("a = 1\nb = 2\n", encoding="utf-8")
+    patch_text = _v4a("*** Update File: app.py", "@@", " b = 2", "+b = 22")
+    seen_fp = _h7_read_and_pre(mods, state_root, tmp_path, target, patch_text)
+
+    # la tool reportó éxito, PERO un tercero pisó el archivo antes del post
+    target.write_text("TERCERO = 999\n", encoding="utf-8")
+    code, _ = _h7_v4a_post_ok(mods, state_root, tmp_path, patch_text)
+    assert code == 0
+
+    last = mods.state.last_seen(SESSION, str(target), root=state_root)
+    assert last is None or (last["mtime_ns"], last["size"]) == seen_fp, (
+        "la reconstrucción no verificable NO debe certificar la huella de disco "
+        "(potencialmente ajena): %r" % (last,)
+    )
+    assert has_event(ledger_events(mods, state_root), "write_unverifiable"), (
+        "la reconstrucción fallida debe anotarse como 'write_unverifiable': %r"
+        % (ledger_events(mods, state_root),)
+    )
+
+    code2, payload2 = mods.guard.handle(
+        make_v4a_event(
+            _v4a("*** Update File: app.py", "@@", "-TERCERO = 999", "+x = 1"),
+            tmp_path,
+        ),
+        root=state_root,
+    )
+    assert code2 == 2, (
+        "sin certificación de la escritura, el patch sobre contenido no visto "
+        "debe bloquearse: exit=%s payload=%r" % (code2, payload2)
+    )
+    assert payload2["decision"] == "block"
+
+
+def test_hb2_snapshot_missing_at_post_fails_closed(state_root, enforce, tmp_path):
+    mods = load_modules()
+    """H-B: pendiente viva del pre PERO snapshot ausente para ese path al
+    llegar el post (borrado a mano): fail-closed — no registra nada, anota
+    'write_unverifiable' y el pre posterior se bloquea."""
+    target = tmp_path / "app.py"
+    target.write_text("a = 1\n", encoding="utf-8")
+    patch_text = _v4a("*** Update File: app.py", "@@", "-a = 1", "+a = 22")
+    seen_fp = _h7_read_and_pre(mods, state_root, tmp_path, target, patch_text)
+
+    for snap in (state_root / "snapshots").rglob("*.snap"):
+        snap.unlink()
+
+    target.write_text("a = 22\n", encoding="utf-8")  # la tool aplicó el parche
+    code, _ = _h7_v4a_post_ok(mods, state_root, tmp_path, patch_text)
+    assert code == 0
+
+    last = mods.state.last_seen(SESSION, str(target), root=state_root)
+    assert last is None or (last["mtime_ns"], last["size"]) == seen_fp, (
+        "snapshot ausente para el path: no debe certificar la huella de disco: %r"
+        % (last,)
+    )
+    assert has_event(ledger_events(mods, state_root), "write_unverifiable")
+
+    code2, payload2 = mods.guard.handle(
+        make_v4a_event(
+            _v4a("*** Update File: app.py", "@@", "-a = 22", "+a = 333"), tmp_path
+        ),
+        root=state_root,
+    )
+    assert code2 == 2, payload2
+    assert payload2["decision"] == "block"
+
+
+def test_hb3_snapshot_unwritable_pre_makes_post_fail_closed(
+    state_root, enforce, tmp_path, monkeypatch
+):
+    mods = load_modules()
+    """H-A/H-B: si el snapshot no se puede escribir en el pre (permisos/ENOSPC,
+    simulado), el post cae fail-closed: NO certifica la huella de disco, anota
+    'write_unverifiable' y el pre posterior se bloquea."""
+    monkeypatch.setattr(
+        mods.state, "snapshot_write", lambda *a, **k: None, raising=False
+    )
+    target = tmp_path / "app.py"
+    target.write_text("a = 1\n", encoding="utf-8")
+    patch_text = _v4a("*** Update File: app.py", "@@", "-a = 1", "+a = 22")
+    seen_fp = _h7_read_and_pre(mods, state_root, tmp_path, target, patch_text)
+
+    target.write_text("a = 22\n", encoding="utf-8")  # la tool aplicó el parche
+    code, _ = _h7_v4a_post_ok(mods, state_root, tmp_path, patch_text)
+    assert code == 0
+
+    last = mods.state.last_seen(SESSION, str(target), root=state_root)
+    assert last is None or (last["mtime_ns"], last["size"]) == seen_fp, (
+        "sin snapshot el post no puede verificar: no debe certificar nada: %r"
+        % (last,)
+    )
+    assert has_event(ledger_events(mods, state_root), "write_unverifiable")
+
+    code2, payload2 = mods.guard.handle(
+        make_v4a_event(
+            _v4a("*** Update File: app.py", "@@", "-a = 22", "+a = 333"), tmp_path
+        ),
+        root=state_root,
+    )
+    assert code2 == 2, payload2
+    assert payload2["decision"] == "block"
+
+
+def test_hb4_replace_mode_unreconstructable_post_fails_closed(
+    state_root, enforce, tmp_path
+):
+    mods = load_modules()
+    """H-B (mode='replace'): con pendiente viva del pre pero old_string ajeno
+    al snapshot (reconstrucción imposible) y disco pisado por un tercero, el
+    post NO registra la huella de disco y el pre posterior se bloquea."""
+    target = tmp_path / "app.py"
+    target.write_text("a = 1\n", encoding="utf-8")
+    code, _ = mods.guard.handle(
+        _post_event("read_file", {"path": str(target)}, tmp_path), root=state_root
+    )
+    assert code == 0
+    seen_fp = mods.state.last_seen(SESSION, str(target), root=state_root)
+    seen_fp = (seen_fp["mtime_ns"], seen_fp["size"])
+
+    pre = {
+        "hook_event_name": "pre_tool_call",
+        "tool_name": "patch",
+        "tool_input": {
+            "mode": "replace",
+            "path": str(target),
+            "old_string": "zzz = 0",  # ajeno al contenido del snapshot
+            "new_string": "a = 2",
+        },
+        "session_id": SESSION,
+        "cwd": str(tmp_path),
+    }
+    code, payload = mods.guard.handle(pre, root=state_root)
+    assert code == 0, payload  # el pre permite (huella vigente)
+
+    # la tool 'reportó éxito' pero un tercero pisó el archivo antes del post
+    target.write_text("TERCERO = 1\n", encoding="utf-8")
+    post = _post_event_with_result(
+        "patch",
+        {"mode": "replace", "path": str(target), "old_string": "zzz = 0",
+         "new_string": "a = 2"},
+        tmp_path,
+        result={"success": True, "diff": "--- a/app.py\n+++ b/app.py"},
+    )
+    code, _ = mods.guard.handle(post, root=state_root)
+    assert code == 0
+
+    last = mods.state.last_seen(SESSION, str(target), root=state_root)
+    assert last is None or (last["mtime_ns"], last["size"]) == seen_fp, (
+        "reconstrucción imposible con pendiente viva: no certificar el disco: %r"
+        % (last,)
+    )
+    assert has_event(ledger_events(mods, state_root), "write_unverifiable")
+
+    code2, payload2 = mods.guard.handle(
+        make_event("pre_tool_call", "patch", target, tmp_path), root=state_root
+    )
+    assert code2 == 2, payload2
+    assert payload2["decision"] == "block"

@@ -238,20 +238,24 @@ def _call_id(event: dict):
 def _snapshot_write_pending(session_id, resolved, root=None, call_id=None) -> None:
     """Captura en el PRE de patch/edit_file el contenido previo como pendiente
     de escritura {'ev':'write_pending', path, mtime_ns, size, pre_sha256,
-    content} (ronda 6 / B2): el POST reconstruye desde aquí el contenido
-    ESPERADO y solo certifica si coincide con el disco al llegar el post.
-    El contenido se guarda solo si el archivo <= DIGEST_CAP (sobre el cap solo
-    va el hash: sin snapshot utilizable el post cae al fallback legacy).
-    Nunca lanza (CA10)."""
+    call_id, snap} (ronda 6 / B2; ronda 7 / H-A): el POST reconstruye desde
+    aquí el contenido ESPERADO y solo certifica si coincide con el disco al
+    llegar el post. El CONTENIDO previo va a un snapshot EFÍMERO fuera del
+    ledger (state.snapshot_write: <root>/snapshots/<session>/<call_id>.snap,
+    directorio 0700 y archivo 0600, borrado por el post que lo consume y con
+    barrido TTL en la poda): el ledger JSONL jamás contiene contenido de
+    archivo (02-design §4, 'solo huellas'). Si el snapshot no se puede escribir
+    (permisos/ENOSPC o archivo > DIGEST_CAP) la pendiente marca 'snap_failed':
+    el POST cae fail-closed (no certificar) en vez de certificar la huella de
+    disco. Nunca lanza (CA10)."""
     try:
         mtime_ns, size = state.fingerprint(resolved)
         fields = {"path": resolved, "mtime_ns": mtime_ns, "size": size}
-        if size and size <= state.DIGEST_CAP:
-            try:
-                with open(resolved, "r", encoding="utf-8", errors="surrogateescape") as f:
-                    fields["content"] = f.read()
-            except OSError:
-                pass
+        snap = state.snapshot_write(session_id, resolved, root=root, call_id=call_id)
+        if snap:
+            fields["snap"] = snap
+        else:
+            fields["snap_failed"] = True
         pre_sha = state.file_digest(resolved)
         if pre_sha:
             fields["pre_sha256"] = pre_sha
@@ -260,6 +264,27 @@ def _snapshot_write_pending(session_id, resolved, root=None, call_id=None) -> No
         state.log_event(session_id, "write_pending", root=root, **fields)
     except Exception as exc:  # CA10: fail-open
         _log_error(session_id, root, exc)
+
+
+def _pending_content(pending, root=None) -> "str | None":
+    """Contenido previo de una pendiente de escritura (ronda 7 / H-A): se lee
+    del snapshot EFÍMERO (pendiente['snap']) y el archivo .snap se BORRA en el
+    mismo acto (consumo único: el post que lo consume es el único que lo usa).
+    Compat: pendientes escritas por versiones anteriores con 'content' dentro
+    del ledger (solo lectura; el ledger nuevo jamás escribe contenido).
+    None si no hay contenido utilizable (snapshot ausente para ese path)."""
+    if not isinstance(pending, dict):
+        return None
+    snap = pending.get("snap")
+    if isinstance(snap, str) and snap:
+        content = state.snapshot_read(snap)
+        state.snapshot_delete(snap)
+        if content is not None:
+            return content
+    legacy = pending.get("content")
+    if isinstance(legacy, str):
+        return legacy
+    return None
 
 
 def _expected_after_replace(snapshot: str, tool_input) -> "str | None":
@@ -309,8 +334,10 @@ def _v4a_sections(patch_text: str):
 def _apply_v4a_body(old_text: str, body: list) -> "str | None":
     """Aplica los hunks del cuerpo de una sección V4A al contenido previo
     (ronda 6 / B2b). Devuelve el texto esperado, o None si el parche no aplica
-    de forma determinista (contexto/minus desalineado) — en ese caso el post
-    cae al fallback legacy en vez de certificar a ciegas."""
+    de forma determinista (contexto/minus desalineado, p. ej. un hunk que no
+    empieza en la primera línea del contenido previo) — en ese caso el post
+    cae fail-closed ('write_unverifiable', ronda 7 / H-B) en vez de certificar
+    a ciegas."""
     ops = []
     for line in body:
         if line.startswith("+"):
@@ -492,9 +519,13 @@ def _post_v4a(event: dict, session_id, root=None, tool_input=None):
     ((b) hunks del patch_text sobre el contenido previo para Update/Delete;
     (c) bloque literal '+' para Add File) y solo se certifica si
     sha256(esperado) == sha256(disco al llegar el post); si difiere NO registra
-    y anota 'write_concurrent' (fail-closed). Sin snapshot utilizable (archivo
-    > DIGEST_CAP en el pre, reconstrucción no determinista o payload legacy sin
-    pre) cae al fallback legacy: huella de disco (comportamiento de antes).
+    y anota 'write_concurrent' (fail-closed). Ronda 7 / H-B: fail-closed REAL —
+    con pendiente viva, si la reconstrucción/verificación no es posible (hunk
+    no aplicable, snapshot ausente para ese path, pendiente ambigua o snapshot
+    no escribible en el pre) NO registra nada y anota 'write_unverifiable': el
+    fallback legacy (huella de disco) certificaba una versión potencialmente
+    ajena. El fallback legacy queda SOLO para payloads SIN pendiente (post sin
+    pre, imposible en producción: el pre corre en toda instalación viva).
     Mismo parsing y resolución que el pre (_pre_v4a). Solo se llega aquí tras
     validar status=='ok' en _post, así que un patch V4A bloqueado no registra
     nada."""
@@ -529,21 +560,29 @@ def _post_v4a(event: dict, session_id, root=None, tool_input=None):
                 status, pending = state.pending_write_match(
                     session_id, resolved, root=root, call_id=call_id
                 )
-                if (
-                    status != "match"
-                    or not isinstance(pending, dict)
-                    or not isinstance(pending.get("content"), str)
-                ):
-                    # Sin snapshot utilizable: fallback legacy (ronda 6 / B2).
+                if status == "none":
+                    # Sin pendiente: payload legacy sin pre (imposible en
+                    # producción, el pre corre en toda instalación viva):
+                    # comportamiento de antes (ronda 6 / B2).
                     state.record(session_id, "patch", resolved, ok=True, root=root)
                     continue
-                # (b) Update/Delete: hunks del parche sobre el contenido previo.
-                expected = _apply_v4a_body(pending["content"], body)
-            if expected is None:
-                # Reconstrucción no determinista: fallback legacy, jamás
-                # certificar a ciegas un contenido que no se pudo reconstruir.
-                state.record(session_id, "patch", resolved, ok=True, root=root)
-                continue
+                content = None
+                if status == "match" and isinstance(pending, dict):
+                    # (b) Update/Delete: hunks del parche sobre el contenido
+                    # previo del snapshot efímero (H-A: se consume y borra).
+                    content = _pending_content(pending, root=root)
+                # Ronda 7 / H-B: pendiente ambigua, snapshot ausente para el
+                # path o hunk no aplicable -> reconstrucción no verificable.
+                expected = _apply_v4a_body(content, body) if content is not None else None
+                if expected is None:
+                    state.log_event(
+                        session_id,
+                        "write_unverifiable",
+                        root=root,
+                        tool="patch",
+                        path=resolved,
+                    )
+                    continue
             _certify_against_snapshot(session_id, "patch", resolved, expected, root=root)
         except Exception as exc:  # CA10: fail-open también al registrar
             _log_error(session_id, root, exc)
@@ -610,14 +649,14 @@ def _post(event: dict, session_id, root=None):
     - patch/edit_file (ronda 5 / H2): SOLO registra si extra.result (JSON string
       del PatchResult, tools/file_operations_common.py) reporta success is True o
       verified is True; con success=false / error presente no registra (_result_certified).
-      NOTA (docstring exigida): el contenido INTENCIONADO de un Update V4A no es
-      reconstruible localmente (el guard solo ve el texto del parche, no el
-      resultado por archivo), así que para V4A la certificación se limita al éxito
-      reportado más la huella de disco observada; y 'verified' (WriteResult) SOLO
-      cubre que el disco coincidía con lo escrito AL TERMINAR la tool — no protege
-      contra escrituras posteriores entre la tool y este post (para eso está la
-      certificación por intención de write_file; para patch/edit_file la ventana
-      queda cubierta por el desempate por digest en el pre).
+      Ronda 7 (H-A/H-B): el contenido esperado se reconstruye desde tool_input
+      sobre el snapshot EFÍMERO del pre (fuera del ledger, 0600/0700); si la
+      reconstrucción/verificación no es posible NO registra nada y anota
+      'write_unverifiable' (fail-closed real), y el fallback legacy queda solo
+      para payloads sin pendiente. 'verified' (WriteResult) SOLO cubre que el
+      disco coincidía con lo escrito AL TERMINAR la tool — la ventana entre la
+      tool y este post la cubre la certificación por reconstrucción contra el
+      snapshot del pre.
     - patch mode='patch' V4A (ronda 4 / H2): registra CADA ruta de las cabeceras
       '*** Update|Delete|Add File:' del texto con la huella posterior, igual que
       hace el pre al decidir; así dos V4A consecutivos no se bloquean.
@@ -717,25 +756,46 @@ def _post(event: dict, session_id, root=None):
             # payload legacy sin 'content': no hay intención que reconstruir;
             # comportamiento de antes (huella de disco).
         if tool in EDIT_TOOLS:
-            # Ronda 6 / B2 (a): str_replace sobre el snapshot del pre. El post
-            # reconstruye el contenido ESPERADO (old->new) y solo certifica si
-            # coincide con el disco al llegar el post; en carrera NO registra
-            # ('write_concurrent', fail-closed). Sin snapshot utilizable
-            # (archivo > DIGEST_CAP en el pre, payload legacy sin pre, o
-            # old/new ausentes) -> fallback legacy: huella de disco.
+            # Ronda 6 / B2 (a) + ronda 7 / H-B: str_replace sobre el snapshot
+            # efímero del pre (H-A). El post reconstruye el contenido ESPERADO
+            # (old->new) y solo certifica si coincide con el disco al llegar el
+            # post; en carrera NO registra ('write_concurrent', fail-closed).
+            # Fail-closed REAL: con pendiente viva, si la reconstrucción no es
+            # verificable (old/new ausentes o ajenos al snapshot, snapshot
+            # ausente para ese path, pendiente ambigua o snapshot no escribible
+            # en el pre) NO registra nada y anota 'write_unverifiable': el
+            # fallback legacy (huella de disco) certificaba una versión
+            # potencialmente ajena. El fallback legacy queda SOLO para payloads
+            # SIN pendiente (post sin pre, imposible en producción).
             status, pending = state.pending_write_match(
                 session_id, resolved, root=root, call_id=_call_id(event)
             )
             expected = None
-            if (
-                status == "match"
-                and isinstance(pending, dict)
-                and isinstance(pending.get("content"), str)
-            ):
-                expected = _expected_after_replace(pending["content"], tool_input)
-            if expected is not None:
-                _certify_against_snapshot(session_id, tool, resolved, expected, root=root)
+            if status == "match" and isinstance(pending, dict):
+                content = _pending_content(pending, root=root)
+                if content is not None:
+                    expected = _expected_after_replace(content, tool_input)
+            if status == "none":
+                # Sin pendiente: payload legacy sin pre — huella de disco,
+                # comportamiento de antes (ronda 6 / B2).
+                state.record(session_id, tool, resolved, ok=True, root=root)
                 return 0, {}
+            if expected is None:
+                # Ronda 7 / H-B: fail-closed real (reconstrucción no
+                # verificable con pendiente viva).
+                state.log_event(
+                    session_id,
+                    "write_unverifiable",
+                    root=root,
+                    tool=str(tool),
+                    path=resolved,
+                )
+                return 0, {}
+            _certify_against_snapshot(session_id, tool, resolved, expected, root=root)
+            return 0, {}
+        # write_file legacy sin 'content' (y write_file con content solo llega
+        # hasta aquí si certificó arriba): huella de disco, comportamiento de
+        # antes (ronda 5 / H2, payload legacy).
         state.record(session_id, tool, resolved, ok=True, root=root)
     except Exception as exc:  # CA10: fail-open también al registrar
         _log_error(session_id, root, exc)

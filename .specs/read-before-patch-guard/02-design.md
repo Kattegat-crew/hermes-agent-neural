@@ -37,6 +37,11 @@ tests/hooks/test_guard_read_before_patch.py  # contrato, sin red, sin tocar el l
 - Retención: 7 días o 5.000 líneas por sesión, lo que llegue primero; limpieza oportunista en el
   propio hook (1 de cada 50 invocaciones, bajo el mismo lock).
 - Última entrada por `path` gana.
+- **Ronda 7 (H-A): el ledger jamás contiene contenido de archivo** (solo huellas
+  `(mtime_ns, size)`, hexdigests sha256 y rutas). El contenido previo que el pre captura para la
+  certificación del post vive en un **snapshot efímero fuera del ledger**:
+  `<root>/snapshots/<session>/<call_id>.snap` con directorio 0700 y archivo 0600; el post lo borra
+  al consumirlo y la poda barre huérfanos con TTL corto (`SNAP_TTL_S` = 10 min).
 
 ### 2.2 Decisión (pre_tool_call)
 
@@ -62,12 +67,20 @@ El bloqueo ocurre **antes** de tocar el archivo: no hay edición parcial.
   proceso escribió entre la tool y el post), NO registra nada y anota
   `write_concurrent` en el ledger (fail-closed: mejor falso bloqueo que falso
   permiso). Payload legacy sin `content` conserva la huella de disco de antes.
-- `patch` / `edit_file` correctos: registra `(path, huella observada + sha256)`
-  SOLO si `extra.result` (JSON del `PatchResult`) reporta `success: true` o
-  `verified: true`; con `success: false` o `error` presente no registra. El
-  contenido intencionado de un Update V4A no es reconstruible localmente, y
-  `verified` SOLO cubre que el disco coincidía con lo escrito al terminar la
-  tool (no protege contra escrituras posteriores antes del post).
+- `patch` / `edit_file` correctos: certificación por RECONSTRUCCIÓN (ronda 6, sobre el
+  snapshot efímero del pre; ronda 7 H-A: el snapshot vive en
+  `<root>/snapshots/<session>/<call_id>.snap`, 0700/0600, nunca en el ledger). El
+  post reconstruye el contenido ESPERADO desde `tool_input` (old→new para
+  str_replace; hunks del `patch_text` V4A para Update/Delete; bloque literal '+'
+  para Add File) y SOLO registra si `extra.result` reporta éxito y
+  `sha256(esperado)` coincide con el disco al llegar el post. **Ronda 7 (H-B),
+  fail-closed real:** con pendiente viva, si la reconstrucción/verificación no es
+  posible (hunk no aplicable — p. ej. un hunk V4A que no empieza en la primera
+  línea —, snapshot ausente para ese path, pendiente ambigua o snapshot no
+  escribible en el pre) NO registra nada y anota `write_unverifiable` en el
+  ledger: el fallback legacy (huella de disco) certificaba una versión
+  potencialmente ajena. El fallback legacy queda SOLO para payloads sin
+  pendiente (post sin pre, imposible en producción).
 - Cualquier otro tool: nada.
 
 ### 2.4 Modos y seguridad operativa
@@ -120,6 +133,8 @@ hooks:
 | Lectura parcial cuenta como lectura | límite declarado en la spec; v2 evalúa rangos |
 | Turnos concurrentes corrompen el ledger | `flock` + tolerancia a líneas rotas |
 | Bug del guard tumba la edición | `fail_closed: false` + `except → exit 0` + kill switch |
+| Fuga de secretos vía el ledger (ronda 7 / H-A) | El ledger JSONL jamás contiene contenido de archivo: solo huellas `(mtime_ns, size)`, hexdigests y rutas. El contenido previo que el pre captura para la certificación del post va a un snapshot EFÍMERO fuera del ledger (`<root>/snapshots/<session>/<call_id>.snap`, directorio 0700, archivo 0600); el post lo borra al consumirlo y la poda oportunista barre huérfanos con TTL corto (`SNAP_TTL_S` = 10 min). Si el snapshot no se puede escribir (permisos/ENOSPC) el post cae fail-closed: NO certifica (`write_unverifiable`) en vez de certificar la huella de disco |
+| Certificación de una versión ajena tras un patch 'exitoso' (ronda 7 / H-B) | Fail-closed real: con pendiente viva del pre, reconstrucción no verificable (hunk no aplicable, snapshot ausente para ese path, pendiente ambigua) ⇒ NO registra y anota `write_unverifiable`; el fallback legacy (huella de disco) queda solo para payloads sin pendiente (post sin pre, imposible en producción) |
 | Coste por llamada | lectura de un JSONL por sesión; el sha256 se guarda SOLO como hexdigest (nunca contenido del archivo), con cap de 32 MB (archivos mayores no se hashean: quedan protegidos solo por huella mtime+size). Rango medido del `sha256` en esta máquina: ~0,02 ms (10 KB) / ~0,08 ms (100 KB) / ~1,4 ms (1 MB). Se calcula en CADA `record()` (post_tool_call) y en el pre ÚNICAMENTE cuando `(mtime_ns, size)` coinciden con la huella registrada — si la huella ya difiere, no hay digest y la decisión de bloquear es inmediata. `record()` completo típico: ~0,1 ms (fingerprint + digest + append con `flock`); con ledger de ~4.900 líneas, ~5 ms (lectura + conteo de líneas de la poda oportunista, sin reescritura); en el tope de 5.000 líneas, ~11 ms (reescritura inherente del recorte FIFO) |
 
 ## 5. Rollback

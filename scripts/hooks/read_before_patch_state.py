@@ -48,6 +48,14 @@ PRUNE_IDLE_S = 3600  # poda solo si el ledger lleva > 1 hora sin tocar (mtime)
 MIN_LINE_BYTES = 40
 DIGEST_CAP = 32 * 1024 * 1024  # no hashear archivos gigantes; fp-only arriba del cap
 
+# Ronda 7 / H-A: el contenido previo que captura el pre para la certificación
+# del post vive en un snapshot EFÍMERO fuera del ledger (el ledger JSONL jamás
+# contiene contenido de archivo, 02-design §4). La poda barre huérfanos con
+# este TTL corto (crash antes del post, archivos no consumidos).
+SNAP_TTL_S = 600  # 10 minutos
+SNAP_DIR_MODE = 0o700
+SNAP_FILE_MODE = 0o600
+
 _EV_POST = "post_tool_call"
 _EV_READ_PENDING = "read_pending"
 _EV_WRITE_PENDING = "write_pending"
@@ -65,6 +73,109 @@ def ledger_path(session_id, root=None) -> Path:
     (los tests nunca tocan el real); None -> default del despliegue."""
     base = Path(root) if root is not None else DEFAULT_ROOT
     return base / (_safe_session(session_id) + ".jsonl")
+
+
+def snapshots_dir(session_id, root=None) -> Path:
+    """Directorio de snapshots efímeros de la sesión (ronda 7 / H-A):
+    <root>/snapshots/<session>/ — 0700. Los snapshots (.snap) son archivos
+    0600 con contenido previo de archivos, fuera del ledger JSONL."""
+    base = Path(root) if root is not None else DEFAULT_ROOT
+    return base / "snapshots" / _safe_session(session_id)
+
+
+def _safe_call_id(call_id) -> str:
+    """Nombre de archivo seguro para un call_id (puede venir derivado con ':' o
+    ser None): mismo juego de caracteres que _safe_session."""
+    raw = str(call_id) if call_id else ""
+    safe = "".join(c if (c.isalnum() or c in "-_.") else "_" for c in raw)
+    return safe or "call"
+
+
+def snapshot_write(session_id, path, root=None, call_id=None):
+    """Copia el contenido previo de `path` a un snapshot EFÍMERO fuera del
+    ledger (ronda 7 / H-A): <root>/snapshots/<session>/<call_id>.snap, con
+    directorio 0700 y archivo 0600 (open con modo 0600 + chmod para blindar
+    contra umask). Devuelve la ruta del snapshot, o None si no se pudo escribir
+    (permisos/ENOSPC o archivo > DIGEST_CAP): el post cae fail-closed en vez de
+    certificar la huella de disco. Nunca lanza."""
+    try:
+        if os.path.getsize(str(path)) > DIGEST_CAP:
+            return None
+        with open(str(path), "r", encoding="utf-8", errors="surrogateescape") as f:
+            content = f.read()
+        d = snapshots_dir(session_id, root)
+        d.mkdir(parents=True, exist_ok=True)
+        os.chmod(str(d), SNAP_DIR_MODE)
+        name = _safe_call_id(call_id) if call_id else "snap-" + os.urandom(8).hex()
+        target = d / (name + ".snap")
+        fd = os.open(str(target), os.O_WRONLY | os.O_CREAT | os.O_TRUNC, SNAP_FILE_MODE)
+        try:
+            with os.fdopen(fd, "w", encoding="utf-8", errors="surrogateescape") as f:
+                f.write(content)
+        except Exception:
+            try:
+                os.unlink(str(target))
+            except OSError:
+                pass
+            return None
+        try:
+            os.chmod(str(target), SNAP_FILE_MODE)
+        except OSError:
+            pass
+        return str(target)
+    except Exception:
+        return None
+
+
+def snapshot_read(snap_path):
+    """Lee el contenido de un snapshot efímero (None si no existe/ilegible)."""
+    try:
+        with open(str(snap_path), "r", encoding="utf-8", errors="surrogateescape") as f:
+            return f.read()
+    except OSError:
+        return None
+
+
+def snapshot_delete(snap_path) -> None:
+    """Borra un snapshot efímero (el post que lo consume; barrido TTL)."""
+    try:
+        os.unlink(str(snap_path))
+    except OSError:
+        pass
+
+
+def sweep_snapshots(root=None, now=None) -> None:
+    """Barrido TTL de snapshots huérfanos (ronda 7 / H-A): borra los .snap con
+    mtime anterior a SNAP_TTL_S y los directorios de sesión que quedan vacíos.
+    Corre enganchado al gate barato de la poda oportunista (ronda 2 / H3) en
+    _append. Nunca lanza."""
+    base = Path(root) if root is not None else DEFAULT_ROOT
+    cutoff = (time.time() if now is None else float(now)) - SNAP_TTL_S
+    try:
+        sessions = list((base / "snapshots").iterdir())
+    except OSError:
+        return
+    for sess in sessions:
+        try:
+            if not sess.is_dir():
+                continue
+            entries = list(sess.iterdir())
+        except OSError:
+            continue
+        empty = True
+        for p in entries:
+            try:
+                if p.suffix == ".snap" and p.is_file() and p.stat().st_mtime < cutoff:
+                    snapshot_delete(p)
+                else:
+                    empty = False
+            except OSError:
+                empty = False
+        if empty:
+            try:
+                os.rmdir(str(sess))
+            except OSError:
+                pass
 
 
 def fingerprint(path) -> tuple:
@@ -210,6 +321,11 @@ def _append(session_id, entry: dict, root=None) -> None:
                 _cleanup_locked(f, now, reason=prune_reason)
         finally:
             fcntl.flock(f.fileno(), fcntl.LOCK_UN)
+    if prune_reason:
+        # Ronda 7 / H-A: barrido TTL de snapshots huérfanos, enganchado al
+        # mismo gate barato de la poda oportunista (ronda 2 / H3: no corre en
+        # cada invocación, solo cuando el gate de os.stat dispara).
+        sweep_snapshots(root)
 
 
 def record_seen(session_id, tool, path, mtime_ns, size, ok=True, root=None, sha256=None):
