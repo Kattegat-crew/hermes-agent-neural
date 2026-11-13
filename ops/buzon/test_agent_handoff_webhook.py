@@ -144,3 +144,40 @@ def test_http_500_no_rompe_el_deposito(tmp_path):
         assert out.returncode == 0, out.stderr
         assert len(srv.hits) == 1
         assert (tmp_path / "ullr" / "from-ragnar" / "tkt-20261113-ragnar-ullr-0001.json").exists()
+
+
+def _reply(tmp_path: Path, ticket: str) -> subprocess.CompletedProcess:
+    return subprocess.run(
+        [sys.executable, str(SCRIPT), "reply", "--agent", "ullr", "--ticket", ticket,
+         "--respuesta", "hecho", "--inbox-root", str(tmp_path)],
+        capture_output=True, text=True, timeout=60,
+    )
+
+
+def test_reply_no_confunde_tkt_1_con_tkt_11(tmp_path):
+    """El glob por subcadena cerraba tkt-11 cuando se pedía tkt-1."""
+    _run(tmp_path, "--webhook-secret", "", "--id", "tkt-1")
+    _run(tmp_path, "--webhook-secret", "", "--id", "tkt-11")
+    out = _reply(tmp_path, "tkt-1")
+    assert out.returncode == 0, out.stderr
+    done = tmp_path / "ullr" / "done"
+    assert (done / "tkt-1.json").exists()
+    assert not (done / "tkt-11.json").exists(), "tkt-11 no era el objetivo"
+
+
+def test_reply_falla_si_el_id_es_ambiguo(tmp_path):
+    _run(tmp_path, "--webhook-secret", "", "--id", "tkt-dup")
+    # segundo depósito con el mismo id en otra carpeta de origen
+    _run(tmp_path, "--webhook-secret", "", "--id", "tkt-dup", "--from", "bragi")
+    out = _reply(tmp_path, "tkt-dup")
+    assert out.returncode == 1
+    assert "ambiguo" in out.stderr.lower()
+
+
+def test_reply_no_sobrescribe_una_respuesta_previa(tmp_path):
+    _run(tmp_path, "--webhook-secret", "", "--id", "tkt-r")
+    assert _reply(tmp_path, "tkt-r").returncode == 0
+    _run(tmp_path, "--webhook-secret", "", "--id", "tkt-r")
+    out = _reply(tmp_path, "tkt-r")
+    assert out.returncode == 1
+    assert "ya existe" in out.stderr.lower()

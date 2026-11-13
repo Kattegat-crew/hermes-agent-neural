@@ -27,6 +27,7 @@ from __future__ import annotations
 import hashlib
 import hmac
 import json
+import re
 import socket
 import time
 import urllib.error
@@ -77,6 +78,9 @@ def _id_idempotencia(payload: Mapping[str, Any], cuerpo: bytes) -> str:
     return hashlib.sha256(cuerpo).hexdigest()
 
 
+_SEGMENTO_URL = re.compile(r"^[a-z0-9][a-z0-9_-]{0,63}$")
+
+
 def notify(
     perfil: str,
     payload: Mapping[str, Any],
@@ -97,6 +101,14 @@ def notify(
         return NotifyResult(False, None, "sin_secreto")
     if not perfil or not isinstance(perfil, str):
         return NotifyResult(False, None, "sin_perfil")
+    # `perfil` y `ruta` entran crudos en la URL: un salto de línea o un `../`
+    # cambiaría el destino del POST.
+    if not _SEGMENTO_URL.match(perfil):
+        return NotifyResult(False, None, "perfil_invalido")
+    if not isinstance(ruta, str) or not _SEGMENTO_URL.match(ruta):
+        return NotifyResult(False, None, "ruta_invalida")
+    if not isinstance(base_url, str) or not base_url.startswith(("http://", "https://")):
+        return NotifyResult(False, None, "base_invalida")
 
     # Todo el cuerpo va dentro del try: un payload no serializable o un `clock`
     # que no devuelve un número no pueden escapar del notificador.

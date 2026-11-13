@@ -204,3 +204,28 @@ def test_id_idempotencia_sin_ticket_usa_digest_completo():
 
 def test_id_idempotencia_prefiere_el_ticket():
     assert notify_mod._id_idempotencia({"ticket_id": "tkt-9"}, b"{}") == "tkt-9"
+
+
+@pytest.mark.parametrize(
+    "kwargs,esperado",
+    [
+        ({"perfil": "../etc", "ruta": "buzon"}, "perfil_invalido"),
+        ({"perfil": "a b", "ruta": "buzon"}, "perfil_invalido"),
+        ({"perfil": "ullr", "ruta": "../x"}, "ruta_invalida"),
+        ({"perfil": "ullr", "ruta": "a/b"}, "ruta_invalida"),
+        ({"perfil": "ullr", "ruta": "buzon", "base_url": "ftp://x"}, "base_invalida"),
+    ],
+)
+def test_segmentos_de_url_se_validan(kwargs, esperado):
+    """perfil y ruta entran crudos en la URL: un `../` cambiaría el destino."""
+    datos = {"perfil": "ullr", "ruta": "buzon", "base_url": "http://127.0.0.1:9"}
+    datos.update(kwargs)
+    res = notify(
+        datos["perfil"],
+        {"event_type": "buzon.nuevo", "ticket_id": "x-1"},
+        base_url=datos["base_url"],
+        secret=SECRET,
+        ruta=datos["ruta"],
+    )
+    assert res.sent is False
+    assert res.reason == esperado

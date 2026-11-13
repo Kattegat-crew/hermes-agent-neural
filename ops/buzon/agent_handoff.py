@@ -219,7 +219,12 @@ def list_handoffs(args: argparse.Namespace) -> int:
                 print(f"  • {f.name} (error parseando JSON)")
 
     if args.status in ("all", "done"):
-        print(f"\n[COMPLETADOS / ARCHIVADOS: {len(done_files)}]")
+        # El encabezado decía N y la lista imprimía 10 sin avisar: un recorte
+        # silencioso se lee como "no hay más".
+        if len(done_files) > 10:
+            print(f"\n[COMPLETADOS / ARCHIVADOS: {len(done_files)} — mostrando los 10 más recientes]")
+        else:
+            print(f"\n[COMPLETADOS / ARCHIVADOS: {len(done_files)}]")
         for f in done_files[:10]:
             try:
                 data = json.loads(f.read_text(encoding="utf-8"))
@@ -236,10 +241,18 @@ def reply_handoff(args: argparse.Namespace) -> int:
 
     inbox_root = Path(args.inbox_root) if getattr(args, "inbox_root", None) else INBOX_ROOT
     agent_dir = inbox_root / agent
-    found = list(agent_dir.glob(f"from-*/*{ticket_id}*.json")) + list(agent_dir.glob(f"pending/*{ticket_id}*.json"))
+    # Coincidencia exacta por nombre de archivo: un glob por subcadena cerraba
+    # `tkt-1` cuando el pedido era `tkt-1` y existía también `tkt-11`.
+    candidatos = list(agent_dir.glob("from-*/*.json")) + list(agent_dir.glob("pending/*.json"))
+    found = [f for f in candidatos if f.stem == ticket_id]
 
     if not found:
         print(f"Error: No se encontró ticket '{ticket_id}' en el buzón entrante de {agent}.", file=sys.stderr)
+        return 1
+    if len(found) > 1:
+        rutas = ", ".join(str(f) for f in found)
+        print(f"Error: '{ticket_id}' es ambiguo, hay {len(found)} tickets con ese id: {rutas}. "
+              f"Borra o renombra el duplicado antes de responder.", file=sys.stderr)
         return 1
 
     src_file = found[0]
@@ -258,6 +271,11 @@ def reply_handoff(args: argparse.Namespace) -> int:
 
     done_dir = _ensure_dir(agent_dir / "done")
     dest_file = done_dir / src_file.name
+    if dest_file.exists():
+        # Un id reutilizado sobrescribía la respuesta anterior en silencio.
+        print(f"Error: ya existe {dest_file}. Cierra el duplicado con otro id en vez de "
+              f"perder la respuesta anterior.", file=sys.stderr)
+        return 1
 
     tmp_fd, tmp_path = tempfile.mkstemp(prefix="done_", suffix=".json", dir=str(done_dir))
     with os.fdopen(tmp_fd, "w", encoding="utf-8") as fh:
