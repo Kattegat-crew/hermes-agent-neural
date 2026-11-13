@@ -17,7 +17,13 @@ Una línea por evento:
 - Retención: 7 días o 5.000 líneas por sesión; poda oportunista (ronda 2 / H3):
   se intenta SOLO si el mtime del ledger tiene más de 1 hora o su tamaño sugiere
   que supera MAX_LINES (comprobado con os.stat antes de abrir); y no se reescribe
-  el archivo si no hay nada que podar.
+  el archivo si no hay nada que podar. La ventana de 7 días se aplica TAMBIÉN al
+  LEER (last_seen, ronda 4 / M2): una entrada con ts fuera de la ventana no
+  autoriza aunque el ledger tenga actividad reciente y la poda no haya corrido.
+- TOCTOU de la huella (ronda 4 / H1): el pre de read_file deja una entrada
+  pendiente {'ev': 'read_pending', 'path', 'mtime_ns', 'size', 't'} con la huella
+  ANTES de la lectura; el post ok la promueve a 'seen' con ESA huella (lo que el
+  agente vio), no con la de disco al llegar el post.
 - Última entrada por `path` gana (comparación por `os.path.realpath`).
 
 Solo stdlib. Ninguna función de este módulo debe lanzar hacia el hook:
@@ -43,6 +49,7 @@ MIN_LINE_BYTES = 40
 DIGEST_CAP = 32 * 1024 * 1024  # no hashear archivos gigantes; fp-only arriba del cap
 
 _EV_POST = "post_tool_call"
+_EV_READ_PENDING = "read_pending"
 
 
 def _safe_session(session_id) -> str:
@@ -204,11 +211,13 @@ def _append(session_id, entry: dict, root=None) -> None:
             fcntl.flock(f.fileno(), fcntl.LOCK_UN)
 
 
-def record(session_id, tool, path, ok=True, root=None) -> None:
-    """Registra (path, huella actual) para un tool de lectura/escritura.
-    La huella se toma AHORA: el agente vio/escribió este contenido."""
+def record_seen(session_id, tool, path, mtime_ns, size, ok=True, root=None) -> None:
+    """Registra una huella YA capturada (ronda 4 / H1): la promoción de una
+    entrada 'read_pending' usa la huella del contenido que el agente VIO, no la
+    de disco al llegar el post. El digest solo se adjunta si la huella registrada
+    coincide con el disco AHORA (si difiere, el sha256 sería de un contenido que
+    el agente nunca vio y el desempate del pre daría un falso permiso)."""
     p = str(path)
-    mtime_ns, size = fingerprint(p)
     now = time.time()
     entry = {
         "t": _iso(now),
@@ -220,7 +229,7 @@ def record(session_id, tool, path, ok=True, root=None) -> None:
         "size": size,
         "ok": bool(ok),
     }
-    if mtime_ns or size:
+    if mtime_ns and size and tuple(fingerprint(p)) == (mtime_ns, size):
         digest = file_digest(p)
         if digest:
             entry["sha256"] = digest
@@ -230,16 +239,40 @@ def record(session_id, tool, path, ok=True, root=None) -> None:
         # fail-open: sin ledger no hay guard y el hook sigue, pero el fallo no
         # se traga en silencio (ronda 2 / L7): va a stderr para el runner.
         print(
-            "read-before-patch: record() no pudo escribir el ledger (%s): %s"
+            "read-before-patch: record_seen() no pudo escribir el ledger (%s): %s"
             % (type(exc).__name__, exc),
             file=sys.stderr,
         )
 
 
+def record(session_id, tool, path, ok=True, root=None) -> None:
+    """Registra (path, huella actual) para un tool de lectura/escritura.
+    La huella se toma AHORA: el agente vio/escribió este contenido.
+    (El post de read_file usa record_seen() con la huella pendiente del pre
+    para cerrar la ventana TOCTOU, ronda 4 / H1.)"""
+    p = str(path)
+    mtime_ns, size = fingerprint(p)
+    record_seen(session_id, tool, p, mtime_ns, size, ok=ok, root=root)
+
+
+def _within_retention(entry: dict, cutoff: float) -> bool:
+    """True si la entrada no está (o no se puede probar que esté) fuera de la
+    ventana de retención de RETENTION_DAYS (ronda 4 / M2). Sin ts no hay edad
+    conocida: se conserva (la poda por 't' ISO la limpiará a su momento)."""
+    ts = entry.get("ts") if isinstance(entry, dict) else None
+    if isinstance(ts, (int, float)):
+        return ts >= cutoff
+    return True
+
+
 def last_seen(session_id, path, root=None):
     """Última entrada registrada para la ruta (por realpath) o None.
     Devuelve {'path', 'mtime_ns', 'size', 'tool', 't'} (más campos extra del ledger).
-    Lectura bajo flock compartido vía _read_entries (ronda 2 / H2)."""
+    Lectura bajo flock compartido vía _read_entries (ronda 2 / H2).
+    Ronda 4 / M2: las entradas con ts anterior a la ventana de retención
+    (RETENTION_DAYS) NO autorizan aunque el ledger tenga actividad reciente y
+    la poda oportunista no haya corrido: el corte se aplica AL LEER, no solo
+    al podar."""
     ledger = ledger_path(session_id, root)
     if not ledger.exists():
         return None
@@ -247,10 +280,13 @@ def last_seen(session_id, path, root=None):
         want = os.path.realpath(str(path))
     except OSError:
         want = str(path)
+    cutoff = time.time() - RETENTION_DAYS * 86400
     found = None
     for entry in _read_entries(ledger):
         if entry.get("ev") != _EV_POST:
             continue  # would_block / error / disabled no cuentan como "visto"
+        if not _within_retention(entry, cutoff):
+            continue  # M2: vencida, no autoriza
         p = entry.get("path")
         if not isinstance(p, str) or not p:
             continue
@@ -260,6 +296,36 @@ def last_seen(session_id, path, root=None):
             same = p == want
         if same:
             found = entry  # la última línea gana
+    return found
+
+
+def pending_read(session_id, path, root=None):
+    """Última entrada 'read_pending' para la ruta (por realpath) o None (ronda 4 / H1).
+    El pre de read_file dejó la huella capturada ANTES de ejecutar la tool; el post
+    la consulta para registrar lo que el agente vio, no lo que hay en disco al
+    llegar el post. Pre y post llegan 1:1 y en orden, así que la pendiente MÁS
+    RECIENTE corresponde a la lectura en curso (no se consume/reescribe el ledger:
+    las pendientes viejas caducan con la retención)."""
+    ledger = ledger_path(session_id, root)
+    if not ledger.exists():
+        return None
+    try:
+        want = os.path.realpath(str(path))
+    except OSError:
+        want = str(path)
+    found = None
+    for entry in _read_entries(ledger):
+        if entry.get("ev") != _EV_READ_PENDING:
+            continue
+        p = entry.get("path")
+        if not isinstance(p, str) or not p:
+            continue
+        try:
+            same = os.path.realpath(p) == want
+        except OSError:
+            same = p == want
+        if same:
+            found = entry  # la última pendiente gana
     return found
 
 

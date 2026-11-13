@@ -12,6 +12,14 @@ de mtime/size, así que "visto" = leído o escrito por el propio agente):
   - patch/edit_file(path) sin path visto -> would_block
   - rutas absolutas se normalizan con os.path.realpath; las relativas no se
     pueden resolver (no hay cwd histórico): cuentan igual y se marcan aparte.
+  - patch V4A (mode='patch', sin 'path') cuenta en patch_total y se decide por
+    las cabeceras '*** Update|Delete|Add File:' del texto, igual que el guard.
+  - Resultados (ronda 4 / M1): si la DB trae filas role='tool' con tool_call_id
+    (formato actual), cada tool_call se correlaciona con SU resultado; un
+    resultado con error / success=false / status=error|blocked|cancelled NO
+    marca la ruta como vista. Si la DB no tiene NINGUNA fila de resultado
+    (esquema antiguo), se mantiene el comportamiento de antes: todo se
+    considera exitoso (lo cubre el test CA11 de sqlite).
   - path_form_suspects: patch bloqueado cuyo basename fue leído/escrito antes
     en la misma sesión bajo OTRA forma de ruta (falso positivo probable).
 """
@@ -20,6 +28,7 @@ import argparse
 import collections
 import json
 import os
+import re
 import sqlite3
 import sys
 import time
@@ -28,13 +37,71 @@ DEFAULT_DB = "/opt/hermes-agent-data/state.db"
 EDIT_TOOLS = {"patch", "edit_file"}
 MARK_TOOLS = {"read_file", "write_file"}
 WRITE_TOOLS = {"write_file", "patch", "edit_file"}
+RESULT_FAIL_STATUS = {"error", "blocked", "cancelled"}
+
+# V4A: cabeceras de parche multi-archivo (misma regex que guard_read_before_patch).
+_V4A_HEADER_RE = re.compile(
+    r"^\*\*\*[ \t]+(Update|Delete|Add)[ \t]+File:[ \t]*(.+?)[ \t]*$",
+    re.MULTILINE,
+)
+
+
+def extract_v4a_paths(patch_text):
+    """[(accion, ruta)] de las cabeceras V4A, en orden de aparición."""
+    out = []
+    for match in _V4A_HEADER_RE.finditer(patch_text or ""):
+        raw_path = match.group(2)
+        if raw_path:
+            out.append((match.group(1), raw_path))
+    return out
+
+
+def result_ok(content):
+    """True si el contenido del resultado role='tool' indica éxito (ronda 4 / M1).
+    Formato real: JSON con 'error' / 'success' / 'status'; texto plano o vacío
+    no trae marca de fallo -> éxito."""
+    if content is None:
+        return True
+    try:
+        data = json.loads(content)
+    except (TypeError, ValueError):
+        return True
+    if not isinstance(data, dict):
+        return True
+    if data.get("error"):
+        return False
+    if data.get("success") is False:
+        return False
+    status = str(data.get("status") or "").strip().lower()
+    return status not in RESULT_FAIL_STATUS
+
+
+def _load_tool_results(con):
+    """Mapa {tool_call_id: éxito} de las filas role='tool' (ronda 4 / M1).
+    Segundo valor: True si la DB trae filas de resultado (formato actual),
+    False si el esquema no las tiene (DB antigua -> comportamiento legacy)."""
+    try:
+        rows = con.execute(
+            """SELECT tool_call_id, content FROM messages
+               WHERE active = 1 AND role = 'tool'
+                 AND tool_call_id IS NOT NULL
+               ORDER BY id"""
+        ).fetchall()
+    except sqlite3.Error:
+        return {}, False  # sin columna role/tool_call_id: esquema antiguo
+    out = {}
+    for call_id, content in rows:
+        if call_id in out:
+            continue  # primera fila gana (respuestas re-entregadas)
+        out[call_id] = result_ok(content)
+    return out, True
 
 
 def extract_calls(tool_calls):
-    """Devuelve [(tool_name, arguments_json_str)] de la celda tool_calls.
+    """Devuelve [(tool_call_id, tool_name, arguments_json_str)] de la celda tool_calls.
 
-    Soporta el formato canónico [{'function': {'name', 'arguments'}}] y la
-    variante con 'name'/'arguments' al nivel superior.
+    Soporta el formato canónico [{'id', 'function': {'name', 'arguments'}}] y la
+    variante con 'name'/'arguments' al nivel superior (sin id).
     """
     try:
         arr = json.loads(tool_calls)
@@ -50,9 +117,9 @@ def extract_calls(tool_calls):
             continue
         fn = c.get("function")
         if isinstance(fn, dict) and fn.get("name"):
-            out.append((fn["name"], fn.get("arguments") or "{}"))
+            out.append((c.get("id"), fn["name"], fn.get("arguments") or "{}"))
         elif c.get("name"):
-            out.append((c["name"], c.get("arguments") or "{}"))
+            out.append((c.get("id"), c["name"], c.get("arguments") or "{}"))
     return out
 
 
@@ -65,6 +132,18 @@ def get_path(arguments):
         return None
     p = a.get("path")
     return p if isinstance(p, str) and p else None
+
+
+def get_patch_text(arguments):
+    """Texto del parche V4A (clave 'patch') o None (ronda 4 / M1)."""
+    try:
+        a = json.loads(arguments)
+    except (TypeError, ValueError):
+        return None
+    if not isinstance(a, dict):
+        return None
+    t = a.get("patch")
+    return t if isinstance(t, str) and t else None
 
 
 def replay(db_path, last=None):
@@ -93,6 +172,16 @@ def replay(db_path, last=None):
     finally:
         con.close()
 
+    # Carga de resultados role='tool' por separado (ronda 4 / M1): si la DB no
+    # tiene NINGUNA fila de resultado (esquema antiguo), el replay conserva el
+    # comportamiento de antes (todo exitoso) — compatibilidad CA11.
+    con = sqlite3.connect("file:%s?mode=ro" % db_path, uri=True)
+    try:
+        results, has_results = _load_tool_results(con)
+    finally:
+        con.close()
+    correlated = has_results
+
     sessions_any = set()          # sesiones con al menos un tool call
     sessions_write = set()        # sesiones con write_file/patch/edit_file con path
     per_sess_block = collections.Counter()
@@ -105,6 +194,37 @@ def replay(db_path, last=None):
     rel_would_block = 0
     suspects = 0
 
+    def _path_form(p):
+        """(is_rel, real, form) de una ruta cruda del histórico."""
+        is_rel = not os.path.isabs(p)
+        real = None if is_rel else os.path.realpath(p)
+        return is_rel, real, (("rel", p) if is_rel else ("abs", real))
+
+    def _seen(st, p):
+        is_rel, real, _form = _path_form(p)
+        return (p if is_rel else real) in (st["rel"] if is_rel else st["abs"])
+
+    def _mark(st, p):
+        """Marca la ruta como vista/escrita bajo su forma (rel o abs)."""
+        is_rel, real, form = _path_form(p)
+        (st["rel"] if is_rel else st["abs"]).add(p if is_rel else real)
+        st["forms"][os.path.basename(p)].add(form)
+
+    def _block_if_unseen(sid, st, p):
+        """Cuenta would_block para la ruta p (rel o abs) y su sospechoso de forma."""
+        nonlocal would_block, rel_would_block, suspects, rel_patch_total
+        is_rel, real, form = _path_form(p)
+        if is_rel:
+            rel_patch_total += 1
+        if _seen(st, p):
+            return
+        would_block += 1
+        if is_rel:
+            rel_would_block += 1
+        per_sess_block[sid] += 1
+        if any(f != form for f in st["forms"].get(os.path.basename(p), ())):
+            suspects += 1
+
     for sid, _mid, tc in rows:
         calls = extract_calls(tc)
         if calls:
@@ -112,42 +232,45 @@ def replay(db_path, last=None):
         st = state.setdefault(
             sid, {"abs": set(), "rel": set(), "forms": collections.defaultdict(set)}
         )
-        for name, args in calls:
+        for call_id, name, args in calls:
+            # Ronda 4 / M1: correlación con el resultado real de la llamada.
+            # DB con filas role='tool' -> solo el éxito marca; sin resultado o
+            # con error/success=false NO marca. DB antigua sin resultados ->
+            # todo se considera exitoso (legacy, test CA11).
+            ok = (results.get(call_id) is True) if correlated else True
             p = get_path(args)
-            if not p:
-                continue
-            is_rel = not os.path.isabs(p)
-            real = None if is_rel else os.path.realpath(p)
-            base = os.path.basename(p)
-            form = ("rel", p) if is_rel else ("abs", real)
 
             if name in MARK_TOOLS:
-                # visto: read_file o write_file de esa ruta en esta sesión
-                (st["rel"] if is_rel else st["abs"]).add(p if is_rel else real)
-                st["forms"][base].add(form)
+                # visto: read_file o write_file EXITOSOS de esa ruta
+                if p and ok:
+                    _mark(st, p)
+                continue
+            if name not in EDIT_TOOLS:
+                continue
 
+            patch_total += 1
             if name in WRITE_TOOLS:
                 writes_total += 1
                 sessions_write.add(sid)
 
-            if name in EDIT_TOOLS:
-                patch_total += 1
-                if is_rel:
-                    rel_patch_total += 1
-                seen = (p in st["rel"]) if is_rel else (real in st["abs"])
-                if not seen:
-                    would_block += 1
-                    if is_rel:
-                        rel_would_block += 1
-                    per_sess_block[sid] += 1
-                    if any(f != form for f in st["forms"].get(base, ())):
-                        suspects += 1
-                # replay = guard (ronda 2): un patch/edit_file exitoso escribe la
+            if p:
+                _block_if_unseen(sid, st, p)
+                # replay = guard (ronda 2): un patch/edit_file EXITOSO escribe la
                 # ruta, así que el guard registra la huella posterior y un segundo
                 # patch de la misma ruta NO se bloquea. Sin esto el replay infla
                 # los bloqueos (cuenta reintentos idénticos que el guard permite).
-                (st["rel"] if is_rel else st["abs"]).add(p if is_rel else real)
-                st["forms"][base].add(form)
+                # Ronda 4 / M1: un patch fallado/bloqueado NO escribe (su post no
+                # registra), así que no marca la ruta como vista.
+                if ok:
+                    _mark(st, p)
+            else:
+                # V4A sin clave 'path' (ronda 4 / M1): mismas reglas del guard
+                # por cabecera del texto del parche.
+                for action, header_path in extract_v4a_paths(get_patch_text(args)):
+                    if action != "Add":
+                        _block_if_unseen(sid, st, header_path)
+                    if ok:
+                        _mark(st, header_path)
 
     pct = round(100.0 * would_block / writes_total, 1) if writes_total else 0.0
     return {

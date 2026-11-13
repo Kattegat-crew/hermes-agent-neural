@@ -14,11 +14,19 @@ Eventos:
   Sin cwd y ruta relativa -> 'unknown_cwd', se permite, NUNCA se resuelve contra
   os.getcwd() del proceso (ronda 2 / L2). Sin clave 'path' -> 'no_path' en el
   ledger, se permite con rastro (ronda 2 / L3).
-- post_tool_call (read_file|write_file|patch|edit_file): registra la huella actual.
+- post_tool_call (read_file|write_file|patch|edit_file): registra la huella.
   Registra SOLO si extra.status == 'ok' o si la clave no viene (payload legacy con
   'ok'; sin ninguna de las dos se asume exitoso). Con status 'error'|'cancelled'|'blocked'
   NUNCA registra: un patch bloqueado (status='blocked') dispara post_tool_call y no
   debe marcar la ruta como vista, o el reintento idéntico pasaría (ronda 2 / H1).
+  - read_file (ronda 4 / TOCTOU): el pre dejó una entrada 'read_pending' con la
+    huella capturada ANTES de la lectura; el post promueve ESA huella (lo que el
+    agente vio). Sin pendiente (hook legacy sin pre, o pre sin sesión) se registra
+    la huella de disco actual, como siempre: es el mismo comportamiento de antes,
+    y el pre corre en toda instalación viva.
+  - patch mode='patch' V4A (ronda 4 / H2): registra CADA ruta de las cabeceras
+    '*** Update|Delete|Add File:' del texto con la huella posterior, igual que
+    hace el pre al decidir; así dos V4A consecutivos no se bloquean.
   Cualquier otra tool no toca el ledger.
 
 Modos (CA7/CA8): env READ_BEFORE_PATCH_MODE=shadow|enforce o archivo MODE junto al
@@ -196,8 +204,51 @@ def _pre_v4a(event: dict, session_id, root=None, tool_input=None):
     return 0, {}
 
 
+def _pre_read(event: dict, session_id, root=None):
+    """pre_tool_call de read_file (ronda 4 / TOCTOU-H1): captura la huella ANTES
+    de que la tool lea, como entrada pendiente {'ev':'read_pending', path,
+    mtime_ns, size, t}. El post de la MISMA lectura la promueve a 'seen', así que
+    otro proceso que escriba entre la lectura y el post NO queda certificado
+    como visto. Las reglas de resolución son las mismas del pre de edición
+    (cwd del payload, realpath; sin cwd y ruta relativa -> nada pendiente, L2)."""
+    if not session_id:
+        return 0, {}
+    tool_input = event.get("tool_input")
+    raw = tool_input.get("path") if isinstance(tool_input, dict) else None
+    if not isinstance(raw, str) or not raw:
+        return 0, {}
+    cwd = event.get("cwd")
+    has_cwd = isinstance(cwd, str) and bool(cwd.strip())
+    if not has_cwd and not os.path.isabs(raw):
+        return 0, {}  # L2: jamás se resuelve contra os.getcwd() del proceso
+    try:
+        resolved = os.path.realpath(os.path.join(str(cwd) if has_cwd else "", raw))
+    except Exception:
+        try:
+            resolved = os.path.realpath(raw)
+        except Exception:
+            return 0, {}
+    if not os.path.exists(resolved):
+        return 0, {}  # la lectura fallará; no hay contenido que certificar
+    try:
+        mtime_ns, size = state.fingerprint(resolved)
+        state.log_event(
+            session_id,
+            "read_pending",
+            root=root,
+            path=resolved,
+            mtime_ns=mtime_ns,
+            size=size,
+        )
+    except Exception as exc:  # CA10: fail-open
+        _log_error(session_id, root, exc)
+    return 0, {}
+
+
 def _pre(event: dict, session_id, root=None):
     tool = event.get("tool_name")
+    if tool == "read_file":
+        return _pre_read(event, session_id, root)
     if tool not in EDIT_TOOLS:
         return 0, {}
 
@@ -264,6 +315,42 @@ def _pre(event: dict, session_id, root=None):
     return 0, {"ev": "would_block", "reason": reason}
 
 
+def _post_v4a(event: dict, session_id, root=None, tool_input=None):
+    """post_tool_call de patch V4A con resultado ok (ronda 4 / H2): registra CADA
+    ruta de las cabeceras '*** Update|Delete|Add File:' con la huella posterior.
+    Mismo parsing y resolución que el pre (_pre_v4a), para que dos V4A
+    consecutivos no se bloqueen y un parche multi-archivo registre todas sus
+    rutas. Solo se llega aquí tras validar status=='ok' en _post, así que un
+    patch V4A bloqueado no registra nada."""
+    patch_text = (tool_input or {}).get("patch")
+    ops = _v4a_file_ops(patch_text) if isinstance(patch_text, str) else []
+    if not ops:
+        return 0, {}
+    cwd = event.get("cwd")
+    has_cwd = isinstance(cwd, str) and bool(cwd.strip())
+    for _action, raw_path in ops:
+        if not has_cwd and not os.path.isabs(raw_path):
+            continue  # L2: no se resuelve contra os.getcwd() del proceso
+        try:
+            resolved = os.path.realpath(
+                os.path.join(str(cwd) if has_cwd else "", raw_path)
+            )
+        except Exception:
+            try:
+                resolved = os.path.realpath(raw_path)
+            except Exception:
+                continue
+        if not os.path.exists(resolved):
+            # Delete File: el archivo ya no existe (nada que certificar);
+            # Add/Update fallado: igual.
+            continue
+        try:
+            state.record(session_id, "patch", resolved, ok=True, root=root)
+        except Exception as exc:  # CA10: fail-open también al registrar
+            _log_error(session_id, root, exc)
+    return 0, {}
+
+
 def _post(event: dict, session_id, root=None):
     tool = event.get("tool_name")
     if tool not in RECORD_TOOLS:
@@ -285,11 +372,36 @@ def _post(event: dict, session_id, root=None):
             return 0, {}  # payload legacy con ok=False
         # Sin 'status' ni 'ok': payload antiguo mínimo -> se asume exitoso (H1).
 
+    tool_input = event.get("tool_input")
+    if (
+        tool == "patch"
+        and isinstance(tool_input, dict)
+        and tool_input.get("mode") == "patch"
+    ):
+        # V4A (ronda 4 / H2): sin clave 'path', el registro sale de las
+        # cabeceras del texto, igual que la decisión del pre.
+        return _post_v4a(event, session_id, root, tool_input)
+
     resolved, issue = _resolve(event)
     if issue or not resolved or not os.path.exists(resolved):
         return 0, {}
 
     try:
+        if tool == "read_file":
+            # Ronda 4 / TOCTOU-H1: promueve la huella pendiente del PRE (lo que
+            # el agente vio), no la de disco al llegar el post. Sin pendiente
+            # (hook legacy sin pre, o pre sin sesión/cwd) se registra la huella
+            # de disco actual como siempre: prefiero el mismo comportamiento
+            # de antes a dejar de registrar lecturas legítimas.
+            pending = state.pending_read(session_id, resolved, root=root)
+            if pending is not None:
+                mtime_ns = pending.get("mtime_ns")
+                size = pending.get("size")
+                if isinstance(mtime_ns, int) and isinstance(size, int):
+                    state.record_seen(
+                        session_id, tool, resolved, mtime_ns, size, root=root
+                    )
+                    return 0, {}
         state.record(session_id, tool, resolved, ok=True, root=root)
     except Exception as exc:  # CA10: fail-open también al registrar
         _log_error(session_id, root, exc)
