@@ -180,11 +180,12 @@ def send_handoff(args: argparse.Namespace) -> int:
     print(f"  Asunto: {args.asunto}")
 
     # Aviso push DESPUÉS del depósito: el archivo ya es la fuente de verdad.
+    # La ruta vive en el perfil destino (buzon-<perfil>), no en el emisor.
     _avisar(
         recipient,
         payload,
         base=getattr(args, "webhook_base", None) or WEBHOOK_BASE_DEFAULT,
-        ruta=getattr(args, "webhook_route", None) or WEBHOOK_ROUTE_DEFAULT,
+        ruta=getattr(args, "webhook_route", None) or f"{WEBHOOK_ROUTE_DEFAULT}-{recipient}",
         secreto=_leer_secreto(getattr(args, "webhook_secret", None)),
         desactivado=bool(getattr(args, "no_webhook", False)),
     )

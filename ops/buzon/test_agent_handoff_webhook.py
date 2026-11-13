@@ -91,13 +91,14 @@ def _run(tmp_path: Path, *extra: str) -> subprocess.CompletedProcess:
 
 def test_deposita_y_avisa_con_firma_valida(tmp_path):
     with _Server(status=202, verify=True) as srv:
-        out = _run(tmp_path, "--webhook-base", srv.url, "--webhook-secret", SECRET, "--webhook-route", "buzon")
+        out = _run(tmp_path, "--webhook-base", srv.url, "--webhook-secret", SECRET)
         assert out.returncode == 0, out.stderr
         destino = tmp_path / "ullr" / "from-ragnar" / "tkt-20261113-ragnar-ullr-0001.json"
         assert destino.exists(), "el ticket debe quedar depositado"
         assert len(srv.hits) == 1
         assert srv.hits[0]["firma_ok"] is True
-        assert srv.hits[0]["path"] == "/p/ullr/webhooks/buzon"
+        # ruta derivada del receptor, no del emisor
+        assert srv.hits[0]["path"] == "/p/ullr/webhooks/buzon-ullr"
         assert srv.hits[0]["body"]["ticket_id"] == "tkt-20261113-ragnar-ullr-0001"
         assert "aviso enviado" in out.stdout.lower()
 
