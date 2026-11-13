@@ -1104,3 +1104,440 @@ def test_v4a_replace_mode_with_path_keeps_existing_behavior(state_root, enforce,
     code2, payload2 = mods.guard.handle(ev, root=state_root)
     assert code2 == 0, payload2
     assert payload2.get("decision") != "block"
+
+
+# ══════════════════════════════════════════════════════════════════════════════
+#  Hallazgos de revisores — ronda RED 4 (codex)
+#
+#  H1 (high) TOCTOU de la huella: la huella se toma DESPUÉS de correr la tool,
+#    no de lo que el agente vio. Un write externo entre la tool read_file y el
+#    post_tool_call registra la versión NUEVA como "vista" → patch a ciegas.
+#  H2 (high) Registro de V4A: el post_tool_call de un patch V4A exitoso
+#    (tool_input={'mode':'patch','patch':...}, sin 'path') no registra NADA:
+#    las rutas de las cabeceras deben quedar con su huella.
+#  M1 (medium) Replay sin correlación de resultados: el replay solo puede ver
+#    lo que hay en la DB, pero hoy ignora las filas role='tool': una read_file
+#    fallida (o sin resultado) marca el path como visto, un patch V4A sin
+#    'path' no cuenta y un patch bloqueado deja la ruta como vista.
+#  M2 (medium) Retención: la poda de 7 días solo corre si el ledger está
+#    inactivo (>1 h); el pre debe ignorar entradas fuera de la ventana de
+#    retención aunque el ledger tenga actividad reciente.
+# ══════════════════════════════════════════════════════════════════════════════
+
+
+def _post_event(tool: str, tool_input: dict, cwd, session: str = SESSION) -> dict:
+    """Evento post_tool_call del contrato shell_hooks con extra.status='ok'."""
+    return {
+        "hook_event_name": "post_tool_call",
+        "tool_name": tool,
+        "tool_input": tool_input,
+        "session_id": session,
+        "cwd": str(cwd),
+        "extra": {"status": "ok"},
+    }
+
+
+# ── R4-H1: TOCTOU de la huella ────────────────────────────────────────────────
+
+
+def test_r4_h1_toctou_post_read_registers_fingerprint_agent_saw_not_disk_now(
+    state_root, enforce, tmp_path
+):
+    mods = load_modules()
+    """R4-H1 (codex, high): la huella registrada por el post de una lectura debe ser
+    la del contenido que el agente VIO (pre-modificación), no la de disco al llegar
+    el post. Si otro proceso escribe el archivo entre la tool read_file y el
+    post_tool_call (status='ok'), hoy se registra la versión NUEVA como vista y un
+    patch a ciegas sobre el contenido nuevo queda permitido."""
+    target = tmp_path / "app.py"
+    target.write_text("valor = 1\n", encoding="utf-8")
+    visto = target.stat()  # lo que el agente está a punto de ver
+
+    # pre de la lectura: hoy el guard ignora read_file en pre (no es tool de
+    # edición); una implementación correcta puede tomar aquí la instantánea.
+    code, _ = mods.guard.handle(
+        make_event("pre_tool_call", "read_file", target, tmp_path), root=state_root
+    )
+    assert code == 0
+
+    # TOCTOU: otro proceso modifica el archivo ANTES de que llegue el post.
+    target.write_text("valor = 11  # escrito por otro proceso\n", encoding="utf-8")
+
+    # post_tool_call de ESA lectura, con resultado ok.
+    code, _ = mods.guard.handle(
+        _post_event("read_file", {"path": str(target)}, tmp_path), root=state_root
+    )
+    assert code == 0
+
+    last = mods.state.last_seen(SESSION, str(target), root=state_root)
+    assert last is not None, "la lectura con status ok debe quedar registrada"
+    assert (last["mtime_ns"], last["size"]) == (visto.st_mtime_ns, visto.st_size), (
+        "la huella registrada debe ser la del contenido que el agente vio "
+        "(pre-modificación), no la de disco al llegar el post: %r" % (last,)
+    )
+
+    # y el patch a ciegas sobre el contenido que NUNCA vio debe bloquearse.
+    code, payload = mods.guard.handle(
+        make_event("pre_tool_call", "patch", target, tmp_path), root=state_root
+    )
+    assert code == 2, (
+        "el patch sobre contenido que el agente nunca vio debe bloquearse: "
+        "exit=%s payload=%r" % (code, payload)
+    )
+    assert payload["decision"] == "block"
+
+
+# ── R4-H2: registro del patch V4A exitoso ────────────────────────────────────
+
+
+def test_r4_h2_post_v4a_patch_ok_registers_header_path_and_second_patch_passes(
+    state_root, enforce, tmp_path
+):
+    mods = load_modules()
+    """R4-H2 (codex, high): el post_tool_call de un patch V4A exitoso (status='ok')
+    debe registrar las rutas de las cabeceras Update File con su huella. Hoy el
+    _post exige la clave 'path' y descarta el evento: tras read_file + V4A patch,
+    un SEGUNDO V4A patch sobre el mismo archivo se bloquea injustificadamente."""
+    target = tmp_path / "app.py"
+    target.write_text("a = 1\n", encoding="utf-8")
+
+    # 1) lectura previa (post ok; el archivo no cambió: lo que registra es correcto)
+    code, _ = mods.guard.handle(
+        _post_event("read_file", {"path": str(target)}, tmp_path), root=state_root
+    )
+    assert code == 0
+
+    patch1 = _v4a("*** Update File: app.py", "@@", "-a = 1", "+a = 22")
+    # 2) el primer V4A patch está permitido (huella vigente)
+    code, payload = mods.guard.handle(make_v4a_event(patch1, tmp_path), root=state_root)
+    assert code == 0, payload
+
+    # 3) la tool aplicó el parche (simulado) y llega el post_tool_call ok
+    target.write_text("a = 22\n", encoding="utf-8")
+    code, _ = mods.guard.handle(
+        _post_event("patch", {"mode": "patch", "patch": patch1}, tmp_path),
+        root=state_root,
+    )
+    assert code == 0
+
+    # 4) la ruta de la cabecera debe quedar registrada con la huella POST-parche
+    last = mods.state.last_seen(SESSION, str(target), root=state_root)
+    assert last is not None, (
+        "el post de un patch V4A ok debe registrar la ruta de la cabecera Update File"
+    )
+    st = target.stat()
+    assert (last["mtime_ns"], last["size"]) == (st.st_mtime_ns, st.st_size), (
+        "debe registrar la huella del contenido que el propio patch escribió: %r"
+        % (last,)
+    )
+    assert last["tool"] == "patch", last
+
+    # 5) el segundo V4A patch sobre el mismo archivo NO se bloquea
+    patch2 = _v4a("*** Update File: app.py", "@@", "-a = 22", "+a = 333")
+    code, payload = mods.guard.handle(make_v4a_event(patch2, tmp_path), root=state_root)
+    assert code == 0, (
+        "el segundo V4A patch tras un V4A exitoso no debe bloquearse (la escritura "
+        "del propio patch ya dejó la huella registrada): exit=%s payload=%r"
+        % (code, payload)
+    )
+
+
+def test_r4_h2_post_v4a_multi_file_ok_registers_every_update_file_header(
+    state_root, tmp_path
+):
+    mods = load_modules()
+    """R4-H2 multi-archivo: el post de un patch V4A ok con DOS cabeceras Update File
+    debe registrar LAS DOS rutas (resueltas contra el cwd del payload) con su huella."""
+    f1 = tmp_path / "one.py"
+    f1.write_text("uno = 1\n", encoding="utf-8")
+    f2 = tmp_path / "two.py"
+    f2.write_text("dos = 2\n", encoding="utf-8")
+    patch = _v4a(
+        "*** Update File: one.py",
+        "@@",
+        "-uno = 1",
+        "+uno = 11",
+        "*** Update File: two.py",
+        "@@",
+        "-dos = 2",
+        "+dos = 22",
+    )
+    code, _ = mods.guard.handle(
+        _post_event("patch", {"mode": "patch", "patch": patch}, tmp_path),
+        root=state_root,
+    )
+    assert code == 0
+    for f in (f1, f2):
+        last = mods.state.last_seen(SESSION, str(f), root=state_root)
+        st = f.stat()
+        assert last is not None, "falta registrar la cabecera de %s" % f.name
+        assert (last["mtime_ns"], last["size"]) == (st.st_mtime_ns, st.st_size), (
+            "huella incorrecta para %s: %r" % (f.name, last)
+        )
+
+
+# ── R4-M1: replay con correlación de resultados (solo ve lo que hay en la DB) ─
+
+
+def _m1_db(tmp_path: Path):
+    """DB sqlite temporal con el esquema mínimo (formato real de state.db.messages)."""
+    db = tmp_path / "state.db"
+    con = sqlite3.connect(str(db))
+    con.execute(
+        "CREATE TABLE messages ("
+        " id INTEGER PRIMARY KEY AUTOINCREMENT,"
+        " session_id TEXT NOT NULL,"
+        " role TEXT NOT NULL,"
+        " content TEXT,"
+        " tool_call_id TEXT,"
+        " tool_calls TEXT,"
+        " tool_name TEXT,"
+        " active INTEGER NOT NULL DEFAULT 1,"
+        " timestamp REAL NOT NULL DEFAULT 0)"
+    )
+    return db, con
+
+
+def _m1_call(call_id: str, name: str, **arguments) -> dict:
+    """tool_call con id (la DB real enlaza resultados vía tool_call_id)."""
+    return {
+        "id": call_id,
+        "type": "function",
+        "function": {"name": name, "arguments": json.dumps(arguments)},
+    }
+
+
+def _m1_assistant(con, sid: str, calls: list) -> None:
+    con.execute(
+        "INSERT INTO messages (session_id, role, tool_calls, active, timestamp)"
+        " VALUES (?, 'assistant', ?, 1, 1)",
+        (sid, json.dumps(calls)),
+    )
+
+
+def _m1_tool_result(con, sid: str, call_id: str, tool: str, content: str) -> None:
+    con.execute(
+        "INSERT INTO messages (session_id, role, content, tool_call_id, tool_name,"
+        " active, timestamp) VALUES (?, 'tool', ?, ?, ?, 1, 1)",
+        (sid, content, call_id, tool),
+    )
+
+
+def test_r4_m1_replay_failed_read_error_result_does_not_mark_seen_db_only_view(
+    tmp_path,
+):
+    mods = load_modules()
+    """R4-M1 (codex, medium): el replay solo puede ver lo que hay en la DB. Una
+    read_file cuyo role='tool' trae un resultado con error (formato real:
+    {"error": "File not found: ..."}) NO marca el path como visto, así que el
+    patch posterior de esa ruta cuenta como would_block."""
+    db, con = _m1_db(tmp_path)
+    try:
+        _m1_assistant(con, "s-r4-m1", [_m1_call("call_r1", "read_file", path="/a/a.py")])
+        _m1_tool_result(
+            con, "s-r4-m1", "call_r1", "read_file",
+            json.dumps({"error": "File not found: /a/a.py"}),
+        )
+        _m1_assistant(
+            con, "s-r4-m1",
+            [_m1_call("call_p1", "patch", path="/a/a.py", old_string="x", new_string="y")],
+        )
+        _m1_tool_result(
+            con, "s-r4-m1", "call_p1", "patch",
+            json.dumps({"success": True, "diff": "--- a/a.py\n+++ b/a.py"}),
+        )
+        con.commit()
+    finally:
+        con.close()
+
+    data = mods.report.replay(str(db))
+    assert data["patch_total"] == 1, data
+    assert data["would_block"] == 1, (
+        "la read_file con resultado de error no marca /a/a.py como visto, así que "
+        "el patch posterior es would_block: %r" % (data,)
+    )
+
+
+def test_r4_m1_replay_missing_tool_result_does_not_mark_seen_db_only_view(tmp_path):
+    mods = load_modules()
+    """R4-M1: el replay solo puede ver lo que hay en la DB. Un tool_call cuyo
+    resultado NO existe (sin fila role='tool' con su tool_call_id) no prueba que
+    el agente viera el contenido: NO marca el path como visto. La DB de este test
+    SÍ tiene filas de resultado para otra llamada (formato actual de state.db);
+    el caso legacy sin ninguna fila de resultado lo cubre el test CA11 de sqlite
+    ya existente en esta suite."""
+    db, con = _m1_db(tmp_path)
+    try:
+        _m1_assistant(con, "s-r4-m1", [_m1_call("call_r1", "read_file", path="/b/b.py")])
+        _m1_tool_result(
+            con, "s-r4-m1", "call_r1", "read_file",
+            json.dumps({"content": "1|hola\n", "total_lines": 1, "file_size": 5}),
+        )
+        # /b/missing.py: la llamada existe pero SU resultado no está en la DB
+        _m1_assistant(con, "s-r4-m1", [_m1_call("call_r2", "read_file", path="/b/missing.py")])
+        _m1_assistant(
+            con, "s-r4-m1",
+            [_m1_call("call_p2", "patch", path="/b/missing.py", old_string="x", new_string="y")],
+        )
+        _m1_tool_result(
+            con, "s-r4-m1", "call_p2", "patch",
+            json.dumps({"success": True, "diff": "--- b/missing.py\n+++ b/missing.py"}),
+        )
+        con.commit()
+    finally:
+        con.close()
+
+    data = mods.report.replay(str(db))
+    assert data["patch_total"] == 1, data
+    assert data["would_block"] == 1, (
+        "la read_file de /b/missing.py no tiene resultado en la DB, así que no "
+        "marca el path como visto y su patch es would_block: %r" % (data,)
+    )
+    assert data["sessions_affected"] == 1, data
+
+
+def test_r4_m1_replay_counts_v4a_patch_without_path_key_db_only_view(tmp_path):
+    mods = load_modules()
+    """R4-M1: el replay solo puede ver lo que hay en la DB. Un patch V4A sin la
+    clave 'path' (tool_input={'mode':'patch','patch':...}) debe CONTAR en
+    patch_total. Reglas idénticas al guard: la cabecera Update File apunta a
+    /c/c.py, que fue leída con éxito antes (resultado sin error), así que NO es
+    would_block — contarla como bloqueada inflaría el reporte."""
+    db, con = _m1_db(tmp_path)
+    try:
+        _m1_assistant(con, "s-r4-m1", [_m1_call("call_r3", "read_file", path="/c/c.py")])
+        _m1_tool_result(
+            con, "s-r4-m1", "call_r3", "read_file",
+            json.dumps({"content": "1|hola\n", "total_lines": 1, "file_size": 5}),
+        )
+        v4a = "*** Begin Patch\n*** Update File: /c/c.py\n@@\n-hola\n+chau\n*** End Patch"
+        _m1_assistant(
+            con, "s-r4-m1",
+            [_m1_call("call_p3", "patch", mode="patch", patch=v4a)],
+        )
+        _m1_tool_result(
+            con, "s-r4-m1", "call_p3", "patch",
+            json.dumps({"success": True, "diff": "--- c/c.py\n+++ c/c.py"}),
+        )
+        con.commit()
+    finally:
+        con.close()
+
+    data = mods.report.replay(str(db))
+    assert data["patch_total"] == 1, (
+        "un patch V4A sin 'path' debe contar en patch_total: %r" % (data,)
+    )
+    assert data["would_block"] == 0, (
+        "la cabecera apunta a /c/c.py, leído con éxito antes (reglas idénticas al "
+        "guard), así que NO es would_block: %r" % (data,)
+    )
+
+
+def test_r4_m1_replay_blocked_patch_does_not_mark_seen_db_only_view(tmp_path):
+    mods = load_modules()
+    """R4-M1: el replay solo puede ver lo que hay en la DB. Un patch que fue
+    bloqueado (resultado con success=false y el reason del guard) NO dejó la ruta
+    como vista: el reintento idéntico cuenta OTRO would_block (hoy el primer patch
+    marca la ruta él mismo y el reintento sale gratis)."""
+    db, con = _m1_db(tmp_path)
+    try:
+        bloqueado = json.dumps(
+            {
+                "success": False,
+                "error": "Ejecuta read_file /d/d.py antes de editarlo: cambió desde "
+                "la última lectura (o no la hubo en esta sesión).",
+            }
+        )
+        _m1_assistant(
+            con, "s-r4-m1",
+            [_m1_call("call_p4", "patch", path="/d/d.py", old_string="x", new_string="y")],
+        )
+        _m1_tool_result(con, "s-r4-m1", "call_p4", "patch", bloqueado)
+        _m1_assistant(
+            con, "s-r4-m1",
+            [_m1_call("call_p5", "patch", path="/d/d.py", old_string="x", new_string="y")],
+        )
+        _m1_tool_result(
+            con, "s-r4-m1", "call_p5", "patch",
+            json.dumps({"success": True, "diff": "--- d/d.py\n+++ d/d.py"}),
+        )
+        con.commit()
+    finally:
+        con.close()
+
+    data = mods.report.replay(str(db))
+    assert data["patch_total"] == 2, data
+    assert data["would_block"] == 2, (
+        "el patch bloqueado nunca escribió /d/d.py, así que el reintento idéntico "
+        "también habría sido bloqueado: %r" % (data,)
+    )
+    assert data["sessions_affected"] == 1, data
+
+
+# ── R4-M2: retención de 7 días aunque el ledger esté activo ──────────────────
+
+
+def test_r4_m2_pre_ignores_entry_older_than_retention_even_with_recent_ledger(
+    state_root, enforce, tmp_path
+):
+    mods = load_modules()
+    """R4-M2 (codex, medium): la poda por retención (7 días) solo corre si el
+    ledger está inactivo (>1 h de mtime), así que en un ledger con actividad
+    reciente una entrada vieja sobrevive y hoy el pre la acepta como "visto".
+    El pre debe IGNORAR entradas con ts anterior a la ventana de retención,
+    aunque el ledger tenga actividad reciente y aunque haya entradas nuevas
+    detrás de la vieja."""
+    target = tmp_path / "auth.py"
+    target.write_text("token = 'v1'\n", encoding="utf-8")
+    st = target.stat()
+    other = tmp_path / "otro.py"
+    other.write_text("x = 1\n", encoding="utf-8")
+    ost = other.stat()
+
+    now = time.time()
+    old_ts = now - (mods.state.RETENTION_DAYS + 1) * 86400  # hace 8 días
+    old_entry = {
+        "t": time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime(old_ts)),
+        "ts": old_ts,
+        "ev": "post_tool_call",
+        "tool": "read_file",
+        "path": str(target),
+        "mtime_ns": st.st_mtime_ns,
+        "size": st.st_size,
+        "ok": True,
+    }
+    new_entry = {
+        "t": time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime(now)),
+        "ts": now,
+        "ev": "post_tool_call",
+        "tool": "write_file",
+        "path": str(other),
+        "mtime_ns": ost.st_mtime_ns,
+        "size": ost.st_size,
+        "ok": True,
+    }
+    ledger = mods.state.ledger_path(SESSION, state_root)
+    ledger.parent.mkdir(parents=True, exist_ok=True)
+    ledger.write_text(
+        json.dumps(old_entry) + "\n" + json.dumps(new_entry) + "\n", encoding="utf-8"
+    )
+
+    # la entrada vieja NO autoriza el patch sobre target (la poda oportunista no
+    # corrió: el ledger acaba de tocarse — el pre debe filtrar por edad igual).
+    code, payload = mods.guard.handle(
+        make_event("pre_tool_call", "patch", target, tmp_path), root=state_root
+    )
+    assert code == 2, (
+        "la entrada de hace >RETENTION_DAYS no autoriza el patch aunque el ledger "
+        "tenga actividad reciente (exit=%s payload=%r)" % (code, payload)
+    )
+    assert payload["decision"] == "block"
+
+    # y la entrada RECIENTE sigue autorizando (el pre no descarta el ledger entero)
+    code2, payload2 = mods.guard.handle(
+        make_event("pre_tool_call", "patch", other, tmp_path), root=state_root
+    )
+    assert code2 == 0, (
+        "la entrada reciente de otro.py sigue autorizando su patch: "
+        "exit=%s payload=%r" % (code2, payload2)
+    )
