@@ -699,17 +699,17 @@ def _read_result_certified(event: dict) -> bool:
 _LINE_GUTTER_RE = re.compile(r"^\d+\|")
 
 
-def _read_result_matches_disk(event: dict, tool_input, resolved):
+def _read_result_matches_disk(event: dict, tool_input, disk_text):
     """Ronda 11 / H-B: ¿el contenido que read_file ENTREGÓ al agente coincide con
-    el disco AHORA? True/False, o None si no hay evidencia utilizable (lectura
-    parcial, truncada, binaria, error o sin 'content'): ahí el caller cae a la
-    huella del pre, como antes.
+    el snapshot del disco leído por el caller? True/False, o None si no hay
+    evidencia utilizable (lectura parcial, truncada, binaria, error o sin
+    'content'): ahí el caller cae a la huella del pre, como antes.
 
-    El content de read_file lleva gutter '<n>|' (file_operations._add_line_numbers),
-    así que se normaliza por línea y se comparan listas de líneas (tolera BOM y
-    newline final), no hashes. Evidencia fuerte contra A->B->A: el pre captura A,
-    la tool entrega B, un tercero restaura A; registrar A certificaría contenido
-    que el agente nunca vio — con el verdict False no se registra.
+    Ronda 12 / H-A: recibe el TEXTO ya leído (disk_text) en vez de la ruta, para
+    que comparación y registro usen EL MISMO snapshot (sin ventana entre
+    comparar y capturar huella). Ronda 12 / M: una lectura con limit (o que
+    entrega menos líneas que el archivo) no cubre el archivo: None, nunca
+    veredicto sobre un archivo que el agente no vio completo.
     """
     extra = event.get("extra")
     if not isinstance(extra, dict) or "result" not in extra:
@@ -730,19 +730,19 @@ def _read_result_matches_disk(event: dict, tool_input, resolved):
         return None
     if isinstance(tool_input, dict) and tool_input.get("offset") not in (None, 0, 1):
         return None  # página que no arranca en la línea 1: no cubre el archivo
-    if " ... [truncated]" in content or "... [truncated]" in content:
+    if "... [truncated]" in content:
         return None  # línea clampada por el gutter: no comparable
-    try:
-        with open(resolved, "r", encoding="utf-8", errors="replace") as fh:
-            disk_lines = fh.read().split("\n")
-    except OSError:
+    if disk_text is None:
         return None
+    disk_lines = disk_text.split("\n")
     if disk_lines and disk_lines[-1] == "":
         disk_lines.pop()
     got_lines = content.split("\n")
     if got_lines and got_lines[-1] == "":
         got_lines.pop()
     stripped = [_LINE_GUTTER_RE.sub("", line, count=1) for line in got_lines]
+    if len(stripped) < len(disk_lines):
+        return None  # lectura parcial (limit/offset): no cubre el archivo entero
     return stripped == disk_lines
 
 
@@ -884,22 +884,30 @@ def _post(event: dict, session_id, root=None):
                     # True -> certifica (disco == lo que el agente vio); False ->
                     # vio otro contenido que el que hay ahora, no certifica.
                     # None -> fallback: huella del pre + digest del pre (ronda 10).
-                    verdict = _read_result_matches_disk(event, tool_input, resolved)
+                    # Ronda 12 / H-A: se abre UNA vez y se toma la huella del mismo
+                    # fd (fstat) que produce los bytes comparados. Comparación y
+                    # registro comparten el snapshot: ningún tercero puede colarse
+                    # entre el veredicto y la huella certificada.
+                    st = snap = disk_text = None
+                    try:
+                        with open(resolved, "rb") as fh:
+                            st = os.fstat(fh.fileno())
+                            snap = fh.read()
+                        disk_text = snap.decode("utf-8", "replace")
+                    except OSError:
+                        st = snap = disk_text = None
+                    verdict = _read_result_matches_disk(event, tool_input, disk_text)
                     if verdict is False:
                         state.log_event(
                             session_id, "read_content_mismatch", root=root,
                             tool=str(tool), path=resolved,
                         )
                         return 0, {}
-                    if verdict is True:
-                        current = state.fingerprint(resolved)
-                        disk_sha = state.file_digest(resolved)
-                        record_kwargs = {}
-                        if isinstance(disk_sha, str) and disk_sha:
-                            record_kwargs["sha256"] = disk_sha
+                    if verdict is True and st is not None and snap is not None:
                         state.record_seen(
-                            session_id, tool, resolved, current[0], current[1],
-                            root=root, **record_kwargs,
+                            session_id, tool, resolved, st.st_mtime_ns, st.st_size,
+                            root=root,
+                            sha256=hashlib.sha256(snap).hexdigest(),
                         )
                         return 0, {}
                     # Ronda 10 / H2: se promueve la huella DEL PRE (lo que el

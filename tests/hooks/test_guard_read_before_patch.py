@@ -3022,3 +3022,60 @@ def test_ha_guard_hook_is_executable_in_git_index():
     path = repo + "/scripts/hooks/guard_read_before_patch.py"
     with open(path, "rb") as fh:
         assert fh.readline().startswith(b"#!"), "el hook necesita shebang para invocarse directo"
+
+
+# ── Ronda 12: lectura parcial no es evidencia completa + snapshot coherente ──
+
+
+def test_round12_partial_read_limit_not_full_evidence(state_root, enforce, tmp_path):
+    """Ronda 12 / M: una lectura con limit que entrega solo la primera línea (sin
+    'truncated') no cubre el archivo: no se usa como evidencia completa; cae al
+    fallback de huella del pre, que registra el digest del archivo entero."""
+    import hashlib as hashlib_mod
+
+    mods = load_modules()
+    target = tmp_path / "app.py"
+    text = "a = 1\nb = 2\nc = 3\n"
+    target.write_text(text, encoding="utf-8")
+
+    code, _ = mods.guard.handle(
+        make_event("pre_tool_call", "read_file", target, tmp_path), root=state_root
+    )
+    assert code == 0
+
+    post = _post_event("read_file", {"path": str(target), "limit": 1}, tmp_path)
+    post["extra"] = {"status": "ok", "result": json.dumps({"content": "1|a = 1"})}
+    code, _ = mods.guard.handle(post, root=state_root)
+    assert code == 0
+
+    seen = mods.state.last_seen(SESSION, str(target), root=state_root)
+    assert seen is not None, "fallback de huella del pre debe registrar: %r" % (seen,)
+    assert seen["sha256"] == hashlib_mod.sha256(target.read_bytes()).hexdigest(), (
+        "el fallback registra el digest del archivo completo, no el del page parcial: %r" % (seen,)
+    )
+
+
+def test_round12_full_read_records_snapshot_sha_and_fingerprint(state_root, enforce, tmp_path):
+    """Ronda 12 / H-A: veredicto y huella salen del MISMO snapshot (fd): digest de
+    los bytes exactos y (mtime,size) del fstat, coherentes con el archivo."""
+    import hashlib as hashlib_mod
+
+    mods = load_modules()
+    target = tmp_path / "app.py"
+    target.write_text("x = 1\n", encoding="utf-8")
+
+    code, _ = mods.guard.handle(
+        make_event("pre_tool_call", "read_file", target, tmp_path), root=state_root
+    )
+    assert code == 0
+
+    post = _post_event("read_file", {"path": str(target)}, tmp_path)
+    post["extra"] = {"status": "ok", "result": json.dumps({"content": "1|x = 1"})}
+    code, _ = mods.guard.handle(post, root=state_root)
+    assert code == 0
+
+    seen = mods.state.last_seen(SESSION, str(target), root=state_root)
+    assert seen is not None
+    st = target.stat()
+    assert (seen["mtime_ns"], seen["size"]) == (st.st_mtime_ns, st.st_size), seen
+    assert seen["sha256"] == hashlib_mod.sha256(target.read_bytes()).hexdigest(), seen
