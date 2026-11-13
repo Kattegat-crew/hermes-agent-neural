@@ -40,7 +40,10 @@ on:
         default: false
   pull_request:
   push:
-    branches: [main]
+    # ``prod-stable`` es el tronco que corre en produccion: sin el, la rama que
+    # de verdad manda era la unica sin puerta de calidad. ``main`` se conserva
+    # porque es el tronco de upstream.
+    branches: [main, prod-stable]
 
 permissions:
   contents: read
