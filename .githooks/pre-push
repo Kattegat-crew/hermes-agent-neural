@@ -1,0 +1,21 @@
+#!/usr/bin/env bash
+# Rechaza push directo al tronco. El tronco se toca por merge revisado, no por push.
+# Break-glass: HERMES_BREAK_GLASS=1 git push ... (decide el Administrador, no el agente).
+set -euo pipefail
+PROTEGIDAS="main prod-stable"
+while read -r local_ref local_sha remote_ref remote_sha; do
+  rama="${remote_ref#refs/heads/}"
+  for p in $PROTEGIDAS; do
+    if [ "$rama" = "$p" ]; then
+      if [ "${HERMES_BREAK_GLASS:-0}" = "1" ]; then
+        echo "pre-push: BREAK-GLASS activo, permitiendo push a $rama" >&2
+        exit 0
+      fi
+      echo "pre-push: BLOQUEADO push directo a $rama." >&2
+      echo "  Abre una rama y un PR:  git push -u github <tu-rama>" >&2
+      echo "  Si es una emergencia, el Administrador decide con HERMES_BREAK_GLASS=1." >&2
+      exit 1
+    fi
+  done
+done
+exit 0
