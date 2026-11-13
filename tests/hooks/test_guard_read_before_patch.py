@@ -1871,3 +1871,300 @@ def test_r5_m3_replay_counts_write_file_in_writes_total_and_sessions(tmp_path):
         "would_block_pct de CA11 se calcula sobre writes_total (1/4): %r" % (data,)
     )
     assert data["sessions_affected"] == 1, data
+
+
+# ══════════════════════════════════════════════════════════════════════════════
+#  Hallazgos de revisores — ronda RED 6
+#
+#  B1 (high, read_before_patch_state.py:315): las pendientes de lectura se
+#    identifican solo por (session_id, path). Dos lecturas intercaladas del
+#    mismo path con cambio de archivo entre ellas hacen que el post de la
+#    primera promueva la huella de la segunda. Fix: call_id en la pendiente
+#    (extra.tool_call_id o derivado del payload pre) y empareje por call_id;
+#    fallback (session,path) SOLO con exactamente una pendiente viva y sin
+#    call_id útil. Post tardío sin call_id con dos pendientes: no promueve.
+#  B2 (high, guard_read_before_patch.py:355): tras patch exitoso se certifica
+#    lo que haya en disco al llegar el post. Fix: snapshot del contenido previo
+#    en el PRE (write_pending) y reconstrucción del contenido ESPERADO desde
+#    tool_input en el POST (str_replace / hunks V4A / Add File); iguales ->
+#    registrar con ese sha256; distintos -> NO registrar + 'write_concurrent'.
+#    Sin snapshot utilizable -> fallback legacy.
+#  B3 (medium, read_before_patch_report.py:104): _load_tool_results devuelve
+#    True con 0 filas: replay degrada en DB con esquema actual pero vacía.
+#  B4 (medium, read_before_patch_report.py:278): would_block del replay suma
+#    una ruta por archivo en V4A multi-archivo; debe contar LLAMADAS (1 por
+#    patch); patch_total sigue por ruta.
+# ══════════════════════════════════════════════════════════════════════════════
+
+
+def _event_with_call_id(base_event: dict, call_id: str) -> dict:
+    """Añade extra={'tool_call_id': ...} al evento (contrato shell_hooks)."""
+    extra = base_event.get("extra")
+    ev_extra = dict(extra) if isinstance(extra, dict) else {}
+    ev_extra["tool_call_id"] = call_id
+    base_event["extra"] = ev_extra
+    return base_event
+
+
+def test_b1_interleaved_reads_post_of_first_promotes_first_fingerprint(
+    state_root, enforce, tmp_path
+):
+    mods = load_modules()
+    """B1 (high): dos lecturas intercaladas del mismo path con cambio de archivo
+    entre ellas. El post de la PRIMERA (con su call_id) debe promover la huella
+    que capturó el pre de la PRIMERA, no la de la segunda."""
+    target = tmp_path / "app.py"
+    target.write_text("valor = 1\n", encoding="utf-8")
+    fp1 = (target.stat().st_mtime_ns, target.stat().st_size)
+
+    pre1 = _event_with_call_id(
+        make_event("pre_tool_call", "read_file", target, tmp_path), "call-1"
+    )
+    code, _ = mods.guard.handle(pre1, root=state_root)
+    assert code == 0
+
+    # otro proceso escribe entre las dos lecturas
+    target.write_text("valor = 22\n", encoding="utf-8")
+    fp2 = (target.stat().st_mtime_ns, target.stat().st_size)
+    assert fp2 != fp1
+
+    pre2 = _event_with_call_id(
+        make_event("pre_tool_call", "read_file", target, tmp_path), "call-2"
+    )
+    code, _ = mods.guard.handle(pre2, root=state_root)
+    assert code == 0
+
+    # llega el post de la LECTURA #1 (intercalado: el post de #2 aún no llegó)
+    post1 = _event_with_call_id(
+        _post_event("read_file", {"path": str(target)}, tmp_path), "call-1"
+    )
+    code, _ = mods.guard.handle(post1, root=state_root)
+    assert code == 0
+
+    last = mods.state.last_seen(SESSION, str(target), root=state_root)
+    assert last is not None, "el post de la lectura #1 debe registrar la huella"
+    assert (last["mtime_ns"], last["size"]) == fp1, (
+        "el post de la lectura #1 debe promover la huella que capturó el pre #1 "
+        "(lo que el agente vio), no la huella pendiente de la lectura #2: %r" % (last,)
+    )
+
+
+def test_b1_late_post_without_call_id_with_two_pendings_promotes_nothing(
+    state_root, enforce, tmp_path
+):
+    mods = load_modules()
+    """B1 (high, fail-closed): post tardío de read_file SIN call_id cuando hay DOS
+    pendientes vivas del mismo path: no se puede saber cuál corresponde -> no
+    promueve ninguna huella (last_seen queda sin entrada de esa lectura)."""
+    target = tmp_path / "app.py"
+    target.write_text("valor = 1\n", encoding="utf-8")
+    code, _ = mods.guard.handle(
+        make_event("pre_tool_call", "read_file", target, tmp_path), root=state_root
+    )
+    assert code == 0
+    target.write_text("valor = 22\n", encoding="utf-8")
+    code, _ = mods.guard.handle(
+        make_event("pre_tool_call", "read_file", target, tmp_path), root=state_root
+    )
+    assert code == 0
+
+    post = _post_event("read_file", {"path": str(target)}, tmp_path)  # sin call_id
+    code, _ = mods.guard.handle(post, root=state_root)
+    assert code == 0
+
+    assert mods.state.last_seen(SESSION, str(target), root=state_root) is None, (
+        "con dos pendientes ambiguas y sin call_id, el post no debe promover "
+        "ninguna huella (fail-closed): %r"
+        % (mods.state.last_seen(SESSION, str(target), root=state_root),)
+    )
+
+
+def _b2_read_seen(mods, state_root, tmp_path, target):
+    """Deja la ruta como vista (post de read_file ok) y devuelve su huella."""
+    target.write_text("a = 1\n", encoding="utf-8")
+    code, _ = mods.guard.handle(
+        _post_event("read_file", {"path": str(target)}, tmp_path), root=state_root
+    )
+    assert code == 0
+    seen = mods.state.last_seen(SESSION, str(target), root=state_root)
+    assert seen is not None
+    return (seen["mtime_ns"], seen["size"])
+
+
+def test_b2_str_replace_clean_post_certifies_reconstructed_content(
+    state_root, enforce, tmp_path
+):
+    mods = load_modules()
+    """B2: patch mode='replace' limpio. El post debe certificar el contenido
+    ESPERADO reconstruido desde tool_input (old->new sobre el snapshot del pre);
+    la entrada lleva ese sha256 y el patch siguiente de la misma ruta pasa."""
+    import hashlib as hashlib_mod
+
+    target = tmp_path / "app.py"
+    _b2_read_seen(mods, state_root, tmp_path, target)
+
+    pre = {
+        "hook_event_name": "pre_tool_call",
+        "tool_name": "patch",
+        "tool_input": {
+            "mode": "replace",
+            "path": str(target),
+            "old_string": "a = 1",
+            "new_string": "a = 2",
+        },
+        "session_id": SESSION,
+        "cwd": str(tmp_path),
+    }
+    code, payload = mods.guard.handle(pre, root=state_root)
+    assert code == 0, payload
+
+    # la tool aplicó el reemplazo; llega el post ok con resultado exitoso
+    target.write_text("a = 2\n", encoding="utf-8")
+    post = _post_event_with_result(
+        "patch",
+        {"mode": "replace", "path": str(target), "old_string": "a = 1", "new_string": "a = 2"},
+        tmp_path,
+        result={"success": True, "diff": "--- a/app.py\n+++ b/app.py"},
+    )
+    code, _ = mods.guard.handle(post, root=state_root)
+    assert code == 0
+
+    seen = mods.state.last_seen(SESSION, str(target), root=state_root)
+    assert seen is not None, "patch str_replace limpio debe registrar la ruta"
+    assert seen.get("sha256") == hashlib_mod.sha256(b"a = 2\n").hexdigest(), seen
+
+    code2, payload2 = mods.guard.handle(pre, root=state_root)  # nuevo contenido ya visto
+    assert code2 == 0, payload2
+
+
+def test_b2_v4a_race_third_party_overwrite_not_recorded_and_next_pre_blocks(
+    state_root, enforce, tmp_path
+):
+    mods = load_modules()
+    """B2 (carrera determinista): un V4A exitoso escribe, pero un TERCERO
+    sobrescribe el archivo antes del post. El post NO debe registrar (el
+    contenido esperado reconstruido difiere del disco), debe anotar
+    'write_concurrent' y el pre posterior debe bloquear (exit 2)."""
+    target = tmp_path / "app.py"
+    seen_fp = _b2_read_seen(mods, state_root, tmp_path, target)  # huella de la lectura
+
+    patch_text = _v4a("*** Update File: app.py", "@@", "-a = 1", "+a = 22")
+    code, payload = mods.guard.handle(make_v4a_event(patch_text, tmp_path), root=state_root)
+    assert code == 0, payload  # el pre permite (huella vigente) y captura snapshot
+
+    # la tool aplicó el parche y A CONTINUACIÓN un tercero pisó el archivo
+    target.write_text("TERCERO = 999\n", encoding="utf-8")
+
+    post = _post_event_with_result(
+        "patch", {"mode": "patch", "patch": patch_text}, tmp_path,
+        result={"success": True, "diff": "--- a/app.py\n+++ b/app.py"},
+    )
+    code, _ = mods.guard.handle(post, root=state_root)
+    assert code == 0
+
+    last = mods.state.last_seen(SESSION, str(target), root=state_root)
+    assert last is None or (last["mtime_ns"], last["size"]) == seen_fp, (
+        "la carrera con tercero no debe certificar el contenido ajeno del disco: "
+        "el último registro debe seguir siendo el de la lectura, no %r" % (last,)
+    )
+    assert has_event(ledger_events(mods, state_root), "write_concurrent"), (
+        "la carrera debe anotarse como 'write_concurrent': %r"
+        % (ledger_events(mods, state_root),)
+    )
+
+    code2, payload2 = mods.guard.handle(
+        make_v4a_event(
+            _v4a("*** Update File: app.py", "@@", "-TERCERO = 999", "+x = 1"), tmp_path
+        ),
+        root=state_root,
+    )
+    assert code2 == 2, (
+        "sin certificación de la escritura, el siguiente patch debe bloquearse: "
+        "exit=%s payload=%r" % (code2, payload2)
+    )
+    assert payload2["decision"] == "block"
+
+
+def test_b2_v4a_clean_consecutive_patches_exit_0(state_root, enforce, tmp_path):
+    mods = load_modules()
+    """B2 (camino limpio V4A): read_file -> V4A patch #1 (pre+post) -> V4A patch
+    #2 sobre la misma ruta: ambos pasan (exit 0), la certificación por
+    reconstrucción no rompe los V4A consecutivos."""
+    target = tmp_path / "app.py"
+    _b2_read_seen(mods, state_root, tmp_path, target)
+
+    patch1 = _v4a("*** Update File: app.py", "@@", "-a = 1", "+a = 22")
+    code, payload = mods.guard.handle(make_v4a_event(patch1, tmp_path), root=state_root)
+    assert code == 0, payload
+    target.write_text("a = 22\n", encoding="utf-8")  # la tool aplicó el parche
+    code, _ = mods.guard.handle(
+        _post_event_with_result(
+            "patch", {"mode": "patch", "patch": patch1}, tmp_path,
+            result={"success": True, "diff": "--- a/app.py\n+++ b/app.py"},
+        ),
+        root=state_root,
+    )
+    assert code == 0
+    assert mods.state.last_seen(SESSION, str(target), root=state_root) is not None
+
+    patch2 = _v4a("*** Update File: app.py", "@@", "-a = 22", "+a = 333")
+    code, payload2 = mods.guard.handle(make_v4a_event(patch2, tmp_path), root=state_root)
+    assert code == 0, (
+        "el segundo V4A tras uno exitoso y certificado no debe bloquearse: "
+        "exit=%s payload=%r" % (code, payload2)
+    )
+
+
+def test_b3_replay_current_schema_with_empty_tool_results_keeps_calls_ok(tmp_path):
+    mods = load_modules()
+    """B3 (medium): DB con el esquema ACTUAL (columnas role/tool_call_id) pero
+    CERO filas role='tool': _load_tool_results debe distinguir 'sin tabla' de
+    'tabla existe y 0 filas'; con 0 filas no hay correlación -> por llamada se
+    trata como legacy (exitoso), no degradando todo a fallido."""
+    db, con = _m1_db(tmp_path)
+    try:
+        _m1_assistant(con, "s-b3", [_m1_call("call_r", "read_file", path="/b3/x.py")])
+        _m1_assistant(
+            con, "s-b3",
+            [_m1_call("call_p", "patch", path="/b3/x.py", old_string="a", new_string="b")],
+        )
+        # CERO filas role='tool' (la tabla/consulta existe, no hay resultados)
+        con.commit()
+        n = con.execute("SELECT COUNT(*) FROM messages WHERE role='tool'").fetchone()[0]
+        assert n == 0
+    finally:
+        con.close()
+
+    data = mods.report.replay(str(db))
+    assert data["patch_total"] == 1, data
+    assert data["would_block"] == 0, (
+        "con esquema actual y 0 resultados, cada llamada se trata como legacy "
+        "(exitosa): la lectura marca la ruta y el patch NO es would_block: %r"
+        % (data,)
+    )
+
+
+def test_b4_replay_v4a_multi_file_unseen_counts_one_block_per_call(tmp_path):
+    mods = load_modules()
+    """B4 (medium): un patch V4A con 3 archivos nunca vistos produce UN bloqueo
+    por LLAMADA (el guard devuelve un único bloqueo por patch), no 3 por ruta.
+    patch_total sigue contando la llamada."""
+    v4a = _v4a(
+        "*** Update File: /b4/uno.py", "@@", "-a\n+b",
+        "*** Update File: /b4/dos.py", "@@", "-c\n+d",
+        "*** Update File: /b4/tres.py", "@@", "-e\n+f",
+    )
+    db, con = _m1_db(tmp_path)
+    try:
+        _m1_assistant(con, "s-b4", [_m1_call("call_p", "patch", mode="patch", patch=v4a)])
+        con.commit()
+    finally:
+        con.close()
+
+    data = mods.report.replay(str(db))
+    assert data["patch_total"] == 1, data
+    assert data["would_block"] == 1, (
+        "would_block debe contar LLAMADAS de patch bloqueadas (1), no rutas (3): %r"
+        % (data,)
+    )
+    assert data["sessions_affected"] == 1, data

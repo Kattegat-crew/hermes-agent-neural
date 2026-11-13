@@ -50,6 +50,7 @@ DIGEST_CAP = 32 * 1024 * 1024  # no hashear archivos gigantes; fp-only arriba de
 
 _EV_POST = "post_tool_call"
 _EV_READ_PENDING = "read_pending"
+_EV_WRITE_PENDING = "write_pending"
 
 
 def _safe_session(session_id) -> str:
@@ -305,23 +306,19 @@ def last_seen(session_id, path, root=None):
     return found
 
 
-def pending_read(session_id, path, root=None):
-    """Última entrada 'read_pending' para la ruta (por realpath) o None (ronda 4 / H1).
-    El pre de read_file dejó la huella capturada ANTES de ejecutar la tool; el post
-    la consulta para registrar lo que el agente vio, no lo que hay en disco al
-    llegar el post. Pre y post llegan 1:1 y en orden, así que la pendiente MÁS
-    RECIENTE corresponde a la lectura en curso (no se consume/reescribe el ledger:
-    las pendientes viejas caducan con la retención)."""
+def _pending_entries(session_id, path, ev, root=None) -> list:
+    """Todas las pendientes vivas `ev` de la ruta (por realpath), en orden de ledger.
+    Común a read_pending y write_pending (ronda 6 / B1-B2)."""
     ledger = ledger_path(session_id, root)
     if not ledger.exists():
-        return None
+        return []
     try:
         want = os.path.realpath(str(path))
     except OSError:
         want = str(path)
-    found = None
+    out = []
     for entry in _read_entries(ledger):
-        if entry.get("ev") != _EV_READ_PENDING:
+        if entry.get("ev") != ev:
             continue
         p = entry.get("path")
         if not isinstance(p, str) or not p:
@@ -331,8 +328,79 @@ def pending_read(session_id, path, root=None):
         except OSError:
             same = p == want
         if same:
-            found = entry  # la última pendiente gana
-    return found
+            out.append(entry)
+    return out
+
+
+def pending_read_match(session_id, path, root=None, call_id=None):
+    """Empareje de la pendiente de lectura con el post (ronda 6 / B1).
+    Devuelve (estado, entrada|None) con estado en:
+      'match'     -> entrada correspondiente a ESTA llamada;
+      'ambiguous' -> hay varias pendientes del mismo path y ninguna se puede
+                     atribuir con certeza: el post NO debe promover ninguna
+                     huella (fail-closed);
+      'none'      -> sin pendiente (payload legacy sin pre): el post conserva
+                     el comportamiento de antes (huella de disco).
+    Empareje (en orden):
+      1. por `call_id` (extra.tool_call_id o identificador derivado del payload
+         pre que el post recalcula igual): gana la pendiente con ese call_id;
+      2. sin call_id útil: SOLO si hay EXACTAMENTE una pendiente viva del path
+         se asume que corresponde a la lectura en curso (contrato 1:1 pre/post
+         de la ronda 4); con más de una es ambiguo y no se promueve nada.
+    """
+    lst = _pending_entries(session_id, path, _EV_READ_PENDING, root)
+    if call_id:
+        matched = [e for e in lst if e.get("call_id") == call_id]
+        if len(matched) > 1:
+            # Varios pendientes con el MISMO call_id (p. ej. ids derivados de
+            # payloads idénticos en lecturas intercaladas): tampoco se puede
+            # atribuir la huella a esta llamada -> fail-closed (ronda 6 / B1).
+            return "ambiguous", None
+        if matched:
+            return "match", matched[-1]
+        if len(lst) == 1:
+            return "match", lst[0]  # call_id del post inútil (pre legacy): 1:1 igual
+        if len(lst) > 1:
+            return "ambiguous", None
+        return "none", None
+    if len(lst) == 1:
+        return "match", lst[0]
+    if len(lst) > 1:
+        return "ambiguous", None  # B1: sin call_id y varias pendientes -> nada
+    return "none", None
+
+
+def pending_read(session_id, path, root=None):
+    """Entrada 'read_pending' de la lectura en curso o None (ronda 4 / H1).
+    Wrapper simple sobre pending_read_match() (ronda 6 / B1): None también
+    cubre el caso ambiguo, así que el llamador que necesite distinguir
+    'sin pendiente' de 'ambigua' debe usar pending_read_match()."""
+    _st, entry = pending_read_match(session_id, path, root=root)
+    return entry
+
+
+def pending_write_match(session_id, path, root=None, call_id=None):
+    """Empareje de la pendiente de ESCRITURA (snapshot del contenido previo
+    capturado en el PRE de patch/edit_file, ronda 6 / B2). Mismas reglas de
+    pending_read_match(): por call_id; fallback 1:1 solo con exactamente una
+    pendiente viva; ambiguo -> no certificar."""
+    lst = _pending_entries(session_id, path, _EV_WRITE_PENDING, root)
+    if call_id:
+        matched = [e for e in lst if e.get("call_id") == call_id]
+        if len(matched) > 1:
+            return "ambiguous", None  # mismo call_id en varias pendientes
+        if matched:
+            return "match", matched[-1]
+        if len(lst) == 1:
+            return "match", lst[0]
+        if len(lst) > 1:
+            return "ambiguous", None
+        return "none", None
+    if len(lst) == 1:
+        return "match", lst[0]
+    if len(lst) > 1:
+        return "ambiguous", None
+    return "none", None
 
 
 def has_event(session_id, ev, root=None) -> bool:

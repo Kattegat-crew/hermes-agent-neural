@@ -18,8 +18,13 @@ de mtime/size, así que "visto" = leído o escrito por el propio agente):
     (formato actual), cada tool_call se correlaciona con SU resultado; un
     resultado con error / success=false / status=error|blocked|cancelled NO
     marca la ruta como vista. Si la DB no tiene NINGUNA fila de resultado
-    (esquema antiguo), se mantiene el comportamiento de antes: todo se
-    considera exitoso (lo cubre el test CA11 de sqlite).
+    (esquema antiguo, ronda 6 / B3: también esquema actual con 0 filas), se
+    mantiene el comportamiento de antes POR LLAMADA: todo se considera
+    exitoso (lo cubre el test CA11 de sqlite).
+  - Conteo de bloqueos (ronda 6 / B4): would_block cuenta LLAMADAS de patch
+    bloqueadas (el guard devuelve UN bloqueo por llamada, no uno por ruta);
+    patch_total y relative_path_patches siguen contando la llamada y las
+    RUTAS respectivamente.
   - path_form_suspects: patch bloqueado cuyo basename fue leído/escrito antes
     en la misma sesión bajo OTRA forma de ruta (falso positivo probable).
 """
@@ -78,8 +83,12 @@ def result_ok(content):
 
 def _load_tool_results(con):
     """Mapa {tool_call_id: éxito} de las filas role='tool' (ronda 4 / M1).
-    Segundo valor: True si la DB trae filas de resultado (formato actual),
-    False si el esquema no las tiene (DB antigua -> comportamiento legacy)."""
+    Segundo valor: True si la DB trae resultados correlacionables (formato
+    actual CON filas), False si no hay correlación posible (ronda 6 / B3):
+    - esquema antiguo (sin columna role/tool_call_id): DB antigua -> legacy;
+    - esquema actual pero CERO filas role='tool': no hay correlación por
+      llamada, así que cada llamada se trata como legacy POR LLAMADA (no se
+      degrada todo a fallido como si la DB probara que las calls fallaron)."""
     try:
         rows = con.execute(
             """SELECT tool_call_id, content FROM messages
@@ -89,6 +98,10 @@ def _load_tool_results(con):
         ).fetchall()
     except sqlite3.Error:
         return {}, False  # sin columna role/tool_call_id: esquema antiguo
+    if not rows:
+        # Ronda 6 / B3: la tabla existe pero no hay resultados -> sin
+        # correlación: legacy por llamada (todo exitoso), igual que CA11.
+        return {}, False
     out = {}
     for call_id, content in rows:
         if call_id in out:
@@ -273,12 +286,30 @@ def replay(db_path, last=None):
                     _mark(st, p)
             else:
                 # V4A sin clave 'path' (ronda 4 / M1): mismas reglas del guard
-                # por cabecera del texto del parche.
+                # por cabecera del texto del parche. Ronda 6 / B4: would_block
+                # cuenta LLAMADAS de patch bloqueadas (el guard devuelve UN
+                # bloqueo por llamada, no uno por ruta); relative_path_patches
+                # sigue contando RUTAS (por cabecera), y patch_total la llamada.
+                blocked_headers = []
                 for action, header_path in extract_v4a_paths(get_patch_text(args)):
                     if action != "Add":
-                        _block_if_unseen(sid, st, header_path)
+                        is_rel = not os.path.isabs(header_path)
+                        if is_rel:
+                            rel_patch_total += 1
+                        if not _seen(st, header_path):
+                            blocked_headers.append(header_path)
                     if ok:
                         _mark(st, header_path)
+                if blocked_headers:
+                    would_block += 1  # B4: 1 por llamada, aunque haya N rutas
+                    if any(not os.path.isabs(p) for p in blocked_headers):
+                        rel_would_block += 1
+                    per_sess_block[sid] += 1
+                    for p in blocked_headers:
+                        _form = _path_form(p)[2]
+                        if any(f != _form for f in st["forms"].get(os.path.basename(p), ())):
+                            suspects += 1
+                            break  # un sospechoso por llamada bloqueada basta
 
     pct = round(100.0 * would_block / writes_total, 1) if writes_total else 0.0
     return {

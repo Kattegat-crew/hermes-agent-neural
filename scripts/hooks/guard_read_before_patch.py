@@ -184,6 +184,11 @@ def _pre_v4a(event: dict, session_id, root=None, tool_input=None):
         if not os.path.exists(resolved):
             continue  # CA5: la herramienta de edición reportará su propio error
 
+        # Ronda 6 / B2: snapshot del contenido previo para la certificación del
+        # post (reconstrucción V4A). Se captura aunque luego se bloquee: el post
+        # de un patch bloqueado no registra nada de todos modos (ronda 2 / H1).
+        _snapshot_write_pending(session_id, resolved, root=root, call_id=_call_id(event))
+
         try:
             ok, last, current = _fingerprint_ok(session_id, resolved, root=root)
         except Exception as exc:  # CA10: fail-open
@@ -203,6 +208,165 @@ def _pre_v4a(event: dict, session_id, root=None, tool_input=None):
         return 0, {"ev": "would_block", "reason": reason}
 
     return 0, {}
+
+
+def _call_id(event: dict):
+    """Identificador de llamada para emparejar pendientes pre/post (ronda 6 / B1):
+    extra.tool_call_id si viene; si no, uno derivado de forma DETERMINISTA del
+    payload (session_id + tool_input), que el pre y el post de la MISMA llamada
+    recalculan igual. None si no hay forma estable de derivarlo."""
+    extra = event.get("extra")
+    if isinstance(extra, dict):
+        cid = extra.get("tool_call_id")
+        if isinstance(cid, str) and cid:
+            return cid
+    tool_input = event.get("tool_input")
+    try:
+        base = json.dumps(
+            {"s": event.get("session_id"), "ti": tool_input},
+            sort_keys=True,
+            ensure_ascii=False,
+            default=str,
+        )
+    except Exception:
+        return None
+    return "derived:" + hashlib.sha256(
+        base.encode("utf-8", "surrogateescape")
+    ).hexdigest()[:16]
+
+
+def _snapshot_write_pending(session_id, resolved, root=None, call_id=None) -> None:
+    """Captura en el PRE de patch/edit_file el contenido previo como pendiente
+    de escritura {'ev':'write_pending', path, mtime_ns, size, pre_sha256,
+    content} (ronda 6 / B2): el POST reconstruye desde aquí el contenido
+    ESPERADO y solo certifica si coincide con el disco al llegar el post.
+    El contenido se guarda solo si el archivo <= DIGEST_CAP (sobre el cap solo
+    va el hash: sin snapshot utilizable el post cae al fallback legacy).
+    Nunca lanza (CA10)."""
+    try:
+        mtime_ns, size = state.fingerprint(resolved)
+        fields = {"path": resolved, "mtime_ns": mtime_ns, "size": size}
+        if size and size <= state.DIGEST_CAP:
+            try:
+                with open(resolved, "r", encoding="utf-8", errors="surrogateescape") as f:
+                    fields["content"] = f.read()
+            except OSError:
+                pass
+        pre_sha = state.file_digest(resolved)
+        if pre_sha:
+            fields["pre_sha256"] = pre_sha
+        if call_id:
+            fields["call_id"] = call_id
+        state.log_event(session_id, "write_pending", root=root, **fields)
+    except Exception as exc:  # CA10: fail-open
+        _log_error(session_id, root, exc)
+
+
+def _expected_after_replace(snapshot: str, tool_input) -> "str | None":
+    """Contenido esperado tras un patch/edit_file mode='replace' (ronda 6 / B2a):
+    old_string -> new_string sobre el snapshot del pre (una vez, o todas con
+    replace_all). None si el reemplazo no es reconstruible (sin old/new, o
+    old_string no está en el snapshot: la tool fallaría igual)."""
+    if not isinstance(tool_input, dict):
+        return None
+    old = tool_input.get("old_string")
+    new = tool_input.get("new_string")
+    if not (isinstance(old, str) and isinstance(new, str)):
+        return None
+    if old not in snapshot:
+        return None
+    if tool_input.get("replace_all"):
+        return snapshot.replace(old, new)
+    return snapshot.replace(old, new, 1)
+
+
+def _v4a_sections(patch_text: str):
+    """[(accion, raw_path, body)] por sección del parche V4A (ronda 6 / B2b):
+    body son las líneas del cuerpo (hunks) entre esta cabecera y la siguiente,
+    sin cabeceras ni líneas '@@'. Ancla idéntica a _v4a_file_ops."""
+    text = patch_text or ""
+    matches = list(_V4A_HEADER_RE.finditer(text))
+    sections = []
+    for i, match in enumerate(matches):
+        start = match.end()
+        # El salto de línea de la propia cabecera no es parte del cuerpo: sin
+        # esto, splitlines() deja una línea vacía inicial que el aplicador
+        # interpretaría como contexto y descartaría el parche (ronda 6 / B2).
+        if start < len(text) and text[start] == "\n":
+            start += 1
+        end = matches[i + 1].start() if i + 1 < len(matches) else len(text)
+        body = []
+        for line in text[start:end].splitlines():
+            if line.startswith("***"):
+                break  # '*** End Patch' u otra directiva: fin del cuerpo
+            if line.startswith("@@"):
+                continue
+            body.append(line)
+        sections.append((match.group(1), match.group(2), body))
+    return sections
+
+
+def _apply_v4a_body(old_text: str, body: list) -> "str | None":
+    """Aplica los hunks del cuerpo de una sección V4A al contenido previo
+    (ronda 6 / B2b). Devuelve el texto esperado, o None si el parche no aplica
+    de forma determinista (contexto/minus desalineado) — en ese caso el post
+    cae al fallback legacy en vez de certificar a ciegas."""
+    ops = []
+    for line in body:
+        if line.startswith("+"):
+            ops.append(("+", line[1:]))
+        elif line.startswith("-"):
+            ops.append(("-", line[1:]))
+        else:
+            # contexto (' ...') o línea en blanco: ambas son líneas intactas
+            ops.append((" ", line[1:] if line.startswith(" ") else line))
+    old_lines = old_text.split("\n")
+    out = []
+    i = 0
+    for op, txt in ops:
+        if op == "+":
+            out.append(txt)
+            continue
+        if i < len(old_lines) and old_lines[i] == txt:
+            if op == " ":
+                out.append(old_lines[i])
+            i += 1
+        else:
+            return None
+    out.extend(old_lines[i:])
+    return "\n".join(out)
+
+
+def _expected_add_file(body: list) -> str:
+    """Contenido esperado de un '*** Add File:' (ronda 6 / B2c): el bloque
+    literal, una línea por cada '+' del cuerpo (con \\n final por línea)."""
+    return "".join(line[1:] + "\n" for line in body if line.startswith("+"))
+
+
+def _certify_against_snapshot(session_id, tool, resolved, expected_text, root=None) -> bool:
+    """Certificación por intención del POST de escritura (ronda 6 / B2):
+    sha256(esperado reconstruido) vs sha256(disco al llegar el post).
+    Iguales -> registra la huella con ESE sha256 y devuelve True.
+    Distintos (u omitido el digest: archivo > cap) -> NO registra, anota
+    'write_concurrent' (fail-closed) y devuelve False. Nunca lanza (CA10)."""
+    try:
+        expected_sha = hashlib.sha256(
+            expected_text.encode("utf-8", "surrogateescape")
+        ).hexdigest()
+        disk_sha = state.file_digest(resolved)
+        if disk_sha is None or disk_sha != expected_sha:
+            state.log_event(
+                session_id, "write_concurrent", root=root, tool=str(tool), path=resolved
+            )
+            return False
+        mtime_ns, size = state.fingerprint(resolved)
+        state.record_seen(
+            session_id, tool, resolved, mtime_ns, size, root=root, sha256=expected_sha
+        )
+        return True
+    except Exception as exc:  # CA10: fail-open
+        _log_error(session_id, root, exc)
+        return False
 
 
 def _pre_read(event: dict, session_id, root=None):
@@ -240,6 +404,7 @@ def _pre_read(event: dict, session_id, root=None):
             path=resolved,
             mtime_ns=mtime_ns,
             size=size,
+            call_id=_call_id(event),  # ronda 6 / B1: empareje pre-post por llamada
         )
     except Exception as exc:  # CA10: fail-open
         _log_error(session_id, root, exc)
@@ -277,6 +442,10 @@ def _pre(event: dict, session_id, root=None):
         return 0, {}
     if not os.path.exists(resolved):
         return 0, {}  # CA5: la herramienta de edición reportará su propio error
+
+    # Ronda 6 / B2: snapshot del contenido previo (str_replace) para la
+    # certificación del post. Igual que en V4A: capturar aunque luego bloquee.
+    _snapshot_write_pending(session_id, resolved, root=root, call_id=_call_id(event))
 
     try:
         last = state.last_seen(session_id, resolved, root=root)
@@ -317,19 +486,26 @@ def _pre(event: dict, session_id, root=None):
 
 
 def _post_v4a(event: dict, session_id, root=None, tool_input=None):
-    """post_tool_call de patch V4A con resultado ok (ronda 4 / H2): registra CADA
-    ruta de las cabeceras '*** Update|Delete|Add File:' con la huella posterior.
-    Mismo parsing y resolución que el pre (_pre_v4a), para que dos V4A
-    consecutivos no se bloqueen y un parche multi-archivo registre todas sus
-    rutas. Solo se llega aquí tras validar status=='ok' en _post, así que un
-    patch V4A bloqueado no registra nada."""
+    """post_tool_call de patch V4A con resultado ok: registra CADA ruta de las
+    cabeceras '*** Update|Delete|Add File:'. Ronda 6 / B2: con snapshot del pre
+    ('write_pending') el contenido ESPERADO se reconstruye desde tool_input
+    ((b) hunks del patch_text sobre el contenido previo para Update/Delete;
+    (c) bloque literal '+' para Add File) y solo se certifica si
+    sha256(esperado) == sha256(disco al llegar el post); si difiere NO registra
+    y anota 'write_concurrent' (fail-closed). Sin snapshot utilizable (archivo
+    > DIGEST_CAP en el pre, reconstrucción no determinista o payload legacy sin
+    pre) cae al fallback legacy: huella de disco (comportamiento de antes).
+    Mismo parsing y resolución que el pre (_pre_v4a). Solo se llega aquí tras
+    validar status=='ok' en _post, así que un patch V4A bloqueado no registra
+    nada."""
     patch_text = (tool_input or {}).get("patch")
-    ops = _v4a_file_ops(patch_text) if isinstance(patch_text, str) else []
-    if not ops:
+    sections = _v4a_sections(patch_text) if isinstance(patch_text, str) else []
+    if not sections:
         return 0, {}
     cwd = event.get("cwd")
     has_cwd = isinstance(cwd, str) and bool(cwd.strip())
-    for _action, raw_path in ops:
+    call_id = _call_id(event)
+    for action, raw_path, body in sections:
         if not has_cwd and not os.path.isabs(raw_path):
             continue  # L2: no se resuelve contra os.getcwd() del proceso
         try:
@@ -346,7 +522,29 @@ def _post_v4a(event: dict, session_id, root=None, tool_input=None):
             # Add/Update fallado: igual.
             continue
         try:
-            state.record(session_id, "patch", resolved, ok=True, root=root)
+            if action == "Add":
+                # (c) Add File: el contenido esperado es el bloque literal.
+                expected = _expected_add_file(body)
+            else:
+                status, pending = state.pending_write_match(
+                    session_id, resolved, root=root, call_id=call_id
+                )
+                if (
+                    status != "match"
+                    or not isinstance(pending, dict)
+                    or not isinstance(pending.get("content"), str)
+                ):
+                    # Sin snapshot utilizable: fallback legacy (ronda 6 / B2).
+                    state.record(session_id, "patch", resolved, ok=True, root=root)
+                    continue
+                # (b) Update/Delete: hunks del parche sobre el contenido previo.
+                expected = _apply_v4a_body(pending["content"], body)
+            if expected is None:
+                # Reconstrucción no determinista: fallback legacy, jamás
+                # certificar a ciegas un contenido que no se pudo reconstruir.
+                state.record(session_id, "patch", resolved, ok=True, root=root)
+                continue
+            _certify_against_snapshot(session_id, "patch", resolved, expected, root=root)
         except Exception as exc:  # CA10: fail-open también al registrar
             _log_error(session_id, root, exc)
     return 0, {}
@@ -467,13 +665,19 @@ def _post(event: dict, session_id, root=None):
 
     try:
         if tool == "read_file":
-            # Ronda 4 / TOCTOU-H1: promueve la huella pendiente del PRE (lo que
-            # el agente vio), no la de disco al llegar el post. Sin pendiente
-            # (hook legacy sin pre, o pre sin sesión/cwd) se registra la huella
-            # de disco actual como siempre: prefiero el mismo comportamiento
-            # de antes a dejar de registrar lecturas legítimas.
-            pending = state.pending_read(session_id, resolved, root=root)
-            if pending is not None:
+            # Ronda 4 / TOCTOU-H1 + ronda 6 / B1: empareje de la pendiente por
+            # call_id (extra.tool_call_id o derivado del payload, idéntico en
+            # pre y post). Con VARIAS pendientes vivas del mismo path y sin
+            # call_id útil NO se promueve ninguna huella (fail-closed: el post
+            # de otra lectura intercalada no debe autorizar contenidos que esta
+            # lectura no vio). Sin pendiente (hook legacy sin pre) se registra
+            # la huella de disco actual como siempre.
+            status, pending = state.pending_read_match(
+                session_id, resolved, root=root, call_id=_call_id(event)
+            )
+            if status == "ambiguous":
+                return 0, {}  # B1: fail-closed, nada que certificar
+            if status == "match" and isinstance(pending, dict):
                 mtime_ns = pending.get("mtime_ns")
                 size = pending.get("size")
                 if isinstance(mtime_ns, int) and isinstance(size, int):
@@ -512,6 +716,26 @@ def _post(event: dict, session_id, root=None):
                 return 0, {}
             # payload legacy sin 'content': no hay intención que reconstruir;
             # comportamiento de antes (huella de disco).
+        if tool in EDIT_TOOLS:
+            # Ronda 6 / B2 (a): str_replace sobre el snapshot del pre. El post
+            # reconstruye el contenido ESPERADO (old->new) y solo certifica si
+            # coincide con el disco al llegar el post; en carrera NO registra
+            # ('write_concurrent', fail-closed). Sin snapshot utilizable
+            # (archivo > DIGEST_CAP en el pre, payload legacy sin pre, o
+            # old/new ausentes) -> fallback legacy: huella de disco.
+            status, pending = state.pending_write_match(
+                session_id, resolved, root=root, call_id=_call_id(event)
+            )
+            expected = None
+            if (
+                status == "match"
+                and isinstance(pending, dict)
+                and isinstance(pending.get("content"), str)
+            ):
+                expected = _expected_after_replace(pending["content"], tool_input)
+            if expected is not None:
+                _certify_against_snapshot(session_id, tool, resolved, expected, root=root)
+                return 0, {}
         state.record(session_id, tool, resolved, ok=True, root=root)
     except Exception as exc:  # CA10: fail-open también al registrar
         _log_error(session_id, root, exc)
