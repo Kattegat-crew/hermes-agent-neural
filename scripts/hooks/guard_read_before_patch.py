@@ -38,6 +38,7 @@ entre procesos, ronda 2 / L1).
 Uso: python3 guard_read_before_patch.py < event.json   (main() -> exit code)
 """
 
+import hashlib
 import json
 import os
 import re
@@ -351,7 +352,78 @@ def _post_v4a(event: dict, session_id, root=None, tool_input=None):
     return 0, {}
 
 
+def _result_certified(event: dict) -> bool:
+    """Certificación por resultado estructurado (ronda 5 / H2): el post trae
+    extra.result con el JSON string del WriteResult/PatchResult
+    (tools/file_operations_common.py: WriteResult → {bytes_written, verified,
+    error, ...}; PatchResult → {success, diff, files_modified, error, ...};
+    `_content_sha256` NO se expone en el dict, así que no se puede comparar el
+    contenido intencionado para patch/edit_file — solo para write_file, vía
+    tool_input['content']).
+
+    Devuelve True solo si el resultado acredita escritura verificable:
+    - sin clave 'result' en extra (payload legacy/antiguo): True — el status ya
+      filtró los fallos marcados y se conserva el comportamiento de antes.
+    - result no parseable a dict (JSON corrupto), con 'error' presente,
+      success=False o verified=False: False (fail-closed: no registrar).
+    - éxito: SOLO cuando el resultado reporta success is True o verified is True
+      (un resultado sin ninguna marca de éxito tampoco certifica).
+    Nota: 'verified' (WriteResult) solo cubre que el disco coincidía con lo
+    escrito al terminar la tool."""
+    extra = event.get("extra")
+    if not isinstance(extra, dict) or "result" not in extra:
+        return True  # payload sin resultado estructurado: comportamiento legacy
+    result = extra.get("result")
+    data = result
+    if isinstance(result, (str, bytes)):
+        try:
+            data = json.loads(result)
+        except (ValueError, TypeError):
+            return False  # JSON corrupto: no se puede acreditar el éxito
+    if not isinstance(data, dict):
+        return False
+    if data.get("error"):
+        return False
+    if data.get("success") is False or data.get("verified") is False:
+        return False
+    return data.get("success") is True or data.get("verified") is True
+
+
 def _post(event: dict, session_id, root=None):
+    """post_tool_call de read_file|write_file|patch|edit_file: registra la huella.
+    Registra SOLO si extra.status == 'ok' o si la clave no viene (payload legacy con
+    'ok'; sin ninguna de las dos se asume exitoso). Con status 'error'|'cancelled'|'blocked'
+    NUNCA registra: un patch bloqueado (status='blocked') dispara post_tool_call y no
+    debe marcar la ruta como vista, o el reintento idéntico pasaría (ronda 2 / H1).
+    - read_file (ronda 4 / TOCTOU): el pre dejó una entrada 'read_pending' con la
+      huella capturada ANTES de la lectura; el post promueve ESA huella (lo que el
+      agente vio). Sin pendiente (hook legacy sin pre, o pre sin sesión) se registra
+      la huella de disco actual, como siempre: es el mismo comportamiento de antes,
+      y el pre corre en toda instalación viva (el matcher del pre del diseño §3
+      incluye read_file, ronda 5 / H1).
+    - write_file (ronda 5 / H2): certifica por INTENCIÓN. Con tool_input['content']
+      (str) reconstruye sha256(content) y lo compara con el sha256 del disco al
+      llegar el post: solo si COINCIDEN registra la huella y ese sha256; si DIFIERE
+      (otro proceso escribió entre la tool y el post) NO registra nada y anota
+      'write_concurrent' en el ledger — fail-closed: mejor falso bloqueo que
+      certificar contenido que el agente no escribió. Sin 'content' (payload
+      legacy) conserva el comportamiento de antes (huella de disco). Si el disco
+      supera DIGEST_CAP el digest no es computable: no se certifica (fail-closed).
+    - patch/edit_file (ronda 5 / H2): SOLO registra si extra.result (JSON string
+      del PatchResult, tools/file_operations_common.py) reporta success is True o
+      verified is True; con success=false / error presente no registra (_result_certified).
+      NOTA (docstring exigida): el contenido INTENCIONADO de un Update V4A no es
+      reconstruible localmente (el guard solo ve el texto del parche, no el
+      resultado por archivo), así que para V4A la certificación se limita al éxito
+      reportado más la huella de disco observada; y 'verified' (WriteResult) SOLO
+      cubre que el disco coincidía con lo escrito AL TERMINAR la tool — no protege
+      contra escrituras posteriores entre la tool y este post (para eso está la
+      certificación por intención de write_file; para patch/edit_file la ventana
+      queda cubierta por el desempate por digest en el pre).
+    - patch mode='patch' V4A (ronda 4 / H2): registra CADA ruta de las cabeceras
+      '*** Update|Delete|Add File:' del texto con la huella posterior, igual que
+      hace el pre al decidir; así dos V4A consecutivos no se bloquean.
+    Cualquier otra tool no toca el ledger."""
     tool = event.get("tool_name")
     if tool not in RECORD_TOOLS:
         return 0, {}
@@ -373,6 +445,13 @@ def _post(event: dict, session_id, root=None):
         # Sin 'status' ni 'ok': payload antiguo mínimo -> se asume exitoso (H1).
 
     tool_input = event.get("tool_input")
+    if tool in EDIT_TOOLS and not _result_certified(event):
+        # Ronda 5 / H2: el resultado estructurado reporta fallo (success=false,
+        # error, verified=false o sin marca de éxito): la tool no escribió nada,
+        # no registrar (refuerzo sobre el status). Cubre el patch con 'path' Y
+        # el V4A (el gate va antes del dispatch).
+        return 0, {}
+
     if (
         tool == "patch"
         and isinstance(tool_input, dict)
@@ -402,6 +481,37 @@ def _post(event: dict, session_id, root=None):
                         session_id, tool, resolved, mtime_ns, size, root=root
                     )
                     return 0, {}
+            state.record(session_id, tool, resolved, ok=True, root=root)
+            return 0, {}
+        if tool == "write_file":
+            content = (
+                tool_input.get("content")
+                if isinstance(tool_input, dict)
+                else None
+            )
+            if isinstance(content, str):
+                # Ronda 5 / H2: certificar por intención — lo que el agente
+                # quiso escribir debe ser EXACTAMENTE lo que hay en disco al
+                # llegar el post; si no, la huella de disco certificaría un
+                # contenido que el agente nunca escribió.
+                intent_sha = hashlib.sha256(content.encode("utf-8")).hexdigest()
+                disk_sha = state.file_digest(resolved)
+                if disk_sha is None or intent_sha != disk_sha:
+                    state.log_event(
+                        session_id,
+                        "write_concurrent",
+                        root=root,
+                        path=resolved,
+                    )
+                    return 0, {}
+                mtime_ns, size = state.fingerprint(resolved)
+                state.record_seen(
+                    session_id, tool, resolved, mtime_ns, size,
+                    root=root, sha256=intent_sha,
+                )
+                return 0, {}
+            # payload legacy sin 'content': no hay intención que reconstruir;
+            # comportamiento de antes (huella de disco).
         state.record(session_id, tool, resolved, ok=True, root=root)
     except Exception as exc:  # CA10: fail-open también al registrar
         _log_error(session_id, root, exc)

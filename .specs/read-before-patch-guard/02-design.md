@@ -57,8 +57,17 @@ El bloqueo ocurre **antes** de tocar el archivo: no hay edición parcial.
 ### 2.3 Registro (post_tool_call)
 
 - `read_file` con resultado: registra `(path, huella actual)`.
-- `write_file` / `patch` / `edit_file` correctos: registra `(path, huella posterior)` — el agente
-  sabe lo que escribió, así que puede seguir editando mientras nadie más toque el archivo (CA4).
+- `write_file` correcto: certifica por INTENCIÓN — `sha256(tool_input['content'])`
+  debe coincidir con el sha256 del disco al llegar el post; si difiere (otro
+  proceso escribió entre la tool y el post), NO registra nada y anota
+  `write_concurrent` en el ledger (fail-closed: mejor falso bloqueo que falso
+  permiso). Payload legacy sin `content` conserva la huella de disco de antes.
+- `patch` / `edit_file` correctos: registra `(path, huella observada + sha256)`
+  SOLO si `extra.result` (JSON del `PatchResult`) reporta `success: true` o
+  `verified: true`; con `success: false` o `error` presente no registra. El
+  contenido intencionado de un Update V4A no es reconstruible localmente, y
+  `verified` SOLO cubre que el disco coincidía con lo escrito al terminar la
+  tool (no protege contra escrituras posteriores antes del post).
 - Cualquier otro tool: nada.
 
 ### 2.4 Modos y seguridad operativa
@@ -91,7 +100,7 @@ sospechosos de forma de ruta. El script debe reproducir esa cifra (test de regre
 ```yaml
 hooks:
   pre_tool_call:
-    - matcher: ^(patch|edit_file)$
+    - matcher: ^(read_file|patch|edit_file)$
       command: /opt/hermes-agent-data/hooks/guard_read_before_patch.py
       timeout: 10
       fail_closed: false

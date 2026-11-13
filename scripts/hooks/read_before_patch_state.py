@@ -211,12 +211,15 @@ def _append(session_id, entry: dict, root=None) -> None:
             fcntl.flock(f.fileno(), fcntl.LOCK_UN)
 
 
-def record_seen(session_id, tool, path, mtime_ns, size, ok=True, root=None) -> None:
+def record_seen(session_id, tool, path, mtime_ns, size, ok=True, root=None, sha256=None):
     """Registra una huella YA capturada (ronda 4 / H1): la promoción de una
     entrada 'read_pending' usa la huella del contenido que el agente VIO, no la
     de disco al llegar el post. El digest solo se adjunta si la huella registrada
     coincide con el disco AHORA (si difiere, el sha256 sería de un contenido que
-    el agente nunca vio y el desempate del pre daría un falso permiso)."""
+    el agente nunca vio y el desempate del pre daría un falso permiso).
+    Ronda 5 / H2: `sha256` explícito (hexdigest de la intención reconstruida por
+    el guard, p. ej. sha256 de tool_input['content'] tras verificar que coincide
+    con el disco) se registra tal cual y tiene precedencia sobre el cálculo."""
     p = str(path)
     now = time.time()
     entry = {
@@ -229,7 +232,9 @@ def record_seen(session_id, tool, path, mtime_ns, size, ok=True, root=None) -> N
         "size": size,
         "ok": bool(ok),
     }
-    if mtime_ns and size and tuple(fingerprint(p)) == (mtime_ns, size):
+    if sha256:
+        entry["sha256"] = str(sha256)
+    elif mtime_ns and size and tuple(fingerprint(p)) == (mtime_ns, size):
         digest = file_digest(p)
         if digest:
             entry["sha256"] = digest
@@ -245,14 +250,15 @@ def record_seen(session_id, tool, path, mtime_ns, size, ok=True, root=None) -> N
         )
 
 
-def record(session_id, tool, path, ok=True, root=None) -> None:
+def record(session_id, tool, path, ok=True, root=None, sha256=None) -> None:
     """Registra (path, huella actual) para un tool de lectura/escritura.
     La huella se toma AHORA: el agente vio/escribió este contenido.
     (El post de read_file usa record_seen() con la huella pendiente del pre
-    para cerrar la ventana TOCTOU, ronda 4 / H1.)"""
+    para cerrar la ventana TOCTOU, ronda 4 / H1.) `sha256` explícito se pasa
+    tal cual a record_seen (ronda 5 / H2)."""
     p = str(path)
     mtime_ns, size = fingerprint(p)
-    record_seen(session_id, tool, p, mtime_ns, size, ok=ok, root=root)
+    record_seen(session_id, tool, p, mtime_ns, size, ok=ok, root=root, sha256=sha256)
 
 
 def _within_retention(entry: dict, cutoff: float) -> bool:

@@ -241,6 +241,14 @@ def replay(db_path, last=None):
             p = get_path(args)
 
             if name in MARK_TOOLS:
+                # Ronda 5 / M3: write_file cuenta en writes_total y
+                # sessions_write ANTES del continue de MARK_TOOLS (sin doble
+                # conteo: patch/edit_file ya cuentan en su rama de EDIT_TOOLS).
+                # Sin esto, would_block_pct de CA11 sale mal: write_file nunca
+                # entra en el denominador.
+                if name == "write_file":
+                    writes_total += 1
+                    sessions_write.add(sid)
                 # visto: read_file o write_file EXITOSOS de esa ruta
                 if p and ok:
                     _mark(st, p)

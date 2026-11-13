@@ -1541,3 +1541,333 @@ def test_r4_m2_pre_ignores_entry_older_than_retention_even_with_recent_ledger(
         "la entrada reciente de otro.py sigue autorizando su patch: "
         "exit=%s payload=%r" % (code2, payload2)
     )
+
+
+# ══════════════════════════════════════════════════════════════════════════════
+#  Hallazgos de revisores — ronda RED 5 (juez codex, ronda 4)
+#
+#  R5-H1 (high): el bloque yaml de config de 02-design.md §3 propone un matcher
+#    de pre_tool_call `^(patch|edit_file)$` SIN read_file: _pre_read nunca corre
+#    y el TOCTOU de la lectura (ronda 4) cae siempre al fallback de disco.
+#  R5-H2 (high): tras write_file/patch/edit_file ok, el post registra la huella
+#    del disco de ESE instante: si otro proceso escribe entre la tool y el post,
+#    se certifica contenido que el agente no escribió.
+#  R5-M3 (medium): writes_total y sessions_with_writes del replay (CA11) no
+#    cuentan write_file (sale por el continue de MARK_TOOLS antes de contar).
+# ══════════════════════════════════════════════════════════════════════════════
+
+
+def _design_hooks_yaml() -> dict:
+    """Parsea el bloque ```yaml del §3 de 02-design.md (la config REAL que se
+    copia a config.yaml: si el doc y el código divergen, el doc manda el bug)."""
+    import re as re_mod
+
+    try:
+        import yaml as yaml_mod
+    except ImportError:  # pragma: no cover
+        pytest.fail("PyYAML no disponible: el test no puede parsear el bloque yaml del diseño")
+
+    design = REPO / ".specs" / "read-before-patch-guard" / "02-design.md"
+    text = design.read_text(encoding="utf-8")
+    blocks = re_mod.findall(r"```yaml\n(.*?)```", text, re_mod.DOTALL)
+    with_hooks = [b for b in blocks if "hooks:" in b and "matcher" in b]
+    assert with_hooks, "02-design.md debe traer el bloque yaml de registro en config (§3)"
+    data = yaml_mod.safe_load(with_hooks[0])
+    assert isinstance(data, dict) and isinstance(data.get("hooks"), dict), (
+        "el bloque yaml del diseño no parsea a un mapping hooks: %r" % (data,)
+    )
+    return data["hooks"]
+
+
+def _matcher_of(entries, event_key):
+    """matcher de la única entrada del evento dado (mismo contrato que config.yaml)."""
+    lst = entries.get(event_key)
+    assert isinstance(lst, list) and len(lst) == 1, (
+        "02-design.md §3 declara UNA sola entrada por evento (§3 'una sola entrada, no "
+        "dos'): %r" % (entries,)
+    )
+    matcher = lst[0].get("matcher")
+    assert isinstance(matcher, str) and matcher, "entrada %s sin matcher: %r" % (event_key, lst)
+    return matcher
+
+
+def test_r5_h1_design_yaml_pre_matcher_matches_read_file_patch_edit_file():
+    mods = load_modules()
+    """R5-H1 (juez codex, high): el matcher del pre en el bloque yaml de
+    02-design.md §3 debe matchear read_file|patch|edit_file con re.fullmatch —
+    el MISMO algoritmo que _ToolMatcherMixin.matches_tool (agent/shell_hooks.py).
+    Con el yaml viejo (`^(patch|edit_file)$`) _pre_read jamás corre: el post de
+    read_file cae al fallback de huella de disco y el TOCTOU (ronda 4 / H1)
+    queda sin cobertura. El post debe matchear read_file|write_file|patch|edit_file."""
+    import re as re_mod
+
+    hooks = _design_hooks_yaml()
+    pre_matcher = _matcher_of(hooks, "pre_tool_call")
+    post_matcher = _matcher_of(hooks, "post_tool_call")
+
+    # el pre debe compilar (config inválida = matcher literal, peor aún)
+    pre_re = re_mod.compile(pre_matcher)
+    post_re = re_mod.compile(post_matcher)
+
+    for tool in ("read_file", "patch", "edit_file"):
+        assert pre_re.fullmatch(tool) is not None, (
+            "el matcher del PRE en 02-design.md §3 (%r) no matchea %r con fullmatch "
+            "(mismo algoritmo que _ToolMatcherMixin.matches_tool): el pre de esa tool "
+            "nunca corre" % (pre_matcher, tool)
+        )
+    for tool in ("read_file", "write_file", "patch", "edit_file"):
+        assert post_re.fullmatch(tool) is not None, (
+            "el matcher del POST en 02-design.md §3 (%r) no matchea %r con fullmatch: "
+            "el post de esa tool nunca registra huella" % (post_matcher, tool)
+        )
+
+    # coherencia con el guard: toda tool que el post registra existe en el matcher
+    for tool in sorted(mods.guard.RECORD_TOOLS):
+        assert post_re.fullmatch(tool) is not None, (
+            "guard.RECORD_TOOLS tiene %r pero el matcher del POST del diseño no la "
+            "matchea: el despliegue real no registraría esa tool" % (tool,)
+        )
+
+
+# ── R5-H2: certificación de lo escrito (write_file por intención, patch por resultado) ──
+
+
+def _post_event_with_result(tool: str, tool_input: dict, cwd, result, session: str = SESSION,
+                            status: str = "ok") -> dict:
+    """Evento post_tool_call con el payload REAL: extra.result es el JSON string
+    del WriteResult/PatchResult (tools/file_operations_common.py to_dict) que el
+    runner aterriza bajo extra (shell_hooks._payload_fields)."""
+    ev = _post_event(tool, tool_input, cwd, session=session)
+    ev["extra"] = {"status": status, "result": result if isinstance(result, str) else json.dumps(result)}
+    return ev
+
+
+def test_r5_h2_write_file_intent_matches_disk_records_intent_sha_and_patch_passes(
+    state_root, enforce, tmp_path
+):
+    mods = load_modules()
+    """R5-H2 (juez codex, high): el post de write_file reconstruye la INTENCIÓN
+    desde tool_input['content'] y solo certifica si el sha256 de la intención
+    coincide con el sha256 del disco al llegar el post: la entrada queda con el
+    sha256 del contenido que el agente escribió y un patch posterior pasa."""
+    import hashlib as hashlib_mod
+
+    target = tmp_path / "app.py"
+    intent = "value = 1\n"
+    target.write_text(intent, encoding="utf-8")  # la tool escribió exactamente esto
+
+    ev = _post_event_with_result(
+        "write_file", {"path": str(target), "content": intent}, tmp_path,
+        result={"bytes_written": len(intent), "verified": True},
+    )
+    code, _ = mods.guard.handle(ev, root=state_root)
+    assert code == 0
+
+    seen = mods.state.last_seen(SESSION, str(target), root=state_root)
+    assert seen is not None, "write_file con intención == disco debe registrar la huella"
+    assert seen["sha256"] == hashlib_mod.sha256(intent.encode("utf-8")).hexdigest(), (
+        "la entrada debe llevar el sha256 del contenido que el agente escribió: %r" % (seen,)
+    )
+    st = target.stat()
+    assert (seen["mtime_ns"], seen["size"]) == (st.st_mtime_ns, st.st_size), seen
+
+    code2, payload2 = mods.guard.handle(
+        make_event("pre_tool_call", "patch", target, tmp_path), root=state_root
+    )
+    assert code2 == 0, payload2  # CA4 se mantiene con la certificación por intención
+
+
+def test_r5_h2_write_file_race_disk_differs_from_intent_not_recorded_and_patch_blocks(
+    state_root, enforce, tmp_path
+):
+    mods = load_modules()
+    """R5-H2 (juez codex, high) — carrera determinista: otro proceso escribe el
+    archivo ENTRE la escritura de la tool y el post hook (aquí: se sobreescribe
+    antes de llamar handle con el post). El contenido en disco NO es lo que el
+    agente escribió: NO se registra nada, el ledger anota 'write_concurrent'
+    (fail-closed: mejor falso bloqueo que falso permiso) y un pre patch posterior
+    se bloquea (exit 2) en vez de editar a ciegas."""
+    target = tmp_path / "app.py"
+    intent = "value = 1\n"
+    # la tool escribió 'intent'; OTRO proceso lo pisa antes de que llegue el post
+    target.write_text("OTRO = 999\n", encoding="utf-8")
+
+    ev = _post_event_with_result(
+        "write_file", {"path": str(target), "content": intent}, tmp_path,
+        result={"bytes_written": len(intent), "verified": True},
+    )
+    code, _ = mods.guard.handle(ev, root=state_root)
+    assert code == 0
+
+    assert mods.state.last_seen(SESSION, str(target), root=state_root) is None, (
+        "la huella del disco al llegar el post certifica contenido que el agente "
+        "NUNCA escribió: no debe registrarse"
+    )
+    events = ledger_events(mods, state_root)
+    assert has_event(events, "write_concurrent"), (
+        "la carrera write_file debe anotarse como 'write_concurrent' en el ledger: %r"
+        % (events,)
+    )
+
+    code2, payload2 = mods.guard.handle(
+        make_event("pre_tool_call", "patch", target, tmp_path), root=state_root
+    )
+    assert code2 == 2, (
+        "sin certificación de la escritura, el patch sobre contenido no visto debe "
+        "bloquearse: exit=%s payload=%r" % (code2, payload2)
+    )
+    assert payload2["decision"] == "block"
+
+
+def test_r5_h2_patch_result_success_false_does_not_record_and_retry_blocks(
+    state_root, enforce, tmp_path
+):
+    mods = load_modules()
+    """R5-H2: el post de patch/edit_file parsea extra.result (JSON string del
+    PatchResult): con success=false / error presente NO registra nada aunque el
+    status llegue 'ok', así que el reintento del patch sigue bloqueado."""
+    target = tmp_path / "app.py"
+    target.write_text("value = 1\n", encoding="utf-8")
+
+    ev = _post_event_with_result(
+        "patch", {"path": str(target), "old_string": "a", "new_string": "b"}, tmp_path,
+        result={"success": False, "error": "old_string not found"},
+    )
+    code, _ = mods.guard.handle(ev, root=state_root)
+    assert code == 0
+    assert mods.state.last_seen(SESSION, str(target), root=state_root) is None, (
+        "un patch con success=false no escribió nada: no debe registrar la ruta"
+    )
+
+    code2, payload2 = mods.guard.handle(
+        make_event("pre_tool_call", "patch", target, tmp_path), root=state_root
+    )
+    assert code2 == 2, payload2
+    assert payload2["decision"] == "block"
+
+
+@pytest.mark.parametrize("tool", ["patch", "edit_file"])
+def test_r5_h2_patch_result_success_true_records_observed_fingerprint(
+    state_root, enforce, tmp_path, tool
+):
+    mods = load_modules()
+    """R5-H2: con success=true en extra.result, el post registra la huella
+    observada (comportamiento previo preservado) y su sha256; el patch/edit_file
+    siguiente sobre la misma ruta pasa sin nueva lectura."""
+    import hashlib as hashlib_mod
+
+    target = tmp_path / "app.py"
+    target.write_text("value = 2\n", encoding="utf-8")  # la tool ya aplicó el cambio
+
+    ev = _post_event_with_result(
+        tool, {"path": str(target), "old_string": "a", "new_string": "b"}, tmp_path,
+        result={"success": True, "diff": "--- a/app.py\n+++ b/app.py"},
+    )
+    code, _ = mods.guard.handle(ev, root=state_root)
+    assert code == 0
+
+    seen = mods.state.last_seen(SESSION, str(target), root=state_root)
+    assert seen is not None, "success=true debe registrar la huella observada"
+    st = target.stat()
+    assert (seen["mtime_ns"], seen["size"]) == (st.st_mtime_ns, st.st_size), seen
+    assert seen.get("sha256") == hashlib_mod.sha256(b"value = 2\n").hexdigest(), seen
+
+    code2, payload2 = mods.guard.handle(
+        make_event("pre_tool_call", tool, target, tmp_path), root=state_root
+    )
+    assert code2 == 0, payload2
+
+
+def test_r5_h2_v4a_patch_result_success_false_registers_nothing(state_root, enforce, tmp_path):
+    mods = load_modules()
+    """R5-H2: lo mismo para el post del patch V4A (mode='patch', sin 'path'): con
+    success=false en extra.result NO se registra ninguna cabecera del parche."""
+    target = tmp_path / "app.py"
+    target.write_text("a = 1\n", encoding="utf-8")
+    patch = _v4a("*** Update File: app.py", "@@", "-a = 1", "+a = 2")
+
+    ev = _post_event_with_result(
+        "patch", {"mode": "patch", "patch": patch}, tmp_path,
+        result={"success": False, "error": "apply failed"},
+    )
+    code, _ = mods.guard.handle(ev, root=state_root)
+    assert code == 0
+    assert mods.state.last_seen(SESSION, str(target), root=state_root) is None, (
+        "un V4A con success=false no escribió nada: ninguna cabecera debe registrarse"
+    )
+
+
+def test_r5_h2_write_file_without_content_key_legacy_payload_still_records(
+    state_root, tmp_path
+):
+    mods = load_modules()
+    """R5-H2 (payload legacy): un post de write_file sin 'content' en tool_input
+    (payload antiguo) no puede reconstruir la intención: conserva el comportamiento
+    de antes (registra la huella de disco) para no dejar de registrar escrituras
+    legítimas. Con 'content' presente la certificación por intención es obligatoria."""
+    target = tmp_path / "app.py"
+    target.write_text("value = 1\n", encoding="utf-8")
+
+    ev = _post_event("write_file", {"path": str(target)}, tmp_path)  # sin result ni content
+    code, _ = mods.guard.handle(ev, root=state_root)
+    assert code == 0
+    assert mods.state.last_seen(SESSION, str(target), root=state_root) is not None
+
+
+# ── R5-M3: write_file cuenta en writes_total / sessions_with_writes del replay ──
+
+
+def test_r5_m3_replay_counts_write_file_in_writes_total_and_sessions(tmp_path):
+    mods = load_modules()
+    """R5-M3 (juez codex, medium): writes_total y sessions_with_writes del replay
+    (CA11) deben contar write_file ANTES del continue de MARK_TOOLS; sin eso,
+    would_block_pct de CA11 sale mal. Sesión que SOLO escribe write_file ⇒
+    writes_total>=1 y sessions_with_writes>=1; sesión mixta ⇒ conteo exacto
+    (writes_total = write_file + patch + edit_file)."""
+    db, con = _m1_db(tmp_path)
+    try:
+        _m1_assistant(con, "s-r5-solo", [_m1_call("w1", "write_file", path="/a/x.py")])
+        _m1_tool_result(
+            con, "s-r5-solo", "w1", "write_file",
+            json.dumps({"bytes_written": 10, "verified": True}),
+        )
+        _m1_assistant(
+            con, "s-r5-mix",
+            [
+                _m1_call("w2", "write_file", path="/b/x.py"),
+                _m1_call("p1", "patch", path="/b/x.py", old_string="a", new_string="b"),
+                _m1_call("p2", "patch", path="/b/never.py", old_string="a", new_string="b"),
+            ],
+        )
+        _m1_tool_result(
+            con, "s-r5-mix", "w2", "write_file",
+            json.dumps({"bytes_written": 10, "verified": True}),
+        )
+        _m1_tool_result(
+            con, "s-r5-mix", "p1", "patch",
+            json.dumps({"success": True, "diff": "--- b/x.py\n+++ b/x.py"}),
+        )
+        _m1_tool_result(
+            con, "s-r5-mix", "p2", "patch",
+            json.dumps({"success": True, "diff": "--- b/never.py\n+++ b/never.py"}),
+        )
+        con.commit()
+    finally:
+        con.close()
+
+    data = mods.report.replay(str(db))
+
+    assert data["writes_total"] == 4, (
+        "writes_total = write_file (solo) + write_file + patch + patch (mix): %r"
+        % (data,)
+    )
+    assert data["sessions_with_writes"] == 2, (
+        "la sesión que SOLO hace write_file debe contar en sessions_with_writes: %r"
+        % (data,)
+    )
+    assert data["patch_total"] == 2, data
+    assert data["would_block"] == 1, data  # solo /b/never.py
+    assert data["would_block_pct"] == pytest.approx(25.0), (
+        "would_block_pct de CA11 se calcula sobre writes_total (1/4): %r" % (data,)
+    )
+    assert data["sessions_affected"] == 1, data
