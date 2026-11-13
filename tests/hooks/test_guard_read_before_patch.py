@@ -2926,14 +2926,99 @@ def test_h2_read_post_digest_same_fingerprint_still_blocks_edit(state_root, enfo
     assert code == 0
 
     seen = mods.state.last_seen(SESSION, str(target), root=state_root)
-    assert seen is not None, "el post debe promover la huella del pre (TOCTOU intacto)"
-    assert seen["sha256"] == hashlib_mod.sha256(read_text.encode("utf-8")).hexdigest(), (
-        "la entrada debe llevar el digest de lo LEÍDO, no el del disco actual: %r" % (seen,)
+    assert seen is None, (
+        "el contenido entregado difiere del disco actual (misma huella): la ronda 11 "
+        "endurece el veredicto y no certifica: %r" % (seen,)
     )
-    assert (seen["mtime_ns"], seen["size"]) == (st.st_mtime_ns, st.st_size), seen
 
     code2, payload2 = mods.guard.handle(
         make_event("pre_tool_call", "patch", target, tmp_path), root=state_root
     )
     assert code2 == 2, payload2
     assert payload2["decision"] == "block"
+
+
+# ── Ronda 11: contenido entregado al agente + bit de ejecución del hook ──
+
+
+def test_hb_read_content_differs_from_disk_not_certified(state_root, enforce, tmp_path):
+    """Ronda 11 / H-B (codex, high) — A->B->A determinista: el pre captura A, la
+    tool ENTREGA B, el disco sigue con A. Sin la evidencia del contenido recibido
+    se certificaría A (lo que el agente nunca vio); con verdict False no registra
+    y el patch posterior se bloquea."""
+    mods = load_modules()
+    target = tmp_path / "app.py"
+    target.write_text("A = 1\n", encoding="utf-8")
+
+    code, _ = mods.guard.handle(
+        make_event("pre_tool_call", "read_file", target, tmp_path), root=state_root
+    )
+    assert code == 0
+
+    post = _post_event("read_file", {"path": str(target)}, tmp_path)
+    post["extra"] = {
+        "status": "ok",
+        "result": json.dumps({"content": "1|B = 2", "total_lines": 1, "file_size": 6}),
+    }
+    code, _ = mods.guard.handle(post, root=state_root)
+    assert code == 0
+
+    assert mods.state.last_seen(SESSION, str(target), root=state_root) is None, (
+        "el agente vio B y el disco tiene A: certificar A sería un falso permiso: %r"
+        % (mods.state.last_seen(SESSION, str(target), root=state_root),)
+    )
+    code2, payload2 = mods.guard.handle(
+        make_event("pre_tool_call", "patch", target, tmp_path), root=state_root
+    )
+    assert code2 == 2, payload2
+    assert payload2["decision"] == "block"
+
+
+def test_hb_read_content_matches_disk_certifies(state_root, enforce, tmp_path):
+    """Ronda 11 / H-B (no romper CA2): lectura completa cuyo contenido normalizado
+    coincide con el disco certifica con el digest del disco y el patch pasa."""
+    mods = load_modules()
+    target = tmp_path / "app.py"
+    target.write_text("B = 2\n", encoding="utf-8")
+
+    code, _ = mods.guard.handle(
+        make_event("pre_tool_call", "read_file", target, tmp_path), root=state_root
+    )
+    assert code == 0
+
+    post = _post_event("read_file", {"path": str(target)}, tmp_path)
+    post["extra"] = {
+        "status": "ok",
+        "result": json.dumps({"content": "1|B = 2", "total_lines": 1, "file_size": 6}),
+    }
+    code, _ = mods.guard.handle(post, root=state_root)
+    assert code == 0
+
+    seen = mods.state.last_seen(SESSION, str(target), root=state_root)
+    assert seen is not None, "contenido entregado == disco debe certificar"
+
+    code2, payload2 = mods.guard.handle(
+        make_event("pre_tool_call", "patch", target, tmp_path), root=state_root
+    )
+    assert code2 == 0, payload2
+    assert payload2.get("decision") != "block"
+
+
+def test_ha_guard_hook_is_executable_in_git_index():
+    """Ronda 10 / H-A: el diseño invoca el hook como comando directo. En el índice
+    de git debe estar 100755 (como el resto de scripts/hooks/) y llevar shebang;
+    con 100644 no arranca y, con fail_closed=false, las ediciones quedan permitidas."""
+    import subprocess as sp
+
+    repo = str(__file__).split("/tests/hooks/")[0]
+    out = sp.run(
+        ["git", "-C", repo, "ls-files", "-s", "scripts/hooks/guard_read_before_patch.py"],
+        capture_output=True, text=True,
+    )
+    assert out.returncode == 0, out.stderr
+    mode = out.stdout.split()[0]
+    assert mode == "100755", "el hook debe estar 100755 en git, está %r" % (mode,)
+
+    path = repo + "/scripts/hooks/guard_read_before_patch.py"
+    with open(path, "rb") as fh:
+        assert fh.readline().startswith(b"#!"), "el hook necesita shebang para invocarse directo"

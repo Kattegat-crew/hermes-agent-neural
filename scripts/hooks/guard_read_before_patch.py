@@ -696,6 +696,56 @@ def _read_result_certified(event: dict) -> bool:
     return True
 
 
+_LINE_GUTTER_RE = re.compile(r"^\d+\|")
+
+
+def _read_result_matches_disk(event: dict, tool_input, resolved):
+    """Ronda 11 / H-B: ¿el contenido que read_file ENTREGÓ al agente coincide con
+    el disco AHORA? True/False, o None si no hay evidencia utilizable (lectura
+    parcial, truncada, binaria, error o sin 'content'): ahí el caller cae a la
+    huella del pre, como antes.
+
+    El content de read_file lleva gutter '<n>|' (file_operations._add_line_numbers),
+    así que se normaliza por línea y se comparan listas de líneas (tolera BOM y
+    newline final), no hashes. Evidencia fuerte contra A->B->A: el pre captura A,
+    la tool entrega B, un tercero restaura A; registrar A certificaría contenido
+    que el agente nunca vio — con el verdict False no se registra.
+    """
+    extra = event.get("extra")
+    if not isinstance(extra, dict) or "result" not in extra:
+        return None
+    result = extra.get("result")
+    data = result
+    if isinstance(result, (str, bytes)):
+        try:
+            data = json.loads(result)
+        except (ValueError, TypeError):
+            return None
+    if not isinstance(data, dict):
+        return None
+    if data.get("truncated") or data.get("is_binary") or data.get("error"):
+        return None
+    content = data.get("content")
+    if not isinstance(content, str):
+        return None
+    if isinstance(tool_input, dict) and tool_input.get("offset") not in (None, 0, 1):
+        return None  # página que no arranca en la línea 1: no cubre el archivo
+    if " ... [truncated]" in content or "... [truncated]" in content:
+        return None  # línea clampada por el gutter: no comparable
+    try:
+        with open(resolved, "r", encoding="utf-8", errors="replace") as fh:
+            disk_lines = fh.read().split("\n")
+    except OSError:
+        return None
+    if disk_lines and disk_lines[-1] == "":
+        disk_lines.pop()
+    got_lines = content.split("\n")
+    if got_lines and got_lines[-1] == "":
+        got_lines.pop()
+    stripped = [_LINE_GUTTER_RE.sub("", line, count=1) for line in got_lines]
+    return stripped == disk_lines
+
+
 def _write_file_result_failed(event: dict) -> bool:
     """Ronda 10 / H1: el post de write_file también debe mirar extra.result.
 
@@ -830,6 +880,28 @@ def _post(event: dict, session_id, root=None):
                 mtime_ns = pending.get("mtime_ns")
                 size = pending.get("size")
                 if isinstance(mtime_ns, int) and isinstance(size, int):
+                    # Ronda 11 / H-B: evidencia fuerte = el contenido entregado.
+                    # True -> certifica (disco == lo que el agente vio); False ->
+                    # vio otro contenido que el que hay ahora, no certifica.
+                    # None -> fallback: huella del pre + digest del pre (ronda 10).
+                    verdict = _read_result_matches_disk(event, tool_input, resolved)
+                    if verdict is False:
+                        state.log_event(
+                            session_id, "read_content_mismatch", root=root,
+                            tool=str(tool), path=resolved,
+                        )
+                        return 0, {}
+                    if verdict is True:
+                        current = state.fingerprint(resolved)
+                        disk_sha = state.file_digest(resolved)
+                        record_kwargs = {}
+                        if isinstance(disk_sha, str) and disk_sha:
+                            record_kwargs["sha256"] = disk_sha
+                        state.record_seen(
+                            session_id, tool, resolved, current[0], current[1],
+                            root=root, **record_kwargs,
+                        )
+                        return 0, {}
                     # Ronda 10 / H2: se promueve la huella DEL PRE (lo que el
                     # agente vio, TOCTOU intacto) Y el digest de ese contenido.
                     # El pre de la edición compara digest cuando (mtime,size)
