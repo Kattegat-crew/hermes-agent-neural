@@ -106,8 +106,18 @@ def snapshot_write(session_id, path, root=None, call_id=None):
         d = snapshots_dir(session_id, root)
         d.mkdir(parents=True, exist_ok=True)
         os.chmod(str(d), SNAP_DIR_MODE)
+        # Ronda 9 / G1: el nombre incorpora un digest de la RUTA real. Un patch
+        # V4A multi-archivo captura una pendiente por ruta en el MISMO pre y
+        # todas comparten call_id: con el nombre solo por call_id, la segunda
+        # ruta SOBREESCRIBÍA el snapshot de la primera y el post de esta caía
+        # fail-closed (snapshot consumido/ajeno) en vez de certificar.
         name = _safe_call_id(call_id) if call_id else "snap-" + os.urandom(8).hex()
-        target = d / (name + ".snap")
+        try:
+            real = os.path.realpath(str(path))
+        except OSError:
+            real = str(path)
+        pdigest = hashlib.sha256(real.encode("utf-8", "surrogateescape")).hexdigest()[:12]
+        target = d / (name + "-" + pdigest + ".snap")
         fd = os.open(str(target), os.O_WRONLY | os.O_CREAT | os.O_TRUNC, SNAP_FILE_MODE)
         try:
             with os.fdopen(fd, "w", encoding="utf-8", errors="surrogateescape") as f:
@@ -424,7 +434,11 @@ def last_seen(session_id, path, root=None):
 
 def _pending_entries(session_id, path, ev, root=None) -> list:
     """Todas las pendientes vivas `ev` de la ruta (por realpath), en orden de ledger.
-    Común a read_pending y write_pending (ronda 6 / B1-B2)."""
+    Común a read_pending y write_pending (ronda 6 / B1-B2). Ronda 9 / G2: una
+    pendiente descartada por un marcador 'pending_discard' POSTERIOR (mismo path
+    y mismo call_id, o marcador sin call_id = descarta todas las de esa ruta) se
+    omite: el post que descarta (p. ej. read_file con resultado de error) no
+    puede dejar una pendiente viciada que un empareje posterior promueva."""
     ledger = ledger_path(session_id, root)
     if not ledger.exists():
         return []
@@ -432,8 +446,23 @@ def _pending_entries(session_id, path, ev, root=None) -> list:
         want = os.path.realpath(str(path))
     except OSError:
         want = str(path)
+
+    def _same_path(p):
+        if not isinstance(p, str) or not p:
+            return False
+        try:
+            return os.path.realpath(p) == want
+        except OSError:
+            return p == want
+
+    entries = _read_entries(ledger)
+    discards = []
+    for i, entry in enumerate(entries):
+        if entry.get("ev") == "pending_discard" and _same_path(entry.get("path")):
+            discards.append((i, entry.get("call_id") or None))
+
     out = []
-    for entry in _read_entries(ledger):
+    for i, entry in enumerate(entries):
         if entry.get("ev") != ev:
             continue
         p = entry.get("path")
@@ -443,8 +472,14 @@ def _pending_entries(session_id, path, ev, root=None) -> list:
             same = os.path.realpath(p) == want
         except OSError:
             same = p == want
-        if same:
-            out.append(entry)
+        if not same:
+            continue
+        if any(
+            j > i and (d_call_id is None or d_call_id == entry.get("call_id"))
+            for j, d_call_id in discards
+        ):
+            continue  # descartada por un marcador posterior (ronda 9 / G2)
+        out.append(entry)
     return out
 
 
@@ -517,6 +552,55 @@ def pending_write_match(session_id, path, root=None, call_id=None):
     if len(lst) > 1:
         return "ambiguous", None
     return "none", None
+
+
+def pending_discard(session_id, path, root=None, call_id=None) -> None:
+    """Descarta las pendientes vivas de `path` (ronda 9 / G2): añade un marcador
+    'pending_discard' con el call_id dado; `_pending_entries()` omite toda
+    pendiente cuya posición en el ledger es ANTERIOR a un marcador posterior
+    con el mismo call_id (o con marcador sin call_id = descarta todas las de
+    esa ruta). Lo usa el post de read_file cuando el RESULTADO real de la tool
+    acredita fallo (error/not_found): la huella pendiente corresponde a una
+    lectura cuyo contenido el agente nunca recibió, y dejarla viva permitiría
+    que un empareje posterior (reintento con el mismo call_id derivado, post
+    tardío sin call_id) la promueva. Never lanza (log_event ya degrada)."""
+    log_event(session_id, "pending_discard", root=root, path=str(path),
+              call_id=call_id if call_id else None)
+
+
+def has_pending_call(session_id, call_id, root=None) -> bool:
+    """True si el ledger de la sesión contiene ALGUNA pendiente de escritura
+    ('write_pending') viva de ESTA llamada (call_id), para cualquier ruta
+    (ronda 9 / G1). Lo usa el post de patch V4A para distinguir 'sin pendiente
+    por payload legacy' (el pre nunca corrió: CERO pendientes de la llamada →
+    c False) de 'sin pendiente por procesamiento incompleto' (el pre capturó
+    pendientes de otras rutas del MISMO parche multi-archivo pero no de esta:
+    retorno anticipado en shadow / pre interrumpido → True, fail-closed). Los
+    marcadores 'pending_discard' posteriores con el mismo call_id matan la
+    pendiente (no cuenta como viva)."""
+    if not call_id:
+        return False
+    ledger = ledger_path(session_id, root)
+    if not ledger.exists():
+        return False
+    entries = _read_entries(ledger)
+    for i, entry in enumerate(entries):
+        if entry.get("ev") != _EV_WRITE_PENDING:
+            continue
+        if entry.get("call_id") != call_id:
+            continue
+        dead = False
+        for j in range(i + 1, len(entries)):
+            other = entries[j]
+            if other.get("ev") != "pending_discard":
+                continue
+            other_call = other.get("call_id") or None
+            if other_call is None or other_call == call_id:
+                dead = True
+                break
+        if not dead:
+            return True
+    return False
 
 
 def has_event(session_id, ev, root=None) -> bool:

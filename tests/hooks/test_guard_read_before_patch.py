@@ -2515,3 +2515,328 @@ def test_hb4_replace_mode_unreconstructable_post_fails_closed(
     )
     assert code2 == 2, payload2
     assert payload2["decision"] == "block"
+
+
+# ══════════════════════════════════════════════════════════════════════════════
+#  RONDA 9 — G1 (high): pendientes de TODAS las rutas V4A antes del retorno en
+#  shadow; G2 (high): validación del resultado REAL de read_file antes de
+#  promover la lectura.
+# ══════════════════════════════════════════════════════════════════════════════
+
+
+def _g1_three_files(tmp_path) -> dict:
+    """Tres archivos existentes para un patch V4A multi-archivo."""
+    files = {}
+    for name, body in (
+        ("a.py", "uno = 1\n"),
+        ("b.py", "dos = 2\n"),
+        ("c.py", "tres = 3\n"),
+    ):
+        p = tmp_path / name
+        p.write_text(body, encoding="utf-8")
+        files[name] = p
+    return files
+
+
+_G1_PATCH = _v4a(
+    "*** Update File: a.py", "@@", "-uno = 1", "+uno = 11",
+    "*** Update File: b.py", "@@", "-dos = 2", "+dos = 22",
+    "*** Update File: c.py", "@@", "-tres = 3", "+tres = 33",
+)
+
+
+def _g1_read_only_first(mods, state_root, tmp_path, files):
+    """El agente solo leyó a.py (el post ok registra su huella)."""
+    code, _ = mods.guard.handle(
+        _post_event("read_file", {"path": str(files["a.py"])}, tmp_path),
+        root=state_root,
+    )
+    assert code == 0
+
+
+def _g1_apply_patch(files):
+    """La tool aplica el parche a las 3 rutas."""
+    files["a.py"].write_text("uno = 11\n", encoding="utf-8")
+    files["b.py"].write_text("dos = 22\n", encoding="utf-8")
+    files["c.py"].write_text("tres = 33\n", encoding="utf-8")
+
+
+def _g1_pre_v4a(mods, state_root, tmp_path, patch_text):
+    return mods.guard.handle(
+        {
+            "hook_event_name": "pre_tool_call",
+            "tool_name": "patch",
+            "tool_input": {"mode": "patch", "patch": patch_text},
+            "session_id": SESSION,
+            "cwd": str(tmp_path),
+        },
+        root=state_root,
+    )
+
+
+def _g1_assert_first_certified(mods, state_root, files):
+    """El primero (con pendiente y sha coincidente) SÍ queda registrado con la
+    huella del disco pos-patch (reconstrucción verificada, no huella ciega)."""
+    import hashlib as hashlib_mod
+
+    seen_a = mods.state.last_seen(SESSION, str(files["a.py"]), root=state_root)
+    assert seen_a is not None, (
+        "la primera ruta (leída, pendiente viva, disco pos-patch coincidente) "
+        "debe quedar certificada: %r" % (seen_a,)
+    )
+    st_a = files["a.py"].stat()
+    assert (seen_a["mtime_ns"], seen_a["size"]) == (st_a.st_mtime_ns, st_a.st_size)
+    assert seen_a.get("sha256") == hashlib_mod.sha256(
+        files["a.py"].read_bytes()
+    ).hexdigest()
+
+
+def test_g1_shadow_v4a_race_on_path_without_pending_not_certified_and_blocks(
+    state_root, monkeypatch, tmp_path
+):
+    mods = load_modules()
+    """G1 (codex, high): en shadow, el pre de un patch V4A multi-archivo captura
+    snapshot/pendiente de TODAS las rutas ANTES de decidir el retorno en la
+    primera ruta no leída. Sin eso, la tercera ruta (sin pendiente) cae en el
+    post al fallback legacy y certifica la huella de disco tal como esté en ese
+    instante, aunque un tercero la haya sobrescrito tras el patch: al cambiar a
+    enforce, el pre patch dejaría editar contenido que el agente nunca vio."""
+    files = _g1_three_files(tmp_path)
+    _g1_read_only_first(mods, state_root, tmp_path, files)
+
+    code, _ = _g1_pre_v4a(mods, state_root, tmp_path, _G1_PATCH)
+    assert code == 0  # shadow: no bloquea
+
+    _g1_apply_patch(files)
+    # carrera: un tercero sobrescribe c.py antes del post
+    files["c.py"].write_text("TRES = SOBRESCRITO\n", encoding="utf-8")
+
+    code, _ = mods.guard.handle(
+        _post_event("patch", {"mode": "patch", "patch": _G1_PATCH}, tmp_path),
+        root=state_root,
+    )
+    assert code == 0
+
+    _g1_assert_first_certified(mods, state_root, files)
+    # c.py NO queda registrado (fail-closed, jamás fallback legacy)
+    assert mods.state.last_seen(SESSION, str(files["c.py"]), root=state_root) is None, (
+        "la ruta sin pendiente con disco sobrescrito por un tercero NO debe "
+        "certificarse por el fallback legacy: %r"
+        % (mods.state.last_seen(SESSION, str(files["c.py"]), root=state_root),)
+    )
+
+    # cambio a enforce: el pre patch sobre c.py da exit 2 (la huella ajena
+    # nunca entró al ledger) y sobre a.py sigue pasando (huella vigente)
+    monkeypatch.setenv("READ_BEFORE_PATCH_MODE", "enforce")
+    ev_c = _v4a("*** Update File: c.py", "@@", "-TRES = SOBRESCRITO", "+X = 1")
+    code_c, payload_c = _g1_pre_v4a(mods, state_root, tmp_path, ev_c)
+    assert code_c == 2, payload_c
+    assert payload_c["decision"] == "block"
+    ev_a = _v4a("*** Update File: a.py", "@@", "-uno = 11", "+uno = 111")
+    code_a, payload_a = _g1_pre_v4a(mods, state_root, tmp_path, ev_a)
+    assert code_a == 0, payload_a
+
+
+def test_g1_shadow_v4a_race_on_second_file_not_registered_and_next_enforce_blocks(
+    state_root, monkeypatch, tmp_path
+):
+    mods = load_modules()
+    """G1 (escenario nominal de la ronda 8): shadow con 3 archivos, solo el
+    primero leído, patch V4A exito, un tercero sobrescribe el SEGUNDO archivo
+    antes del post -> el segundo NO queda registrado y tras cambiar a enforce
+    el pre patch da exit 2; el primero (pendiente y sha coincidente) sí queda
+    registrado."""
+    files = _g1_three_files(tmp_path)
+    _g1_read_only_first(mods, state_root, tmp_path, files)
+
+    code, _ = _g1_pre_v4a(mods, state_root, tmp_path, _G1_PATCH)
+    assert code == 0
+
+    _g1_apply_patch(files)
+    # carrera: un tercero sobrescribe el SEGUNDO archivo antes del post
+    files["b.py"].write_text("B = SOBRESCRITO\n", encoding="utf-8")
+
+    code, _ = mods.guard.handle(
+        _post_event("patch", {"mode": "patch", "patch": _G1_PATCH}, tmp_path),
+        root=state_root,
+    )
+    assert code == 0
+
+    _g1_assert_first_certified(mods, state_root, files)
+    assert mods.state.last_seen(SESSION, str(files["b.py"]), root=state_root) is None, (
+        "el segundo archivo (disco sobrescrito por un tercero tras el patch) no "
+        "debe quedar registrado: %r"
+        % (mods.state.last_seen(SESSION, str(files["b.py"]), root=state_root),)
+    )
+
+    monkeypatch.setenv("READ_BEFORE_PATCH_MODE", "enforce")
+    ev_b = _v4a("*** Update File: b.py", "@@", "-B = SOBRESCRITO", "+X = 1")
+    code_b, payload_b = _g1_pre_v4a(mods, state_root, tmp_path, ev_b)
+    assert code_b == 2, payload_b
+    assert payload_b["decision"] == "block"
+
+
+def test_g1_post_v4a_orphan_path_without_pending_fails_closed(
+    state_root, monkeypatch, tmp_path
+):
+    mods = load_modules()
+    """G1 fix (b): en el post V4A, 'sin pendiente por payload legacy' (cero
+    pendientes de ESTA llamada) se distingue de 'sin pendiente por
+    procesamiento incompleto' (la llamada trae 2+ rutas y hay pendientes para
+    algunas pero no para todas): las huérfanas NO se certifican por el fallback
+    legacy; se anota 'write_unverifiable' (fail-closed)."""
+    p1 = tmp_path / "uno.py"
+    p2 = tmp_path / "dos.py"
+    p1.write_text("uno = 1\n", encoding="utf-8")
+    p2.write_text("dos = 2\n", encoding="utf-8")
+
+    # pre SIMULADO incompleto: solo p1 obtuvo snapshot/pendiente (el pre fue
+    # interrumpido tras la primera ruta del parche multi-archivo)
+    call_id = "call-g1-orphan"
+    mtime_ns, size = mods.state.fingerprint(str(p1))
+    snap = mods.state.snapshot_write(SESSION, str(p1), root=state_root, call_id=call_id)
+    assert snap
+    fields = {
+        "path": str(p1),
+        "mtime_ns": mtime_ns,
+        "size": size,
+        "snap": snap,
+        "call_id": call_id,
+    }
+    pre_sha = mods.state.file_digest(str(p1))
+    if pre_sha:
+        fields["pre_sha256"] = pre_sha
+    mods.state.log_event(SESSION, "write_pending", root=state_root, **fields)
+
+    patch = _v4a(
+        "*** Update File: uno.py", "@@", "-uno = 1", "+uno = 11",
+        "*** Update File: dos.py", "@@", "-dos = 2", "+dos = 22",
+    )
+    # la tool aplica el parche a ambas rutas
+    p1.write_text("uno = 11\n", encoding="utf-8")
+    p2.write_text("dos = 22\n", encoding="utf-8")
+
+    post = _event_with_call_id(
+        _post_event("patch", {"mode": "patch", "patch": patch}, tmp_path), call_id
+    )
+    code, _ = mods.guard.handle(post, root=state_root)
+    assert code == 0
+
+    seen1 = mods.state.last_seen(SESSION, str(p1), root=state_root)
+    assert seen1 is not None, (
+        "la ruta CON pendiente y disco coincidente debe certificarse: %r" % (seen1,)
+    )
+    assert mods.state.last_seen(SESSION, str(p2), root=state_root) is None, (
+        "la ruta huérfana (sin pendiente pero dentro de una llamada con otras "
+        "pendientes) NO debe certificarse por el fallback legacy: %r"
+        % (mods.state.last_seen(SESSION, str(p2), root=state_root),)
+    )
+    assert has_event(ledger_events(mods, state_root), "write_unverifiable")
+
+    monkeypatch.setenv("READ_BEFORE_PATCH_MODE", "enforce")
+    ev_p2 = _v4a("*** Update File: dos.py", "@@", "-dos = 22", "+X = 1")
+    code_p2, payload_p2 = _g1_pre_v4a(mods, state_root, tmp_path, ev_p2)
+    assert code_p2 == 2, payload_p2
+    assert payload_p2["decision"] == "block"
+
+
+def _g2_read_post(mods, state_root, tmp_path, target, result):
+    """Pre de read_file + post con status 'ok' y extra.result dado (JSON dict)."""
+    code, _ = mods.guard.handle(
+        make_event("pre_tool_call", "read_file", target, tmp_path), root=state_root
+    )
+    assert code == 0
+    post = _post_event("read_file", {"path": str(target)}, tmp_path)
+    post["extra"] = {"status": "ok", "result": json.dumps(result)}
+    code, _ = mods.guard.handle(post, root=state_root)
+    assert code == 0
+
+
+def test_g2_post_read_file_result_error_discards_pending_and_next_patch_blocks(
+    state_root, enforce, tmp_path
+):
+    mods = load_modules()
+    """G2 (codex, high): el post de read_file con status 'ok' pero resultado
+    real con error NO promueve la pendiente: la descarta (state.pending_discard),
+    no registra nada y el patch posterior da exit 2. El reintento de lectura
+    idéntico SÍ registra (la pendiente viciada ya no ensucia el empareje)."""
+    target = tmp_path / "app.py"
+    target.write_text("value = 1\n", encoding="utf-8")
+
+    _g2_read_post(mods, state_root, tmp_path, target, {"error": "boom"})
+
+    assert mods.state.last_seen(SESSION, str(target), root=state_root) is None, (
+        "una lectura que devolvió error no entregó contenido: no debe registrar "
+        "la ruta: %r"
+        % (mods.state.last_seen(SESSION, str(target), root=state_root),)
+    )
+
+    code2, payload2 = mods.guard.handle(
+        make_event("pre_tool_call", "patch", target, tmp_path), root=state_root
+    )
+    assert code2 == 2, payload2
+    assert payload2["decision"] == "block"
+
+    # reintento de lectura idéntico (mismo payload -> mismo call_id derivado):
+    # el post ok con contenido real SÍ registra, porque la pendiente viciada
+    # fue descartada (sin discard habría DOS pendientes con el mismo call_id y
+    # el empareje sería ambiguo)
+    target.write_text("value = 2\n", encoding="utf-8")
+    _g2_read_post(
+        mods, state_root, tmp_path, target, {"content": "value = 2\n", "total_lines": 1}
+    )
+    seen = mods.state.last_seen(SESSION, str(target), root=state_root)
+    assert seen is not None, (
+        "el reintento exitoso debe registrar la huella (pendiente viciada ya "
+        "descartada): %r" % (seen,)
+    )
+
+
+def test_g2_post_read_file_result_not_found_discards_pending_and_next_patch_blocks(
+    state_root, enforce, tmp_path
+):
+    mods = load_modules()
+    """G2: post de read_file status 'ok' con resultado real not_found=True
+    (ReadResult.to_dict de una ruta ausente) tampoco promueve la pendiente: no
+    registra y el patch posterior se bloquea (exit 2)."""
+    target = tmp_path / "app.py"
+    target.write_text("value = 1\n", encoding="utf-8")
+
+    _g2_read_post(mods, state_root, tmp_path, target, {"not_found": True})
+
+    assert mods.state.last_seen(SESSION, str(target), root=state_root) is None, (
+        "una lectura not_found no vio contenido: no debe registrar la ruta: %r"
+        % (mods.state.last_seen(SESSION, str(target), root=state_root),)
+    )
+
+    code2, payload2 = mods.guard.handle(
+        make_event("pre_tool_call", "patch", target, tmp_path), root=state_root
+    )
+    assert code2 == 2, payload2
+    assert payload2["decision"] == "block"
+
+
+def test_g2_post_read_file_result_content_registers_and_patch_allowed(
+    state_root, enforce, tmp_path
+):
+    mods = load_modules()
+    """G2 (no romper CA2): post de read_file status 'ok' con resultado real
+    normal {'content': ...} promueve la pendiente como siempre y el patch
+    posterior pasa (exit 0)."""
+    target = tmp_path / "app.py"
+    target.write_text("value = 1\n", encoding="utf-8")
+
+    _g2_read_post(
+        mods, state_root, tmp_path, target, {"content": "value = 1\n", "total_lines": 1}
+    )
+
+    seen = mods.state.last_seen(SESSION, str(target), root=state_root)
+    assert seen is not None, "una lectura exitosa debe registrar la ruta"
+    st = target.stat()
+    assert (seen["mtime_ns"], seen["size"]) == (st.st_mtime_ns, st.st_size)
+
+    code, payload = mods.guard.handle(
+        make_event("pre_tool_call", "patch", target, tmp_path), root=state_root
+    )
+    assert code == 0, payload
+    assert payload.get("decision") != "block"

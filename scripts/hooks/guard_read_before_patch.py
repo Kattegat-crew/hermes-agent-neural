@@ -165,6 +165,15 @@ def _pre_v4a(event: dict, session_id, root=None, tool_input=None):
     cwd = event.get("cwd")
     has_cwd = isinstance(cwd, str) and bool(cwd.strip())
 
+    # Ronda 9 / G1: recorrer TODAS las rutas de las cabeceras y capturar
+    # snapshot/pendiente de cada una ANTES de decidir el retorno/bloqueo. En
+    # shadow el bucle de decisión retorna en la PRIMERA ruta no leída: sin esta
+    # separación, las rutas posteriores del mismo parche multi-archivo quedan
+    # sin pendiente y el post las certifica por el fallback legacy (huella de
+    # disco al llegar el post, aunque un tercero las haya sobrescrito tras el
+    # patch). Se captura aunque luego se bloquee: el post de un patch bloqueado
+    # no registra nada de todos modos (ronda 2 / H1).
+    decided_ops = []
     for action, raw_path in ops:
         if action == "Add":
             continue  # crear no es ciego
@@ -183,12 +192,11 @@ def _pre_v4a(event: dict, session_id, root=None, tool_input=None):
             resolved = os.path.realpath(raw_path)
         if not os.path.exists(resolved):
             continue  # CA5: la herramienta de edición reportará su propio error
-
-        # Ronda 6 / B2: snapshot del contenido previo para la certificación del
-        # post (reconstrucción V4A). Se captura aunque luego se bloquee: el post
-        # de un patch bloqueado no registra nada de todos modos (ronda 2 / H1).
         _snapshot_write_pending(session_id, resolved, root=root, call_id=_call_id(event))
+        decided_ops.append(resolved)
 
+    # Decisión (ronda 9 / G1): SOLO tras capturar todas las pendientes.
+    for resolved in decided_ops:
         try:
             ok, last, current = _fingerprint_ok(session_id, resolved, root=root)
         except Exception as exc:  # CA10: fail-open
@@ -561,6 +569,25 @@ def _post_v4a(event: dict, session_id, root=None, tool_input=None):
                     session_id, resolved, root=root, call_id=call_id
                 )
                 if status == "none":
+                    # Ronda 9 / G1: distinguir 'sin pendiente por payload
+                    # legacy' (el pre nunca corrió para esta llamada: CERO
+                    # pendientes de escritura con este call_id) de 'sin
+                    # pendiente por procesamiento incompleto' (el pre capturó
+                    # pendientes de OTRAS rutas del MISMO parche multi-archivo
+                    # pero no de esta: retorno anticipado en shadow o pre
+                    # interrumpido). En el segundo caso la huella de disco
+                    # puede certificar contenido ajeno (otro proceso
+                    # sobrescribió tras el patch) -> fail-closed: no registrar
+                    # y anotar 'write_unverifiable'.
+                    if state.has_pending_call(session_id, call_id, root=root):
+                        state.log_event(
+                            session_id,
+                            "write_unverifiable",
+                            root=root,
+                            tool="patch",
+                            path=resolved,
+                        )
+                        continue
                     # Sin pendiente: payload legacy sin pre (imposible en
                     # producción, el pre corre en toda instalación viva):
                     # comportamiento de antes (ronda 6 / B2).
@@ -624,6 +651,43 @@ def _result_certified(event: dict) -> bool:
     if data.get("success") is False or data.get("verified") is False:
         return False
     return data.get("success") is True or data.get("verified") is True
+
+
+def _read_result_certified(event: dict) -> bool:
+    """Validación del resultado estructurado de read_file (ronda 9 / G2): el
+    status 'ok' del runner NO garantiza que la lectura entregara contenido —
+    extra.result puede traer el JSON de un ReadResult fallido
+    (tools/file_operations_common.py: ReadResult → {content, total_lines,
+    error, not_found, ...}; to_dict omite los campos None).
+
+    Devuelve True solo si la lectura es acreditable:
+    - sin clave 'result' en extra (payload legacy/antiguo): True — se conserva
+      el comportamiento de antes (el status ya filtró los fallos marcados y los
+      posts sin result de las rondas previas dependen de esa vía).
+    - result no parseable a dict (JSON corrupto) o no-dict: False (no
+      verificable -> no promover).
+    - con 'error' presente, not_found truthy o success=False: False — la
+      lectura NO entregó contenido al agente.
+    - éxito (ReadResult.to_dict sin marcas de error): True."""
+    extra = event.get("extra")
+    if not isinstance(extra, dict) or "result" not in extra:
+        return True  # payload sin resultado estructurado: comportamiento legacy
+    result = extra.get("result")
+    data = result
+    if isinstance(result, (str, bytes)):
+        try:
+            data = json.loads(result)
+        except (ValueError, TypeError):
+            return False  # JSON corrupto: no se puede acreditar la lectura
+    if not isinstance(data, dict):
+        return False
+    if data.get("error"):
+        return False
+    if data.get("not_found"):
+        return False
+    if data.get("success") is False:
+        return False
+    return True
 
 
 def _post(event: dict, session_id, root=None):
@@ -704,6 +768,17 @@ def _post(event: dict, session_id, root=None):
 
     try:
         if tool == "read_file":
+            # Ronda 9 / G2: validar el resultado REAL de la tool antes de
+            # promover. El status 'ok' del runner no garantiza que la lectura
+            # entregara contenido (extra.result puede traer error/not_found):
+            # con resultado fallido o no verificable se DESCARTA la pendiente
+            # (no promover, ni ahora ni en un empareje posterior) y no se
+            # registra nada.
+            if not _read_result_certified(event):
+                state.pending_discard(
+                    session_id, resolved, root=root, call_id=_call_id(event)
+                )
+                return 0, {}
             # Ronda 4 / TOCTOU-H1 + ronda 6 / B1: empareje de la pendiente por
             # call_id (extra.tool_call_id o derivado del payload, idéntico en
             # pre y post). Con VARIAS pendientes vivas del mismo path y sin
