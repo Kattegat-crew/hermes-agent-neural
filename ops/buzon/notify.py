@@ -38,7 +38,10 @@ __all__ = ["NotifyResult", "notify", "EVENTO_NUEVO", "firmar"]
 
 EVENTO_NUEVO = "buzon.nuevo"
 RUTA_POR_DEFECTO = "buzon"
-TIMEOUT_POR_DEFECTO = 2.0
+# Medido en el gateway real (13-nov): bajo carga el ACK puede tardar ~17 s. Un
+# timeout corto produce un falso negativo —el evento SÍ se aceptó— y el barrido
+# volvería a despertar al agente por el mismo ticket.
+TIMEOUT_POR_DEFECTO = 20.0
 
 
 @dataclass(frozen=True)
@@ -61,12 +64,17 @@ def firmar(secreto: str, timestamp: str, cuerpo: bytes) -> str:
 
 
 def _id_idempotencia(payload: Mapping[str, Any], cuerpo: bytes) -> str:
-    """Clave estable: el ticket si existe; si no, el hash del cuerpo."""
+    """Clave estable: el ticket si existe; si no, el hash completo del cuerpo.
+
+    Se usa el digest entero (256 bits) y no un prefijo: dos payloads distintos con
+    el mismo prefijo colisionarían en la ventana de idempotencia del gateway
+    (1 h) y el segundo mensaje se perdería en silencio.
+    """
     for clave in ("ticket_id", "id", "msg_id"):
         valor = payload.get(clave)
         if isinstance(valor, str) and valor.strip():
             return valor.strip()
-    return hashlib.sha256(cuerpo).hexdigest()[:32]
+    return hashlib.sha256(cuerpo).hexdigest()
 
 
 def notify(
@@ -90,23 +98,24 @@ def notify(
     if not perfil or not isinstance(perfil, str):
         return NotifyResult(False, None, "sin_perfil")
 
-    cuerpo = json.dumps(dict(payload), ensure_ascii=False, separators=(",", ":")).encode("utf-8")
-    timestamp = str(int(clock()))
-    url = f"{base_url.rstrip('/')}/p/{perfil}/webhooks/{ruta}"
-    request = urllib.request.Request(
-        url,
-        data=cuerpo,
-        method="POST",
-        headers={
-            "Content-Type": "application/json",
-            "X-Webhook-Timestamp": timestamp,
-            "X-Webhook-Signature-V2": firmar(secret, timestamp, cuerpo),
-            "webhook-id": _id_idempotencia(payload, cuerpo),
-            "User-Agent": "hermes-buzon-notify/1",
-        },
-    )
-
+    # Todo el cuerpo va dentro del try: un payload no serializable o un `clock`
+    # que no devuelve un número no pueden escapar del notificador.
     try:
+        cuerpo = json.dumps(dict(payload), ensure_ascii=False, separators=(",", ":")).encode("utf-8")
+        timestamp = str(int(clock()))
+        url = f"{base_url.rstrip('/')}/p/{perfil}/webhooks/{ruta}"
+        request = urllib.request.Request(
+            url,
+            data=cuerpo,
+            method="POST",
+            headers={
+                "Content-Type": "application/json",
+                "X-Webhook-Timestamp": timestamp,
+                "X-Webhook-Signature-V2": firmar(secret, timestamp, cuerpo),
+                "webhook-id": _id_idempotencia(payload, cuerpo),
+                "User-Agent": "hermes-buzon-notify/1",
+            },
+        )
         with urllib.request.urlopen(request, timeout=timeout) as respuesta:
             return NotifyResult(True, int(respuesta.status))
     except urllib.error.HTTPError as exc:

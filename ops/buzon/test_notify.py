@@ -165,3 +165,42 @@ def test_el_modulo_no_importa_el_gateway():
         texto = fh.read()
     for prohibido in ("import gateway", "from gateway", "import hermes"):
         assert prohibido not in texto
+
+
+class _NoSerializable:
+    """Objeto que json.dumps no puede serializar."""
+
+
+def test_payload_no_serializable_no_lanza():
+    """Hallazgo del reviewer: json.dumps estaba fuera del try y escapaba."""
+    res = notify(
+        "ullr",
+        {"event_type": "buzon.nuevo", "objeto": _NoSerializable()},
+        base_url="http://127.0.0.1:9",
+        secret=SECRET,
+    )
+    assert res.sent is False
+    assert res.reason == "error"
+
+
+def test_clock_no_callable_no_lanza():
+    res = notify(
+        "ullr",
+        {"event_type": "buzon.nuevo", "ticket_id": "x-1"},
+        base_url="http://127.0.0.1:9",
+        secret=SECRET,
+        clock=None,
+    )
+    assert res.sent is False
+
+
+def test_id_idempotencia_sin_ticket_usa_digest_completo():
+    """Dos cuerpos distintos no pueden colisionar por un prefijo de 32 hex."""
+    cuerpo = b'{"event_type":"buzon.nuevo"}'
+    identificador = notify_mod._id_idempotencia({}, cuerpo)
+    assert len(identificador) == 64
+    assert identificador == hashlib.sha256(cuerpo).hexdigest()
+
+
+def test_id_idempotencia_prefiere_el_ticket():
+    assert notify_mod._id_idempotencia({"ticket_id": "tkt-9"}, b"{}") == "tkt-9"

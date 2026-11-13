@@ -46,8 +46,15 @@ SECRET_CANDIDATES = (
 )
 
 try:  # el notificador se instala junto a este script
+    _AQUI = str(Path(__file__).resolve().parent)
+    if _AQUI not in sys.path:
+        sys.path.insert(0, _AQUI)
     from notify import notify as _notify
-except Exception:  # pragma: no cover - si falta el módulo, el buzón sigue funcionando
+except Exception as _exc:  # pragma: no cover
+    # Se avisa por stderr en vez de callar: un import roto desactivaría el push
+    # y todo parecería normal hasta que alguien preguntara por la latencia.
+    print(f"[buzon] aviso push desactivado: no se pudo importar notify ({_exc.__class__.__name__})",
+          file=sys.stderr)
     _notify = None
 
 
@@ -57,13 +64,19 @@ def _ensure_dir(p: Path) -> Path:
 
 
 def _leer_secreto(explicito: str | None = None) -> str:
-    """Secreto de la ruta de webhook: argumento, o archivo de secretos."""
-    if explicito:
+    """Secreto de la ruta de webhook: argumento, o archivo de secretos.
+
+    Un `""` explícito significa "sin secreto" y no cae al archivo: es lo que usan
+    las pruebas para no depender de los secretos reales de la máquina.
+    """
+    if explicito is not None:
         return explicito.strip()
     for ruta in SECRET_CANDIDATES:
         try:
             datos = json.loads(ruta.read_text(encoding="utf-8"))
         except Exception:
+            continue
+        if not isinstance(datos, dict):
             continue
         for clave in ("secret", "hmac_secret", "token"):
             valor = datos.get(clave)

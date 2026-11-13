@@ -131,7 +131,8 @@ def test_no_webhook_bandera_desactiva_el_envio(tmp_path):
 
 def test_sin_secreto_no_intenta(tmp_path):
     with _Server(status=202) as srv:
-        out = _run(tmp_path, "--webhook-base", srv.url)
+        # "" explícito = sin secreto. Hermético: no lee los secretos reales de la máquina.
+        out = _run(tmp_path, "--webhook-base", srv.url, "--webhook-secret", "")
         assert out.returncode == 0, out.stderr
         assert srv.hits == []
         assert "sin aviso" in out.stdout.lower()
