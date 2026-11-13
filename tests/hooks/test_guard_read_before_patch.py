@@ -2840,3 +2840,100 @@ def test_g2_post_read_file_result_content_registers_and_patch_allowed(
     )
     assert code == 0, payload
     assert payload.get("decision") != "block"
+
+
+# ── Ronda 10: resultado real de write_file + digest de la lectura promovida ──
+
+
+def test_h1_write_file_result_error_not_recorded_and_patch_blocks(state_root, enforce, tmp_path):
+    """Ronda 10 / H1 (codex, high): post de write_file status 'ok' con
+    WriteResult {'error': ...} NO registra aunque el contenido en disco coincida
+    con tool_input['content']: la tool no escribió; un patch posterior se bloquea."""
+    mods = load_modules()
+    target = tmp_path / "app.py"
+    intent = "value = 1\n"
+    target.write_text(intent, encoding="utf-8")
+
+    ev = _post_event_with_result(
+        "write_file", {"path": str(target), "content": intent}, tmp_path,
+        result={"bytes_written": 0, "error": "permission denied"},
+    )
+    code, _ = mods.guard.handle(ev, root=state_root)
+    assert code == 0
+
+    assert mods.state.last_seen(SESSION, str(target), root=state_root) is None, (
+        "una escritura con error no vio/escribió contenido: no debe registrar: %r"
+        % (mods.state.last_seen(SESSION, str(target), root=state_root),)
+    )
+    code2, payload2 = mods.guard.handle(
+        make_event("pre_tool_call", "patch", target, tmp_path), root=state_root
+    )
+    assert code2 == 2, payload2
+    assert payload2["decision"] == "block"
+
+
+def test_h1_write_file_result_verified_none_still_records(state_root, enforce, tmp_path):
+    """Ronda 10 / H1 (no romper CA4): WriteResult sin 'success' (verified omitido
+    porque el backend no pudo verificar) sigue certificando por intención."""
+    mods = load_modules()
+    target = tmp_path / "app.py"
+    intent = "value = 1\n"
+    target.write_text(intent, encoding="utf-8")
+
+    ev = _post_event_with_result(
+        "write_file", {"path": str(target), "content": intent}, tmp_path,
+        result={"bytes_written": len(intent)},
+    )
+    code, _ = mods.guard.handle(ev, root=state_root)
+    assert code == 0
+    assert mods.state.last_seen(SESSION, str(target), root=state_root) is not None
+
+    code2, payload2 = mods.guard.handle(
+        make_event("pre_tool_call", "patch", target, tmp_path), root=state_root
+    )
+    assert code2 == 0, payload2
+
+
+def test_h2_read_post_digest_same_fingerprint_still_blocks_edit(state_root, enforce, tmp_path):
+    """Ronda 10 / H2 (codex, high): el archivo cambia entre la lectura y el post
+    conservando size y mtime (utime restaurado). El post promueve la huella DEL
+    PRE (TOCTOU) y AHORA también el digest de lo leído; el pre de la edición
+    desempata por digest y bloquea aunque (mtime,size) coincidan."""
+    import hashlib as hashlib_mod
+    import os as os_mod
+
+    mods = load_modules()
+    target = tmp_path / "app.py"
+    read_text = "value = 1\n"
+    target.write_text(read_text, encoding="utf-8")
+    st = target.stat()
+
+    code, _ = mods.guard.handle(
+        make_event("pre_tool_call", "read_file", target, tmp_path), root=state_root
+    )
+    assert code == 0
+
+    target.write_text("valuE = 1\n", encoding="utf-8")  # mismo tamaño, otro contenido
+    os_mod.utime(str(target), ns=(st.st_atime_ns, st.st_mtime_ns))
+    st2 = target.stat()
+    assert (st2.st_size, st2.st_mtime_ns) == (st.st_size, st.st_mtime_ns), (
+        "el escenario exige huella (size, mtime_ns) IDÉNTICA"
+    )
+
+    post = _post_event("read_file", {"path": str(target)}, tmp_path)
+    post["extra"] = {"status": "ok", "result": json.dumps({"content": read_text})}
+    code, _ = mods.guard.handle(post, root=state_root)
+    assert code == 0
+
+    seen = mods.state.last_seen(SESSION, str(target), root=state_root)
+    assert seen is not None, "el post debe promover la huella del pre (TOCTOU intacto)"
+    assert seen["sha256"] == hashlib_mod.sha256(read_text.encode("utf-8")).hexdigest(), (
+        "la entrada debe llevar el digest de lo LEÍDO, no el del disco actual: %r" % (seen,)
+    )
+    assert (seen["mtime_ns"], seen["size"]) == (st.st_mtime_ns, st.st_size), seen
+
+    code2, payload2 = mods.guard.handle(
+        make_event("pre_tool_call", "patch", target, tmp_path), root=state_root
+    )
+    assert code2 == 2, payload2
+    assert payload2["decision"] == "block"

@@ -432,6 +432,11 @@ def _pre_read(event: dict, session_id, root=None):
         return 0, {}  # la lectura fallará; no hay contenido que certificar
     try:
         mtime_ns, size = state.fingerprint(resolved)
+        # Ronda 10 / H2: el digest del contenido visto se captura en el pre (no
+        # solo mtime/size). El post lo compara con el disco antes de promover: un
+        # cambio que conserve tamaño y mtime (utime manual, granularidad) queda
+        # detectado por contenido y NO certifica una versión que el agente no leyó.
+        pre_sha = state.file_digest(resolved)
         state.log_event(
             session_id,
             "read_pending",
@@ -439,6 +444,7 @@ def _pre_read(event: dict, session_id, root=None):
             path=resolved,
             mtime_ns=mtime_ns,
             size=size,
+            sha256=pre_sha,
             call_id=_call_id(event),  # ronda 6 / B1: empareje pre-post por llamada
         )
     except Exception as exc:  # CA10: fail-open
@@ -690,6 +696,35 @@ def _read_result_certified(event: dict) -> bool:
     return True
 
 
+def _write_file_result_failed(event: dict) -> bool:
+    """Ronda 10 / H1: el post de write_file también debe mirar extra.result.
+
+    WriteResult.to_dict (tools/file_operations_common.py) emite
+    {bytes_written, verified, error, ...} SIN clave 'success': un dict sin
+    errores y sin verified=False es una escritura acreditable (verified=None
+    cuando el backend no pudo verificar). Rechaza SOLO fallos explícitos:
+    error presente, success=False o verified=False; JSON corrupto -> True
+    (no verificable). Sin clave 'result' (payload legacy) -> False.
+    """
+    extra = event.get("extra")
+    if not isinstance(extra, dict) or "result" not in extra:
+        return False
+    result = extra.get("result")
+    data = result
+    if isinstance(result, (str, bytes)):
+        try:
+            data = json.loads(result)
+        except (ValueError, TypeError):
+            return True
+    if not isinstance(data, dict):
+        return True
+    if data.get("error"):
+        return True
+    if data.get("success") is False or data.get("verified") is False:
+        return True
+    return False
+
+
 def _post(event: dict, session_id, root=None):
     """post_tool_call de read_file|write_file|patch|edit_file: registra la huella.
     Registra SOLO si extra.status == 'ok' o si la clave no viene (payload legacy con
@@ -795,13 +830,33 @@ def _post(event: dict, session_id, root=None):
                 mtime_ns = pending.get("mtime_ns")
                 size = pending.get("size")
                 if isinstance(mtime_ns, int) and isinstance(size, int):
+                    # Ronda 10 / H2: se promueve la huella DEL PRE (lo que el
+                    # agente vio, TOCTOU intacto) Y el digest de ese contenido.
+                    # El pre de la edición compara digest cuando (mtime,size)
+                    # coinciden: un cambio que conservó tamaño y mtime ya no
+                    # autoriza editar (antes el post solo guardaba huella).
+                    pre_sha = pending.get("sha256")
+                    record_kwargs = {}
+                    if isinstance(pre_sha, str) and pre_sha:
+                        record_kwargs["sha256"] = pre_sha
                     state.record_seen(
-                        session_id, tool, resolved, mtime_ns, size, root=root
+                        session_id, tool, resolved, mtime_ns, size, root=root,
+                        **record_kwargs,
                     )
                     return 0, {}
             state.record(session_id, tool, resolved, ok=True, root=root)
             return 0, {}
         if tool == "write_file":
+            # Ronda 10 / H1: el status 'ok' del runner no acredita la escritura.
+            # WriteResult.to_dict puede traer {'error': ...} (o verified=False);
+            # con el contenido coincidente en disco registrar certificaría una
+            # escritura que la tool rechazó. Fail-closed: ni registro ni fixture.
+            if _write_file_result_failed(event):
+                state.log_event(
+                    session_id, "write_unverifiable", root=root,
+                    tool=str(tool), path=resolved,
+                )
+                return 0, {}
             content = (
                 tool_input.get("content")
                 if isinstance(tool_input, dict)
