@@ -37,13 +37,18 @@ def run_composio_proxy(url, account):
 
 def fetch_campaign_data(campaign_id, account):
     # 1. Campaign metadata
-    camp_url = f"https://graph.facebook.com/v21.0/{campaign_id}?fields=id,name,status,lifetime_budget,daily_budget"
+    camp_url = f"https://graph.facebook.com/v21.0/{campaign_id}?fields=id,name,status,effective_status,lifetime_budget,daily_budget"
     camp_data = run_composio_proxy(camp_url, account) or {}
 
     # 2. Insights today
     today_url = f"https://graph.facebook.com/v21.0/{campaign_id}/insights?fields=impressions,clicks,spend,cpc,ctr,reach&date_preset=today"
     today_data = run_composio_proxy(today_url, account) or {}
     today_insights = (today_data.get("data") or [{}])[0] if today_data.get("data") else {}
+
+    # 2b. Insights yesterday (para distinguir "recién parado" de "sin entrega")
+    yest_url = f"https://graph.facebook.com/v21.0/{campaign_id}/insights?fields=spend,impressions&date_preset=yesterday"
+    yest_data = run_composio_proxy(yest_url, account) or {}
+    yest_insights = (yest_data.get("data") or [{}])[0] if yest_data.get("data") else {}
 
     # 3. Insights lifetime / total
     total_url = f"https://graph.facebook.com/v21.0/{campaign_id}/insights?fields=impressions,clicks,spend,cpc,ctr,reach&date_preset=maximum"
@@ -56,17 +61,74 @@ def fetch_campaign_data(campaign_id, account):
     adsets_list = adsets_data.get("data") or []
 
     # 5. Top Ads insights
-    ads_url = f"https://graph.facebook.com/v21.0/{campaign_id}/ads?fields=id,name,status,insights.date_preset(maximum){{impressions,clicks,spend,cpc,ctr}}&limit=50"
+    ads_url = f"https://graph.facebook.com/v21.0/{campaign_id}/ads?fields=id,name,status,effective_status,insights.date_preset(maximum){{impressions,clicks,spend,cpc,ctr}}&limit=50"
     ads_data = run_composio_proxy(ads_url, account) or {}
     ads_list = ads_data.get("data") or []
 
     return {
         "campaign": camp_data,
         "today": today_insights,
+        "yesterday": yest_insights,
         "total": total_insights,
         "adsets": adsets_list,
         "ads": ads_list
     }
+
+
+def delivery_mode(data):
+    """Clasifica la entrega real: 'running' | 'idle' | 'paused'.
+
+    - paused : campaña o anuncios sin effective_status ACTIVE.
+    - idle   : ACTIVE pero sin impresiones ni gasto hoy y ayer (no está corriendo).
+    - running: ACTIVE con actividad real.
+    """
+    camp = data.get("campaign", {})
+    status = (camp.get("effective_status") or camp.get("status") or "").upper()
+    active_ads = sum(
+        1 for ad in data.get("ads", [])
+        if (ad.get("effective_status") or ad.get("status") or "").upper() == "ACTIVE"
+    )
+    spend_today = float((data.get("today") or {}).get("spend") or 0.0)
+    spend_yest = float((data.get("yesterday") or {}).get("spend") or 0.0)
+    imps_today = int((data.get("today") or {}).get("impressions") or 0)
+    imps_yest = int((data.get("yesterday") or {}).get("impressions") or 0)
+
+    if status != "ACTIVE" or active_ads == 0:
+        return "paused", active_ads
+    if spend_today == 0 and spend_yest == 0 and imps_today == 0 and imps_yest == 0:
+        return "idle", active_ads
+    return "running", active_ads
+
+
+def build_no_delivery_payload(data, client_name, mode, active_ads):
+    """Tarjeta compacta cuando NO hay anuncios corriendo: sin métricas inventadas."""
+    camp = data.get("campaign", {})
+    camp_name = camp.get("name", "Campaña Meta Ads")
+    status = (camp.get("effective_status") or camp.get("status") or "UNKNOWN").upper()
+    total = data.get("total", {})
+    spend_total = float(total.get("spend") or 0.0)
+    now_str = datetime.now().strftime("%d/%m/%Y %I:%M %p")
+
+    if mode == "paused":
+        title = f"⏸️ Sin anuncios corriendo: {client_name}"
+        color = 0x808080
+        detail = (f"Campaña en estado `{status}` con {active_ads} anuncios activos. "
+                  "No se envía informe de desempeño.")
+    else:
+        title = f"🟡 Activa sin entrega: {client_name}"
+        color = 0xFFD166
+        detail = (f"La campaña figura `ACTIVE` ({active_ads} anuncios) pero **sin gasto ni impresiones "
+                  "hoy ni ayer**. Revisar presupuesto, facturación o fecha de programación.")
+
+    embed = {
+        "title": title,
+        "description": (f"**Campaña**: `{camp_name}`\n{detail}\n"
+                        f"**Gasto acumulado histórico**: ${spend_total:,.0f} COP\n"
+                        f"**Corte**: {now_str} (Bogotá)"),
+        "color": color,
+        "footer": {"text": f"{client_name} • Intelligence Reporting System"}
+    }
+    return {"embeds": [embed]}
 
 def build_discord_payload(data, client_name="The Grand Paradise Club"):
     camp = data.get("campaign", {})
@@ -128,6 +190,11 @@ def build_discord_payload(data, client_name="The Grand Paradise Club"):
 
     now_str = datetime.now().strftime("%d/%m/%Y %I:%M %p")
 
+    active_ads = sum(
+        1 for ad in data.get("ads", [])
+        if (ad.get("effective_status") or ad.get("status") or "").upper() == "ACTIVE"
+    )
+
     embed = {
         "title": f"📊 Desempeño Diario Meta Ads: {client_name}",
         "description": f"**Campaña**: `{camp_name}`\n**Objetivo**: Tráfico y Conversiones VIP (CBO)\n**Corte**: {now_str} (Bogotá)",
@@ -160,7 +227,7 @@ def build_discord_payload(data, client_name="The Grand Paradise Club"):
             },
             {
                 "name": "🛡️ Estado del Sistema",
-                "value": f"🟢 **Estado**: `{camp_status}` | 12 anuncios en circulación | Sin restricciones de políticas",
+                "value": f"🟢 **Estado**: `{camp_status}` | {active_ads} anuncios activos en circulación",
                 "inline": False
             }
         ],
@@ -222,8 +289,14 @@ def main():
     print(f"Fetching data for Campaign {args.campaign_id} via {args.account}...")
     data = fetch_campaign_data(args.campaign_id, args.account)
 
-    print("Building Discord embed...")
-    payload = build_discord_payload(data, client_name=args.client_name)
+    mode, active_ads = delivery_mode(data)
+
+    if mode != "running":
+        print(f"No hay anuncios corriendo (modo={mode}, anuncios activos={active_ads}); enviando aviso compacto.")
+        payload = build_no_delivery_payload(data, args.client_name, mode, active_ads)
+    else:
+        print("Building Discord embed...")
+        payload = build_discord_payload(data, client_name=args.client_name)
 
     print(f"Sending to Discord webhook...")
     success = send_to_discord(webhook_url, payload)

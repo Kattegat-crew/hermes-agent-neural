@@ -59,6 +59,26 @@ Esta skill opera como despacho unificado. El detalle procedural y gotchas espec�
   gasta un token.
 - Detalle, evidencia medida, límites y política de pasadas: [references/qa-video-nativo.md](references/qa-video-nativo.md)
 
+## Protocolo de montaje, QA y entrega de un reel de campaña (v4)
+
+Canon completo con comandos y números medidos:
+[`docs/reels/protocolo-montaje-entrega-reel.md`](../../../docs/reels/protocolo-montaje-entrega-reel.md)
+(ruta absoluta: `/opt/marketing-campaign-generator/docs/reels/protocolo-montaje-entrega-reel.md`).
+Reglas que no se negocian:
+
+1. **El entregable es un link verificado, no un mp4.** Listo = página 200 + `Content-Type: video/mp4`
+   + `206` en range + md5 local == md5 en PROD. Los mp4 van adjuntos en el mismo mensaje del «listo».
+2. **Versión inmutable.** Cada corte sube `--ver vN`; nunca se sobrescribe lo que el cliente ya vio.
+3. **Tres capas de QA en orden:** `qa_gate.py` (determinista, 0 tokens) → `video_native_qa.py` con el
+   `guion.txt` (aceptación: `blocking: []` y score ≥ 8.0, los `warnings` se leen) → OCR `tesseract -l spa`
+   de subtítulos, letrero y pie legal. Se reportan los números, no la impresión.
+4. **Tamaños medidos en el frame, no en el parámetro.** Subtítulo 72 px (banda ≈147 px para 2 renglones),
+   logo 156 px de caja con margen 36 px; al subir de tamaño se re-mide el ancho de la peor línea con PIL.
+5. **Una sola vez el mensaje:** si la VO cae en el cierre, su subtítulo se omite (el letrero ya lo dice).
+6. **Publicación dual:** `/opt/reels/assets/<campaña>-reels-rN/` para el cliente (público, sin SSO) y
+   `/opt/reels/campanas/...` para el equipo (SSO). Nunca se pasa un link `/campanas/**` a un cliente.
+   Cada `<video src>` con `?v=<md5[0:8]>`.
+
 ## Lecciones duras (pagadas en producción)
 
 - **El entregable viaja en el mismo mensaje que el «listo».** Decir «el video está hecho» sin `MEDIA:/ruta` obliga al humano a pedirlo («A ver el vídeo») y convierte una entrega en dos turnos. Si el resultado es un archivo, la frase de cierre y el adjunto van juntos, siempre.
@@ -66,6 +86,12 @@ Esta skill opera como despacho unificado. El detalle procedural y gotchas espec�
 - **Voz de reels de campaña (Golden/Lucky) = SIEMPRE ElevenLabs, NUNCA kokoro.** Corrección dura del Admin (12-nov-2026): para piezas de marca la voz es la del personaje ya contratada en ElevenLabs (`ELEVENLABS_API_KEY` del `.env` del repo, modelo `eleven_multilingual_v2`) — Goldie `qWWAqFomnJ99VwQLREfT` ("Voz-Goldie"), Lucky `lWweqHoPFkas8ijavnVj` ("Lucky final") — cubierta por el plan ($0). Kokoro/nan (ver `voz-es-coste-cero-nan`) es SOLO para drafts internos sin marca; proponerlo para un reel de campaña es un error que ya costó un reproche.
 - **Catálogo de video i2v de fal (precios verificados 12-nov-2026):** `fal-ai/veo3*` está DEPRECADO. Vigentes: Kling v3 Pro y Standard image-to-video $0.14/s, Kling 4.0 $0.157/s (3–30 s, multi-shot), Kling AI Avatar v2 Pro $0.115/s (lipsync con audio propio), MiniMax H3 Max i2v $0.035/s, Wan 3.0 i2v $0.05/s. Estrategia de mezcla por reel: planos hero del personaje en Kling v3 Pro, planos de ambiente/local en Wan 3.0 o H3 Max (4× más barato). Ver `references/reel-campana-video-modelos-voz.md`.
 - **"Gente real" en video IA tiene solo dos vías:** animar la foto real de la persona (image-to-video con su foto) o avatar-lipsync con su audio (Kling Avatar / Omnihuman). Ambas exigen consentimiento de uso de imagen — en publicidad de apuestas, doblemente sensible. Sin foto + permiso, lo único posible es gente fotorrealista generada.
+- **PNG con `-loop 1` dentro de un `filter_complex` debe llevar `-framerate` y `-t`:** sin acotar la entrada, el overlay sigue pidiendo frames después de que el video principal termina y el render no cierra nunca (CPU encendida ~78 min para un corte de 24 s). Toda imagen en bucle entra como `-loop 1 -framerate {FPS} -t {total} -i ...` y la salida lleva además `-t {total} -shortest`.
+- **`-shortest` recorta el cierre si la cadena de audio termina antes que el video:** `sidechaincompress` termina cuando acaba la llave (última VO) y `amix duration=first` termina en su primera entrada, así que el master sale más corto que la línea de tiempo y pierde el cierre. Rellenar llave y mix con `apad=whole_dur={total}`, `amix` final con `duration=longest`, y verificar con `ffprobe format=duration` contra el `total` impreso por el timeline antes de dar nada por bueno.
+- **Los overlays nacen grandes: subtítulos y logo se juzgan en el móvil, no en el monitor.** En 1080x1920 los valores por defecto legibles son subtítulo ~72 px (banda medida ≈145 px de alto, bloque en y≈0.745H para no entrar en la zona que tapa la UI) y caja de logo ~156 px (alto visible ≥100 px); entregar 46 px de subtítulo u 88 px de logo es un reproche garantizado («muy chiquito, se pierde»). Antes de declarar un cambio de tamaño, MEDIRLO: extraer un frame con ffmpeg y medir el bbox de la banda de texto / logo por umbral de brillo (PIL), reportar px medidos, no px intencionales. En logos PNG con padding transparente la caja NO es el tamaño visible: medir el alpha bbox del PNG fuente (un logo puede tener solo ~63% de su lienzo con contenido).
+- **La frase del cierre no se subtitula si ya la dice el letrero.** Cuando la última VO cae dentro de la ventana del cierre (`onset >= entrada del cierre`), se omite ese subtítulo y el letrero carga el mensaje: el audio sigue igual. Dos textos idénticos en el mismo frame se perciben como solape, el revisor VLM lo marca y con subtítulos grandes el frame se quema.
+- **Una iteración por feedback publica la nueva versión como principal en TODAS las superficies en la misma pasada:** página pública Y galería interna, con la versión anterior conservada como link etiquetado («vN · subtítulo chico»), src de video con cache-buster `?v=<8 chars del hash>` y md5 remoto == local en cada mp4 antes de dar por publicada la iteración.
+- **Nunca entregar un link sin probarlo con curl desde fuera del host.** Un `HTTP 200` interno no prueba nada: la página puede devolver `302 location: .../authorize` (SSO) y el cliente vería un login, no el reel. Verificar desde el contenedor `HTTP/2 + content-type + content-length` en la página, el mp4 (con `Range: bytes=0-1023` → `206`) y el poster; comparar md5 local vs. remoto en entregables pesados. Si la ruta de galería interna exige SSO, publicar una página de revisión autocontenida (HTML con rutas relativas al mp4 + posters generados con `ffmpeg -ss` + `<video poster controls>`) bajo la ruta pública de assets y entregar ESA url; la galería interna va como complemento, no como entregable.
 
 ## Casos de Uso Disponibles
 - **ai-video-model-costing**: Ver [references/ai-video-model-costing.md](file:///root/hermes-agent-legacy-docker/skills/core/video-reel-pipeline/references/ai-video-model-costing.md)
