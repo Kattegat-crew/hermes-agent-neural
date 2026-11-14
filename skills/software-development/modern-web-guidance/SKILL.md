@@ -59,6 +59,8 @@ renames, copias). No busques guías de front para un cambio de backend.
 ```
 
 - Acepta varios IDs separados por coma.
+- Usa el id **exacto** que devolvió `search`: un id inventado falla con
+  `No guide found for use case: <id>` y no hay fuzzy matching.
 - Si la salida es grande (>9.5 KB) el CLI **no imprime el contenido**: lo deja en
   `/opt/hermes-agent-data/cache/scratch/mwg-guide-*.md` y devuelve la ruta. Leer
   ese archivo completo con `read_file` — nunca con `cat`/`head`.
