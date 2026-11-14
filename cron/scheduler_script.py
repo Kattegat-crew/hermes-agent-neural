@@ -32,6 +32,29 @@ if TYPE_CHECKING:
 # Log-record parity with the origin module.
 logger = logging.getLogger("cron.scheduler")
 
+# HERMES-SIGTERM-AUDIT (04-nov-2026): pids a los que el runner SI entrego la senal.
+# Distingue un SIGTERM propio (timeout/cancel) de uno externo cuando el script muere con
+# -15 y no queda rastro en killguard. Los caminos timeout/cancel devuelven su propio
+# mensaje ANTES del bloque de auditoria, asi que un -15 que llega alla es externo por
+# construccion: la comprobacion _propio queda como defensa por si un refactor posterior
+# reutiliza ese bloque. El set se acota para no crecer sin techo en un scheduler de vida
+# larga.
+_PIDS_SENALADOS: set[int] = set()
+_PIDS_SENALADOS_MAX = 4096
+
+
+def _registrar_pid_senalado(pid: int) -> None:
+    """Anota un pid al que el runner entrego una senal, con techo de memoria.
+
+    Solo se registra si la senal salio de verdad (evita un falso positivo de
+    "runner" cuando el kill fue rechazado por el guard), y el set se vacia al
+    llegar al techo: es un registro heuristico, no un estado que dependa de
+    conservar entradas viejas.
+    """
+    if len(_PIDS_SENALADOS) >= _PIDS_SENALADOS_MAX:
+        _PIDS_SENALADOS.clear()
+    _PIDS_SENALADOS.add(int(pid))
+
 
 def _positive_int(raw) -> Optional[int]:
     """``int(float(raw))`` when > 0, else None; raises on unparsable input."""
@@ -235,19 +258,46 @@ def _terminate_cron_script_process(proc: subprocess.Popen) -> None:
 def _terminate_process_group(proc: subprocess.Popen) -> None:
     """POSIX: TERM the script's process group, then KILL if ANY member survived (a survivor holds
     the pipe write ends open and the caller's communicate() would block on EOF forever)."""
+    # HERMES-KILLGUARD (18-oct-2026): no se señala un grupo cuyo líder fue reciclado.
+    try:
+        from agent import killguard as _kg
+    except Exception:
+        _kg = None
     try:
         process_group = os.getpgid(proc.pid)
-        os.killpg(process_group, signal.SIGTERM)  # windows-footgun: ok — POSIX-only branch
     except (ProcessLookupError, PermissionError, OSError):
         return
+    if _kg is not None:
+        _stamp = _kg.proc_starttime(process_group)
+        _kg.log_signal("cron.scheduler_script._terminate_process_group", proc.pid, process_group, _stamp)
+        if not _kg.safe_killpg(process_group, signal.SIGTERM, expected_starttime=_stamp,
+                               site="cron.scheduler_script.term"):
+            return
+        _registrar_pid_senalado(int(proc.pid))
+    else:
+        _stamp = None
+        try:
+            os.killpg(process_group, signal.SIGTERM)  # windows-footgun: ok — POSIX-only branch
+        except (ProcessLookupError, PermissionError, OSError):
+            return
+        _registrar_pid_senalado(int(proc.pid))
     with contextlib.suppress(subprocess.TimeoutExpired):
         proc.wait(timeout=1.0)
-    try:
-        os.killpg(process_group, 0)  # windows-footgun: ok — POSIX-only branch
-    except (ProcessLookupError, OSError):
-        return
+    if _kg is not None:
+        if not _kg.safe_killpg(process_group, 0, expected_starttime=_stamp,
+                               site="cron.scheduler_script.probe"):
+            return
+    else:
+        try:
+            os.killpg(process_group, 0)  # windows-footgun: ok — POSIX-only branch
+        except (ProcessLookupError, OSError):
+            return
     with contextlib.suppress((ProcessLookupError, PermissionError, OSError)):
-        os.killpg(process_group, getattr(signal, "SIGKILL", signal.SIGTERM))
+        if _kg is not None:
+            _kg.safe_killpg(process_group, getattr(signal, "SIGKILL", signal.SIGTERM),
+                            expected_starttime=_stamp, site="cron.scheduler_script.kill")
+        else:
+            os.killpg(process_group, getattr(signal, "SIGKILL", signal.SIGTERM))
 
 
 def _terminate_cron_script_tree(proc: subprocess.Popen) -> None:
@@ -271,6 +321,7 @@ def _terminate_cron_script_tree(proc: subprocess.Popen) -> None:
         return fallback("agent.deadline.kill_process_tree unavailable", exc_info=True)
     try:
         if kill_process_tree(pid):
+            _registrar_pid_senalado(int(pid))
             return
     except Exception:
         return fallback("Cron script tree-kill failed for pid %s", pid, exc_info=True)
@@ -488,7 +539,12 @@ def _run_job_script(
         proc = subprocess.Popen(
             argv, stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True,
             cwd=workdir or str(path.parent), env=env, **popen_kwargs)
-        deadline = time.monotonic() + script_timeout
+        try:
+            _pgid_spawn = os.getpgid(proc.pid)
+        except (ProcessLookupError, PermissionError, OSError):
+            _pgid_spawn = None
+        _t0 = time.monotonic()
+        deadline = _t0 + script_timeout
         while True:
             # Tree-kill on cancel AND timeout: killpg misses setsid grandchildren (watchdogs,
             # backgrounded shell jobs); kill_process_tree snapshots descendants BEFORE signalling.
@@ -527,6 +583,19 @@ def _run_job_script(
             stdout = stderr = "[REDACTED - redaction failed]"
 
         if proc.returncode != 0:
+            if proc.returncode == -getattr(signal, "SIGTERM", 15):
+                # Este bloque solo se alcanza cuando communicate() devuelve con el
+                # script ya muerto: los kills del runner salen antes por
+                # timeout/cancel con su propio mensaje, asi que aqui "EXTERNO" es
+                # la lectura esperada y "runner" solo se emite si el pid quedo
+                # registrado por una ruta que si llegue hasta aqui.
+                _propio = int(proc.pid) in _PIDS_SENALADOS
+                logger.warning(
+                    "cron.sigterm_audit: script=%s pid=%s pgid=%s origen=%s duracion=%.2fs "
+                    "gateway_pid=%s",
+                    path, proc.pid, _pgid_spawn,
+                    "runner(timeout/cancel)" if _propio else "EXTERNO",
+                    time.monotonic() - _t0, os.getpid())
             parts = [f"Script exited with code {proc.returncode}"]
             if stderr:
                 parts.append(f"stderr:\n{stderr}")
