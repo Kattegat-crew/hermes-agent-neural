@@ -29,7 +29,7 @@ Ejemplo real: pieza con `slot=12:00` y ventana `slot ± 2h` (12:00–14:00). El 
 3. **Simula la condición SIN ejecutar la acción** (replica la lógica del job, no la dispares). Imprime si la condición "debería abrir" en el próximo tick. Si sí → es timing, no bug. No ejecutes el publish/dispatch para "probar".
 
 4. **Verifica el periférico** (si el job depende de un servicio externo — Composio, una API, un túnel, OAuth):
-   - Usa el shim/del contenedor, no el binario directo. En este stack: `data/.local/bin/composio` (SSH a `root@10.0.2.1`, el host) — el binario local `~/.composio/composio` NO lista conexiones útiles (ver `composio-cli`/`cron-runtime-verification` para el detalle del puente).
+   - Usa el binario que resuelva `command -v composio` **en el namespace donde corre el job**; no asumas la ruta. En el gateway es un shim que puentea al CLI real del host, y la IP del puente cambia por servidor (`10.0.2.1` es la red `br-f3514c19e0f0` de PROD; en DEV no existe). El binario `~/.composio/composio` NO lista conexiones útiles (ver `composio-cli`/`cron-runtime-verification` para el detalle del puente).
    - `connections list` → parsear el bloque relevante y mirar `status: ACTIVE`. Para el detalle por cuenta: `dev connected-accounts list`.
    - Conexión `EXPIRED`/`EXPIRING` = la acción corre pero el proveedor la rechaza → el `.md` muestra fallo aunque el código esté sano.
 

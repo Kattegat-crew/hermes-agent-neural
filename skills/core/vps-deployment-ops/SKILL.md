@@ -19,7 +19,7 @@ Usa esta skill inmediatamente cuando se presente cualquiera de estas situaciones
 - Peticiones del usuario: *"despliega esto en el VPS"*, *"aprovisiona el nuevo servidor"*, *"ejecuta este comando en el host"*, *"configura el portal estático tras Nginx"*, o *"reinicia el servicio systemd"*.
 - Configuración inicial de una máquina Ubuntu/Debian limpia (Docker, Docker Compose, Tailscale, ufw).
 - Despliegue y actualización de portales web estáticos (Vite, Astro, HTML) con proxy inverso Nginx.
-- Ejecución de comandos del host desde dentro de un contenedor o sandbox vía SSH (`10.0.2.1` o Tailscale IP).
+- Ejecución de comandos del host desde dentro de un contenedor o sandbox vía alias SSH (`host` para DEV, `prod` para PROD) o Tailscale IP.
 
 ---
 
@@ -50,12 +50,15 @@ sudo ufw enable
 Cuando un agente dentro de un contenedor necesita interactuar con el host o invocar binarios locales (como `composio`, `tailscale` o herramientas CLI fuera del contenedor):
 
 ```bash
-# Conexión por red interna de Docker hacia el host
-ssh -o BatchMode=yes -o StrictHostKeyChecking=no root@10.0.2.1 "<comando_en_el_host>"
+# DEV (vmi3151337): el agente YA corre en el VPS → shell local, sin SSH
+# (si hace falta pasar por SSH, `ssh host` resuelve a 127.0.0.1 en ~/.ssh/config)
+ssh -o BatchMode=yes host "systemctl status hermes-agent.service --no-pager"
 
-# Comprobar estado de servicios en el host
-ssh -o BatchMode=yes root@10.0.2.1 "systemctl status hermes-agent.service --no-pager"
+# PROD (vmi3513784): alias → Tailscale 100.73.30.29
+ssh -o BatchMode=yes prod "systemctl status hermes-agent.service --no-pager"
 ```
+
+`10.0.2.1` **no es universal**: es el gateway de la red Docker `br-f3514c19e0f0` en PROD (verificado 14-nov-2026). Solo responde desde contenedores conectados a esa red; desde el shell del host o desde DEV no existe (en DEV el bridge es `docker0` = `10.0.0.1`).
 
 ---
 
