@@ -22,4 +22,4 @@ echo "== 5) wrapper completo =="
 $NS bash "$WRAP"; echo "EXIT=$?"
 
 echo "== 6) binarios externos que usa el script =="
-$NS sh -c 'command -v composio || echo "composio NO en contenedor (usa puente ssh root@10.0.2.1)"'
+$NS sh -c 'command -v composio || echo "composio NO en contenedor (usa el shim del gateway o el binario del host; la IP del puente depende del servidor)"'
