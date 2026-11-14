@@ -59,6 +59,26 @@ Esta skill opera como despacho unificado. El detalle procedural y gotchas espec�
   gasta un token.
 - Detalle, evidencia medida, límites y política de pasadas: [references/qa-video-nativo.md](references/qa-video-nativo.md)
 
+## Protocolo de montaje, QA y entrega de un reel de campaña (v4)
+
+Canon completo con comandos y números medidos:
+[`docs/reels/protocolo-montaje-entrega-reel.md`](../../../docs/reels/protocolo-montaje-entrega-reel.md)
+(ruta absoluta: `/opt/marketing-campaign-generator/docs/reels/protocolo-montaje-entrega-reel.md`).
+Reglas que no se negocian:
+
+1. **El entregable es un link verificado, no un mp4.** Listo = página 200 + `Content-Type: video/mp4`
+   + `206` en range + md5 local == md5 en PROD. Los mp4 van adjuntos en el mismo mensaje del «listo».
+2. **Versión inmutable.** Cada corte sube `--ver vN`; nunca se sobrescribe lo que el cliente ya vio.
+3. **Tres capas de QA en orden:** `qa_gate.py` (determinista, 0 tokens) → `video_native_qa.py` con el
+   `guion.txt` (aceptación: `blocking: []` y score ≥ 8.0, los `warnings` se leen) → OCR `tesseract -l spa`
+   de subtítulos, letrero y pie legal. Se reportan los números, no la impresión.
+4. **Tamaños medidos en el frame, no en el parámetro.** Subtítulo 72 px (banda ≈147 px para 2 renglones),
+   logo 156 px de caja con margen 36 px; al subir de tamaño se re-mide el ancho de la peor línea con PIL.
+5. **Una sola vez el mensaje:** si la VO cae en el cierre, su subtítulo se omite (el letrero ya lo dice).
+6. **Publicación dual:** `/opt/reels/assets/<campaña>-reels-rN/` para el cliente (público, sin SSO) y
+   `/opt/reels/campanas/...` para el equipo (SSO). Nunca se pasa un link `/campanas/**` a un cliente.
+   Cada `<video src>` con `?v=<md5[0:8]>`.
+
 ## Lecciones duras (pagadas en producción)
 
 - **El entregable viaja en el mismo mensaje que el «listo».** Decir «el video está hecho» sin `MEDIA:/ruta` obliga al humano a pedirlo («A ver el vídeo») y convierte una entrega en dos turnos. Si el resultado es un archivo, la frase de cierre y el adjunto van juntos, siempre.
@@ -66,6 +86,9 @@ Esta skill opera como despacho unificado. El detalle procedural y gotchas espec�
 - **Voz de reels de campaña (Golden/Lucky) = SIEMPRE ElevenLabs, NUNCA kokoro.** Corrección dura del Admin (12-nov-2026): para piezas de marca la voz es la del personaje ya contratada en ElevenLabs (`ELEVENLABS_API_KEY` del `.env` del repo, modelo `eleven_multilingual_v2`) — Goldie `qWWAqFomnJ99VwQLREfT` ("Voz-Goldie"), Lucky `lWweqHoPFkas8ijavnVj` ("Lucky final") — cubierta por el plan ($0). Kokoro/nan (ver `voz-es-coste-cero-nan`) es SOLO para drafts internos sin marca; proponerlo para un reel de campaña es un error que ya costó un reproche.
 - **Catálogo de video i2v de fal (precios verificados 12-nov-2026):** `fal-ai/veo3*` está DEPRECADO. Vigentes: Kling v3 Pro y Standard image-to-video $0.14/s, Kling 4.0 $0.157/s (3–30 s, multi-shot), Kling AI Avatar v2 Pro $0.115/s (lipsync con audio propio), MiniMax H3 Max i2v $0.035/s, Wan 3.0 i2v $0.05/s. Estrategia de mezcla por reel: planos hero del personaje en Kling v3 Pro, planos de ambiente/local en Wan 3.0 o H3 Max (4× más barato). Ver `references/reel-campana-video-modelos-voz.md`.
 - **"Gente real" en video IA tiene solo dos vías:** animar la foto real de la persona (image-to-video con su foto) o avatar-lipsync con su audio (Kling Avatar / Omnihuman). Ambas exigen consentimiento de uso de imagen — en publicidad de apuestas, doblemente sensible. Sin foto + permiso, lo único posible es gente fotorrealista generada.
+- **PNG con `-loop 1` en un `filter_complex` debe llevar `-framerate` y `-t`:** sin acotar la entrada, el overlay sigue pidiendo frames después de que el video principal termina y el render no cierra nunca (Golden v3 pasó 78 min encendiendo CPU para un corte de 24 s). Toda entrada de imagen en bucle entra como `-loop 1 -framerate {FPS} -t {total} -i ...`, y la salida lleva además `-t {total} -shortest`.
+- **La frase del cierre no se subtitula si ya la dice el letrero.** Con subtítulos grandes, el letrero del cierre y el subtítulo de la última VO dicen lo mismo en el mismo frame y el revisor lo marca como solape (pasó en Lucky v4, t=16.8). Regla: si `onset >= entrada_del_cierre`, se omite el subtítulo; el audio sigue y el letrero carga el mensaje.
+- **`-shortest` recorta el cierre si la cadena de audio termina antes que el video.** Dos causas encadenadas: `sidechaincompress` termina cuando acaba la llave (la última VO) y `amix duration=first` termina en su primera entrada. Resultado medido: master de 21.3 s cuando la línea de tiempo decía 24.56 s, con el cierre fuera. La llave y el mix se rellenan con `apad=whole_dur={total}` y el `amix` final va con `duration=longest`; se verifica con `ffprobe format=duration` contra el `total` impreso por el timeline antes de dar nada por bueno.
 
 ## Casos de Uso Disponibles
 - **ai-video-model-costing**: Ver [references/ai-video-model-costing.md](file:///root/hermes-agent-legacy-docker/skills/core/video-reel-pipeline/references/ai-video-model-costing.md)
