@@ -113,13 +113,15 @@ def _message(
     )
 
 
-def _thread_obj(*, thread_id=321, name="my thread", owner_id=777, parent_id=555):
+def _thread_obj(*, thread_id=321, name="my thread", owner_id: int | None = 777,
+                parent_id=555, applied_tags=None):
     t = _DiscordThread()
     t.id = thread_id
     t.name = name
     t.owner_id = owner_id
     t.parent_id = parent_id
     t.guild = SimpleNamespace(id=999)
+    t.applied_tags = list(applied_tags or [])
     return t
 
 
@@ -331,16 +333,86 @@ class TestThreadRenamed:
         }
 
     def test_non_rename_update_dropped(self):
-        """Archive/slowmode/tag updates share on_thread_update — only real
-        renames fire."""
+        """Archive/slowmode updates share on_thread_update — with neither a
+        rename nor a tag delta nothing fires (tag deltas have their own case
+        below)."""
         a = _adapter()
         seen = _capture(a)
-        before = _thread_obj(name="same")
-        after = _thread_obj(name="same")
+        before = _thread_obj(name="same", applied_tags=["1"])
+        after = _thread_obj(name="same", applied_tags=["1"])
 
         asyncio.run(a._on_platform_thread_update(before, after))
 
         assert seen == []
+
+
+class TestThreadTagsChanged:
+    """Applied-tag deltas fire their own normalized event (#tablero de tickets)."""
+
+    def test_tag_change_normalized_and_fired(self):
+        a = _adapter()
+        seen = _capture(a)
+        before = _thread_obj(applied_tags=["111", "222"])
+        after = _thread_obj(applied_tags=["111", "333"])
+
+        asyncio.run(a._on_platform_thread_update(before, after))
+
+        event, source = seen[0]
+        assert event == {
+            "platform": "discord",
+            "event_type": "thread_tags_changed",
+            "payload": {
+                "thread_id": "321",
+                "parent_chat_id": "555",
+                "old_tags": ["111", "222"],
+                "new_tags": ["111", "333"],
+            },
+        }
+        assert source.chat_id == "321"
+        assert source.user_id == "777"
+
+    def test_unchanged_tags_dropped(self):
+        a = _adapter()
+        seen = _capture(a)
+
+        asyncio.run(a._on_platform_thread_update(
+            _thread_obj(applied_tags=["111"]), _thread_obj(applied_tags=["111"])))
+
+        assert seen == []
+
+    def test_rename_and_tag_change_fire_both(self):
+        a = _adapter()
+        seen = _capture(a)
+
+        asyncio.run(a._on_platform_thread_update(
+            _thread_obj(name="old", applied_tags=["111"]),
+            _thread_obj(name="new", applied_tags=["111", "222"])))
+
+        assert [e["event_type"] for e, _ in seen] == [
+            "thread_renamed", "thread_tags_changed"]
+
+    def test_missing_owner_fails_closed(self):
+        """Owner-less thread: source cannot authorize, so the event drops."""
+        a = _adapter()
+        seen = _capture(a)
+
+        asyncio.run(a._on_platform_thread_update(
+            _thread_obj(owner_id=None, applied_tags=["111"]),
+            _thread_obj(owner_id=None, applied_tags=["112"])))
+
+        assert seen == []
+
+    def test_tag_objects_normalize_to_ids(self):
+        a = _adapter()
+        seen = _capture(a)
+
+        asyncio.run(a._on_platform_thread_update(
+            _thread_obj(applied_tags=[SimpleNamespace(id="777")]),
+            _thread_obj(applied_tags=[SimpleNamespace(id="888")])))
+
+        payload = seen[0][0]["payload"]
+        assert payload["old_tags"] == ["777"]
+        assert payload["new_tags"] == ["888"]
 
 
 class TestRunnerBoundaryIntegration:

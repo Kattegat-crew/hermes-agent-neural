@@ -1852,7 +1852,9 @@ class DiscordAdapter(DiscordAuthorizationMixin, DiscordMediaMixin, DiscordThread
         await self._emit_platform_event("thread_created", lambda: self._thread_event_parts(thread, _extra))
 
     async def _on_platform_thread_update(self, before, after) -> None:
-        """Normalize ``on_thread_update`` renames into ``thread_renamed``; non-rename updates are dropped."""
+        """Normalize ``on_thread_update``: renames fire ``thread_renamed`` and
+        applied-tag deltas fire ``thread_tags_changed``; every other update
+        (archive, slowmode, lock) drops."""
         def _build():
             old_name = getattr(before, "name", None)
             new_name = getattr(after, "name", None)
@@ -1862,7 +1864,30 @@ class DiscordAdapter(DiscordAuthorizationMixin, DiscordMediaMixin, DiscordThread
                 "old_name": old_name[:256] if isinstance(old_name, str) else None,
                 "new_name": new_name[:256],
             })
+
+        def _build_tags():
+            old_tags = self._thread_tag_ids(before)
+            new_tags = self._thread_tag_ids(after)
+            if old_tags == new_tags:
+                return None
+            logger.debug("[%s] thread %s tags %s -> %s", self.name,
+                         getattr(after, "id", "?"), old_tags, new_tags)
+            return self._thread_event_parts(after, lambda _t, _o: {
+                "old_tags": old_tags,
+                "new_tags": new_tags,
+            })
+
         await self._emit_platform_event("thread_renamed", _build)
+        await self._emit_platform_event("thread_tags_changed", _build_tags)
+
+    @staticmethod
+    def _thread_tag_ids(thread) -> list[str]:
+        """Applied-tag ids as plain strings — ``discord.Tag`` objects or raw ids
+        both normalize, never the SDK objects themselves."""
+        ids = []
+        for tag in (getattr(thread, "applied_tags", None) or []):
+            ids.append(str(getattr(tag, "id", tag))[:128])
+        return ids
 
     async def _cancel_bot_task(self) -> None:
         """Cancel and await the background client.start() task, if running."""
