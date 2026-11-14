@@ -78,6 +78,14 @@ Reglas que no se negocian:
 6. **Publicación dual:** `/opt/reels/assets/<campaña>-reels-rN/` para el cliente (público, sin SSO) y
    `/opt/reels/campanas/...` para el equipo (SSO). Nunca se pasa un link `/campanas/**` a un cliente.
    Cada `<video src>` con `?v=<md5[0:8]>`.
+7. **La caché de segmentos se valida por huella, no por existencia.** Cada `seg-0N.mp4` lleva un
+   `seg-0N.sha` con la huella de `L`, `tpad`, grade, push-in y `size`+`mtime_ns` del mp4 de origen;
+   al heredar por hardlink se copia `seg-0*.*` (mp4 **y** sha) o la caché se invalida sola y
+   re-codifica todo. La huella se escribe SOLO tras un render exitoso: un ffmpeg caído nunca deja
+   un par mp4+sha que la siguiente corrida acepte como válido.
+
+### Mantenimiento de este skill
+Este `SKILL.md` existe en 3 rutas (`<repo>/.agents/skills/video-reel-pipeline/`, canónico `/opt/hermes-agent/skills/core/video-reel-pipeline/`, perfil `/opt/hermes-agent-data/skills/core/video-reel-pipeline/`) y debe quedar byte-idéntico en las tres: verificar con `md5sum` tras cualquier edición. `references/protocolo-montaje-entrega-reel.md` es copia autocontenida del canon del repo (`docs/reels/protocolo-montaje-entrega-reel.md`): si cambias el canon, re-copia el reference en las tres rutas en la misma pasada. Antes de editar, dif de las copias: el ciclo autónomo de aprendizaje puede haber añadido lecciones solo en la copia del perfil — fusiónalas, nunca las sobrescribas.
 
 ## Lecciones duras (pagadas en producción)
 
@@ -91,6 +99,12 @@ Reglas que no se negocian:
 - **Los overlays nacen grandes: subtítulos y logo se juzgan en el móvil, no en el monitor.** En 1080x1920 los valores por defecto legibles son subtítulo ~72 px (banda medida ≈145 px de alto, bloque en y≈0.745H para no entrar en la zona que tapa la UI) y caja de logo ~156 px (alto visible ≥100 px); entregar 46 px de subtítulo u 88 px de logo es un reproche garantizado («muy chiquito, se pierde»). Antes de declarar un cambio de tamaño, MEDIRLO: extraer un frame con ffmpeg y medir el bbox de la banda de texto / logo por umbral de brillo (PIL), reportar px medidos, no px intencionales. En logos PNG con padding transparente la caja NO es el tamaño visible: medir el alpha bbox del PNG fuente (un logo puede tener solo ~63% de su lienzo con contenido).
 - **La frase del cierre no se subtitula si ya la dice el letrero.** Cuando la última VO cae dentro de la ventana del cierre (`onset >= entrada del cierre`), se omite ese subtítulo y el letrero carga el mensaje: el audio sigue igual. Dos textos idénticos en el mismo frame se perciben como solape, el revisor VLM lo marca y con subtítulos grandes el frame se quema.
 - **Una iteración por feedback publica la nueva versión como principal en TODAS las superficies en la misma pasada:** página pública Y galería interna, con la versión anterior conservada como link etiquetado («vN · subtítulo chico»), src de video con cache-buster `?v=<8 chars del hash>` y md5 remoto == local en cada mp4 antes de dar por publicada la iteración.
+- **Los cambios del montador se prueban en un build humo, nunca sobre la versión vigente.** Renderizar
+  con `--ver smoke*` en un `build-smoke*` aparte heredando `seg-0*.*` por hardlink; la prueba mínima
+  antes de confiar en el cambio es «0 segmentos re-renderizados» y `ffprobe format=duration` idéntico
+  al master vigente, y para la invalidación de caché, que la huella cambie al mover `L` o `tpad`.
+  Limpiar los artefactos del humo con `shutil.rmtree` de Python: `rm -rf` bajo `/opt` dispara la regla
+  de aprobación y trunca toda la cadena de comandos.
 - **Nunca entregar un link sin probarlo con curl desde fuera del host.** Un `HTTP 200` interno no prueba nada: la página puede devolver `302 location: .../authorize` (SSO) y el cliente vería un login, no el reel. Verificar desde el contenedor `HTTP/2 + content-type + content-length` en la página, el mp4 (con `Range: bytes=0-1023` → `206`) y el poster; comparar md5 local vs. remoto en entregables pesados. Si la ruta de galería interna exige SSO, publicar una página de revisión autocontenida (HTML con rutas relativas al mp4 + posters generados con `ffmpeg -ss` + `<video poster controls>`) bajo la ruta pública de assets y entregar ESA url; la galería interna va como complemento, no como entregable.
 
 ## Casos de Uso Disponibles
