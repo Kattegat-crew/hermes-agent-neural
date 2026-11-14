@@ -23,9 +23,12 @@ planning/<campaña>/03-piezas/reels/<fecha>-r<N>/
 
 - **Una versión no se sobrescribe.** Cada corte nuevo sube `--ver v5`, `v6`… y el anterior queda
   consultable en la galería. Sobrescribir rompe la comparación con el cliente y la caché de Cloudflare.
-- Los intermedios (`build-v*`) no se versionan en git (`.gitignore`: `planning/**/reel/build-*/`).
+- Los intermedios (`build-v*`) no se versionan en git (`.gitignore`: `planning/**/reel/build-v*/`).
+  Ojo: la regla ignora **nuevos** archivos; si alguno quedó trackeado antes, se saca con `git rm --cached`.
 - Para no re-codificar el Paso A al subir de versión, los segmentos se heredan con hardlink:
-  `mkdir build-v5 && cp -l build-v4/seg-0*.mp4 build-v5/`.
+  `mkdir build-v5 && cp -l build-v4/seg-0*.mp4 build-v5/`. El script valida una **huella
+  (`seg-0N.sha`)** de `L`, `tpad`, grade, push-in y del mp4 de origen: si algo cambió, rehace
+  el segmento en vez de reutilizarlo.
 
 ---
 
@@ -64,15 +67,16 @@ hay silencio muerto entre líneas ni VO pisada por el crossfade.
 | Logo | caja de 156 px de alto, margen derecho 36 px, `y=30` | ojo: el PNG puede traer padding transparente — Golden muestra 63 % de su caja (98 px visibles), Lucky 100 % (156 px) |
 | Letrero de cierre | panel `x 40→560`, `y 0.335H→0.585H`, radio 30 | no debe cubrir la cara del personaje (en Lucky lo roza: pendiente decidir lado) |
 | Pie legal | franja de 88 px en `y=0.845H` | `+18 · PREGUNTA EN CAJA · AUTORIZA COLJUEGOS · SOLO MAYORES DE EDAD` |
-| Zona segura | nada de texto bajo `0.85H` | la UI de Reels/TikTok tapa el 15 % inferior |
+| Zona segura | nada de texto narrativo bajo `0.85H` | la UI de Reels/TikTok tapa el 15 % inferior |
+| Excepción declarada | el **pie legal** vive a propósito en `y=0.845H` (franja 1622-1710 px), dentro de esa banda | es requisito legal colocarlo al pie; si la plataforma lo tapa, se sube la franja y se re-mide |
 
 **Regla de tamaño:** si el Admin pide «más grande», se sube en el script (`SUB_SIZE`, `LOGO_H`) y se
 **mide en el frame**, no se declara. Referencia de esta iteración: subtítulo 46 → 72 px (+56 %),
 logo 88 → 156 px (+77 %).
 
 **No se duplica el mensaje:** si la última VO cae dentro del cierre, su subtítulo se omite porque el
-letrero ya dice la frase (regla `onset >= X[-1] → skip`). Duplicarlo quema el frame y el revisor lo
-marca como solape.
+letrero ya dice la frase (regla `onset >= X[-1] - 0.01 → skip`, el margen absorbe el redondeo a
+centésimas del timeline). Duplicarlo quema el frame y el revisor lo marca como solape.
 
 ---
 
