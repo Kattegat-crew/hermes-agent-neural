@@ -8,6 +8,8 @@ tags: [react, nextjs, typescript, tailwind, frontend, performance, bundle, scaff
 
 Frontend development patterns, performance optimization, and automation tools for React/Next.js applications.
 
+> **Antes de escribir HTML/CSS/JS de cliente**, consulta la skill `modern-web-guidance` (209 guías oficiales de Chrome: `search "<2-5 palabras>"` → `retrieve <id>`) para no repetir patrones obsoletos. Para auditorías de deuda web usa `legacy-scan`. No requiere red ni privilegios: el comando exacto está en esa skill.
+
 ## Table of Contents
 
 - [Project Scaffolding](#project-scaffolding)
