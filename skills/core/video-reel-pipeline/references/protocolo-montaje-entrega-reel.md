@@ -26,9 +26,10 @@ planning/<campaña>/03-piezas/reels/<fecha>-r<N>/
 - Los intermedios (`build-v*`) no se versionan en git (`.gitignore`: `planning/**/reel/build-v*/`).
   Ojo: la regla ignora **nuevos** archivos; si alguno quedó trackeado antes, se saca con `git rm --cached`.
 - Para no re-codificar el Paso A al subir de versión, los segmentos se heredan con hardlink:
-  `mkdir build-v5 && cp -l build-v4/seg-0*.mp4 build-v5/`. El script valida una **huella
-  (`seg-0N.sha`)** de `L`, `tpad`, grade, push-in y del mp4 de origen: si algo cambió, rehace
-  el segmento en vez de reutilizarlo.
+  `mkdir build-v5 && cp -l build-v4/seg-0*.* build-v5/` — el `*.*` arrastra los `seg-0N.mp4` **y**
+  sus `seg-0N.sha`; sin las huellas el script considera la caché inválida y re-codifica todo. La
+  huella cubre `L`, `tpad`, grade, push-in y `size`+`mtime_ns` del mp4 de origen: si algo cambió,
+  rehace el segmento en vez de reutilizarlo.
 
 ---
 
