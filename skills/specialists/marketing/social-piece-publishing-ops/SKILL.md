@@ -104,7 +104,20 @@ registro):
 3. **Read-back por API** (sección de arriba) y recién entonces reportar, con los permalinks.
 
 Correr estos scripts como el uid del gateway (`hermes`, 10000) desde su vista del repo, no como
-root: root deja artefactos y compite con el gateway por el mismo JSONL.
+root: root deja artefactos y compite con el gateway por el mismo JSONL. La forma que funciona:
+
+```
+su -s /bin/bash hermes -c 'export HOME=/opt/data/home; export PATH=/opt/data/.local/bin:$PATH; <script>'
+```
+
+Sin `HOME` exportado Composio no encuentra su config; sin el `PATH` el shim no está (pitfall 7).
+
+Variante **adelantar el slot** (el Admin libera la noche y las piezas del día ya están aprobadas):
+con backup previo del JSONL (`cp -a calendario-publicacion.jsonl calendario-publicacion.jsonl.bak-<motivo>`),
+mover el campo `slot` de las filas a la hora real y correr el wrapper de inmediato — el wrapper y
+el cron consumen lo que diga el `slot`, no la hora original, y la guardia anti-duplicado queda
+intacta. El XLSX de Drive NO hace falta tocarlo: el sync aplica en sentido XLSX→JSONL y el estado
+nunca retrocede (aprobado sigue aprobado, cero divergencias).
 
 ## Ventanas de publicación (asimetría real — no documentarla mal)
 
@@ -152,6 +165,31 @@ El Admin encarga por frases cortas sin contexto y a veces en otro canal/día. Pr
    stories" → vacío). Para confirmar que un slug existe, `ls <HERMES_HOME>/.composio/tool_definitions/`
    o `composio tools list <toolkit>`. Y leer el schema antes de ejecutar: los tools de solo-lectura
    también exigen parámetros (`page_id`, `ig_user_id`) — el error de validación dice cuál falta.
+9. **`media_ids.facebook` del JSONL ≠ id del post real (BUG CORREGIDO 13-nov-2026):** el publicador
+   guardaba el photo id de `FACEBOOK_CREATE_PHOTO_POST` en vez del `post_id` (mismatch recurrente,
+   un dígito distinto en el sufijo). Corregido en `planning/calendario-nov2026/publish.py`
+   (`_fb_candidate_id` prefiere `post_id`; `_fb_confirm_id` solo consulta la página cuando NO hay
+   `post_id` y nunca sustituye un `post_id` autoritativo). Para el histórico: `fix_fb_media_ids.py
+   --dry-run|--apply` (match único ±10 min contra `publicado_en`, fallback por proximidad anclado en
+   `slot` solo si falta `publicado_en`). Regla vigente: si aparece una fila con id que no empata con
+   el read-back, correr el backfill en dry-run antes de tocar nada; las copias `calendario-sep2026`
+   y `oct2026` siguen con el bug (no activas).
+10. **Reescribir un JSONL que otro proceso lee con `mkstemp` + `os.replace` cambia dueño y modo:**
+   `mkstemp` crea 0600 y `os.replace` cambia el inodo. Si el script corre como root, el calendario
+   queda `root:root 0600` y el publicador (uid 10000 `hermes`) deja de poder leerlo, escribirlo y
+   hacer `git pull` — incidente ya visto con `posts.jsonl` (27-sep-2026). Patrón obligatorio: tomar
+   `os.stat(path)`, `os.chown(tmp, uid, gid)` cuando `euid == 0`, `os.chmod(tmp, S_IMODE)` **después**
+   del chown, y solo entonces `os.replace`. Verificar tras escribir con `ls -l` que siga `hermes:hermes 644`.
+11. **`publish._to_portal()` devuelve `{str: url}`, no `{Path: url}`:** imprimir `p.name` sobre esas
+   claves lanza `AttributeError: 'str' object has no attribute 'name'` justo DESPUÉS de haber
+   descargado y subido los assets, así que el preflight se repite entero (30 MB y minutos) por un
+   `print`. Leer en el código la forma del retorno antes de consumirla — aquí es un `dict` cuyas
+   claves son rutas en texto — y usar `Path(k).name` al imprimir.
+12. **Los copys y hashtags del informe se extraen del JSONL, no se teclean de memoria:** en el
+   informe de programación del 14-nov-2026 se escribió `#JuegosResponsable` cuando la fila tenía
+   `#JuegoResponsable`. El dato programado era correcto, pero el informe quedó inconsistente y
+   obligó a una corrección visible. Imprimir la fila tal cual (`json.loads` → los campos `copy`,
+   `hashtags_ig`, `hashtags_fb`) y pegar esa salida; nunca reescribir la lista a mano.
 
 ## Soporte
 
