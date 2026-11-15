@@ -1,7 +1,6 @@
 ---
 name: sdlc-review
-description: "Use when reviewing a Kanban handoff and verdicting."
-tags: [kanban, review, verificacion, calidad, handoff, sdlc]
+description: Review Kanban handoffs and route verified outcomes.
 version: 1.1.0
 author: Jakub Wolniewicz (@frizikk) + Hermes Agent
 license: MIT

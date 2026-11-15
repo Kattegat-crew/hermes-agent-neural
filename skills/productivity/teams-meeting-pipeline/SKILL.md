@@ -1,7 +1,6 @@
 ---
 name: teams-meeting-pipeline
-description: "Use when Teams meeting summaries or Graph fail."
-tags: [teams, msgraph, reuniones, webhooks, transcripcion, cron]
+description: Teams meeting summaries, job replay, Graph subscriptions.
 version: 1.1.0
 author: Hermes Agent + Teknium
 license: MIT
