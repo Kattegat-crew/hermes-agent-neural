@@ -1,10 +1,10 @@
 ---
 name: songwriting-and-ai-music
-description: "Use when writing lyrics or a Suno prompt."
+description: "Songwriting craft and Suno AI music prompts."
 version: 1.0.0
 author: Teknium (teknium1), Hermes Agent
 license: MIT
-tags: [canciones, letras, suno, musica, parodia, lyrics, prompting, songwriting]
+tags: [songwriting, music, suno, parody, lyrics, creative]
 platforms: [linux, macos, windows]
 triggers:
   - writing a song
