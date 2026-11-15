@@ -1,4 +1,0 @@
-schema_version: "1.1"
-name: local-nginx-no-trigger
-expected_outcome: |
-  Answers a local development question directly without loading the vps-forge skill or starting a server-hardening workflow.
