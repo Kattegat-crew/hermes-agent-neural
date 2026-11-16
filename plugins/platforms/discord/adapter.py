@@ -1446,6 +1446,7 @@ class DiscordAdapter(DiscordAuthorizationMixin, DiscordMediaMixin, DiscordThread
             self._client = commands.Bot(
                 command_prefix="!",  # Not really used, we handle raw messages
                 intents=intents,
+                status=discord.Status.online if discord else None,
                 allowed_mentions=_build_allowed_mentions(getattr(self.config, "extra", None)),
                 **proxy_kwargs_for_bot(proxy_url),
             )
@@ -1458,6 +1459,11 @@ class DiscordAdapter(DiscordAuthorizationMixin, DiscordMediaMixin, DiscordThread
             @self._client.event
             async def on_ready():
                 logger.info("[%s] Connected as %s", adapter_self.name, adapter_self._client.user)
+                if discord and adapter_self._client is not None:
+                    try:
+                        await adapter_self._client.change_presence(status=discord.Status.online)
+                    except Exception as e:
+                        logger.debug("[%s] Failed to set presence on ready: %s", adapter_self.name, e)
                 await adapter_self._resolve_allowed_usernames()
                 adapter_self._ready_event.set()
                 if adapter_self._post_connect_task and not adapter_self._post_connect_task.done():
