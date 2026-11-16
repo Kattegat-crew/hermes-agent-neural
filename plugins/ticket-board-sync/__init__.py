@@ -4,7 +4,11 @@ Cuando el adapter Discord normaliza un cambio de ``applied_tags`` como
 ``thread_tags_changed`` (#tablero de prioridades), este plugin dispara el motor
 de regeneración que recalcula el tablero desde los tags del foro:
 
-    /opt/hermes-agent/skills/ops/discord-server-ops/scripts/regenerar_tablero.py --publish
+    <skill discord-server-ops>/scripts/regenerar_tablero.py --publish
+
+La ruta del motor sale de ``SCRIPT`` (env ``TICKET_BOARD_SCRIPT`` o el árbol de
+datos del perfil): desde el 15-nov-2026 ``/opt/hermes-agent/skills/`` es solo
+upstream y las skills propias viven en ``/opt/hermes-agent-data/skills/``.
 
 No reimplementa nada: filtra, coalescea la ráfaga y lo corre fuera del loop de
 eventos. El cron diario 06:00 (``tablero-tickets-0600``) queda como red de
@@ -14,6 +18,7 @@ seguridad si este listener no corre.
 from __future__ import annotations
 
 import logging
+import os
 import subprocess
 import threading
 from typing import Any, Optional
@@ -22,13 +27,18 @@ logger = logging.getLogger("hermes.plugins.ticket_board_sync")
 
 FORUM_ID = "1554957746980261938"
 BOARD_CHANNEL_ID = "1569356056176361605"
-SCRIPT = ("/opt/hermes-agent/skills/ops/discord-server-ops/scripts/"
-          "regenerar_tablero.py")
+# Las skills propias viven en el árbol de datos del perfil; `/opt/hermes-agent/skills/`
+# es solo upstream desde el 15-nov-2026 y un update del engine lo puede vaciar.
+DEFAULT_SCRIPT = (
+    "/opt/hermes-agent-data/skills/ops/discord-server-ops/scripts/regenerar_tablero.py"
+)
+SCRIPT = os.environ.get("TICKET_BOARD_SCRIPT") or DEFAULT_SCRIPT
 DEBOUNCE_S = 6.0
 RUN_TIMEOUT_S = 180
 
 _lock = threading.Lock()
 _state: dict[str, Any] = {"pending": 0, "timer": None, "running": False}
+
 
 
 def should_sync(event_type: Optional[str], payload: Optional[dict]) -> bool:
