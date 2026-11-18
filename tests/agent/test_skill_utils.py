@@ -490,3 +490,33 @@ class TestBOMToleranceSiblingSites:
         assert fm is not None
         assert fm.get("name") == "bp"
 
+
+class TestExcludedSkillPathsAndScanner:
+    def test_backup_and_dotdirs_excluded(self, tmp_path):
+        from agent.skill_utils import is_excluded_skill_path, iter_skill_index_files
+
+        assert is_excluded_skill_path(tmp_path / ".backup_pre_consolidation" / "foo" / "SKILL.md")
+        assert is_excluded_skill_path(tmp_path / "foo.rollback-broken" / "SKILL.md")
+        assert is_excluded_skill_path(tmp_path / ".hidden-cache" / "SKILL.md")
+        assert not is_excluded_skill_path(tmp_path / ".hermes" / "skills" / "foo" / "SKILL.md")
+
+        # Scanner ignores backup, dotdirs, and rollback-broken
+        skills_dir = tmp_path / "skills"
+        skills_dir.mkdir()
+        valid = skills_dir / "valid-skill"
+        valid.mkdir()
+        (valid / "SKILL.md").write_text("---\nname: valid\n---\n", encoding="utf-8")
+
+        backup = skills_dir / ".backup_pre_consolidation" / "old-skill"
+        backup.mkdir(parents=True)
+        (backup / "SKILL.md").write_text("---\nname: old\n---\n", encoding="utf-8")
+
+        broken = skills_dir / "broken.rollback-broken"
+        broken.mkdir()
+        (broken / "SKILL.md").write_text("---\nname: broken\n---\n", encoding="utf-8")
+
+        found = list(iter_skill_index_files(skills_dir, "SKILL.md"))
+        assert len(found) == 1
+        assert found[0] == valid / "SKILL.md"
+
+

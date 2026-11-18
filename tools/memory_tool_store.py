@@ -103,13 +103,17 @@ def _split_markdown_sections(entry: str) -> list[tuple[str, str]]:
     sections: list[tuple[str, list[str]]] = []
     current_heading = ""
     current_lines: list[str] = []
+    in_code_block = False
 
     for line in lines:
         stripped = line.strip()
-        if stripped.startswith("#"):
+        if stripped.startswith("```") or stripped.startswith("~~~"):
+            in_code_block = not in_code_block
+
+        if not in_code_block and re.match(r"^#{1,6}\s+\S", stripped):
             if current_lines:
                 sections.append((current_heading, current_lines))
-            current_heading = stripped.lstrip("#").strip()
+            current_heading = re.sub(r"^#{1,6}\s+", "", stripped).strip()
             current_lines = [line]
         else:
             current_lines.append(line)
