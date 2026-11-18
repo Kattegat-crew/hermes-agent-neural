@@ -19,6 +19,8 @@ This directory contains specifications, architectural designs, and implementatio
 | `memoria-dev` | DEV Memory Continuity and Delivery | Approved (spec + design); scoped tasks ready/gated | Codex | `.specs/memoria-dev/` | 2026-10-08 |
 | `fleet-latency-and-routing` | Fleet Latency, Zero-Default-Load Routing & Model Specialization | Completed | Argon / Senior Architect | `.specs/fleet-latency-and-routing/` | 2026-11-03 |
 | `whatsapp-multibubble-and-busy-coalescing` | WhatsApp Multi-Bubble Coalescing, Typing-Presence Extension & Multimodal Busy Redirect/Steer | In Progress | Argon / Senior Architect | `.specs/whatsapp-multibubble-and-busy-coalescing/` | 2026-11-03 |
+| `sdd-governance-unification` | Unified SDD Governance Across `/opt/hermes-agent` & `/opt/hermes-agent-data` (incl. Hermes Self-Editing) | Completed | Antigravity Architect | `.specs/sdd-governance-unification/` | 2026-11-17 |
+| `skills-catalog-and-memory-hygiene` | Local Skills Catalog Hygiene, Discovery Exclusions & `MemoryStore` Heading Fix | Completed | Antigravity (`agy`) | `.specs/skills-catalog-and-memory-hygiene/` | 2026-11-17 |
 
 ---
 

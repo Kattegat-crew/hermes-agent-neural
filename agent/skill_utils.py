@@ -27,6 +27,7 @@ DIST_SWAP_DIR = ".hermes-dist"
 
 EXCLUDED_SKILL_DIRS = frozenset((
     ".git", ".github", ".hub", ".archive", ".curator_backups", ".locks", DIST_SWAP_DIR,
+    ".backup_pre_consolidation",
     ".venv", "venv", "node_modules", "site-packages", "__pycache__",
     ".tox", ".nox", ".pytest_cache", ".mypy_cache", ".ruff_cache",
 ))
@@ -37,9 +38,17 @@ SKILL_SUPPORT_DIRS = frozenset(("references", "templates", "assets", "scripts"))
 
 def is_excluded_skill_path(path, *, root: Optional[Path] = None) -> bool:
     """True if *path* should be skipped by skill scanners (VCS/dependency/cache
-    dirs + support packages). Apply to every SKILL.md from a direct ``rglob``."""
+    dirs + dotdirs + rollback-broken + support packages). Apply to every SKILL.md from a direct ``rglob``."""
     parts = PurePath(str(path)).parts
-    return any(part in EXCLUDED_SKILL_DIRS for part in parts) or is_skill_support_path(path, root=root)
+    return (
+        any(
+            part in EXCLUDED_SKILL_DIRS
+            or (part.startswith(".") and part not in (".hermes", ".agents"))
+            or part.endswith(".rollback-broken")
+            for part in parts
+        )
+        or is_skill_support_path(path, root=root)
+    )
 
 
 def is_skill_support_path(path, *, root: Optional[Path] = None) -> bool:
@@ -894,11 +903,17 @@ def is_skill_description_truncated_for_prompt(frontmatter: dict[str, Any]) -> bo
 
 def iter_skill_index_files(skills_dir: Path, filename: str):
     """Walk skills_dir yielding sorted paths matching *filename*; prunes
-    EXCLUDED_SKILL_DIRS and support dirs of skill roots."""
+    EXCLUDED_SKILL_DIRS, dotdirs, broken rollbacks, and support dirs of skill roots."""
     matches: list[str] = []
     for root, dirs, files in os.walk(str(skills_dir), followlinks=True):
         has_skill_md = "SKILL.md" in files
-        dirs[:] = [d for d in dirs if d not in EXCLUDED_SKILL_DIRS and not (has_skill_md and d in SKILL_SUPPORT_DIRS)]
+        dirs[:] = [
+            d for d in dirs
+            if d not in EXCLUDED_SKILL_DIRS
+            and not (d.startswith(".") and d not in (".hermes", ".agents"))
+            and not d.endswith(".rollback-broken")
+            and not (has_skill_md and d in SKILL_SUPPORT_DIRS)
+        ]
         if filename in files:
             matches.append(os.path.join(root, filename))
     yield from map(Path, sorted(matches))
