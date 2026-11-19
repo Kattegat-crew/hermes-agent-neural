@@ -1,5 +1,12 @@
 # Hermes Project Memory & Session Continuity
 
+## Initiative Record — Code-Level SDD Workspace Gate in `Pre-Lector Cognitivo` (2026-11-18)
+- **Context & Scope**: Implemented `.specs/sdd-workspace-gate/` inside `/opt/hermes-agent-data/plugins/typesafe-skill-router/` so Hermes enforces SDD in Python code across root and all 12 profiles whenever programming/self-editing tasks touch `/opt/<repo>`.
+- **Changes Applied**:
+  1. Step 1 (`pre_llm_call` + `typesafe_router/sdd_gate.py`): Automatically resolves target repos under `/opt/` (including `hermes-agent`, `hermes-agent-data`, `typesafe-skill-router`) on `SKILL_ONLY` / `ENRICHED_TASK` turns, injects `<workspace_governance>` once per session inside the `9,400`-char ceiling, and marks `SddSessionLedger` (`state/sdd-preflight/`). Zero bytes on non-programming turns.
+  2. Step 2 (`pre_tool_call` in `plugin.yaml` + `__init__.py`): Records `read_file` of `AGENTS.md` / `PROJECT_MEMORY.md` and blocks (`{"action": "block"}`) cold `write_file`/`edit_file`/`patch` (incl. V4A) against un-preflighted `/opt/<repo>` targets while exempting routine operational paths (`memories/`, `state/`, `logs/`, `/tmp/`).
+- **Verification**: `63 passed in 0.94s`; `hermes plugins validate` `15/15` (`ok: true`). Pending service reload (`hermes-agent.service`, `hermes-agent-roshi.service`) for live daemon activation.
+
 ## Initiative Record — Unified SDD Governance Across `/opt/hermes-agent` & `/opt/hermes-agent-data` (2026-11-17)
 - **Context & Scope**: Executed `.specs/sdd-governance-unification/` (Option A) to close SDD discovery blind spots for external coding agents and self-editing Hermes daemons across `/opt/hermes-agent`, `/opt/hermes-agent-data`, and `$HERMES_HOME/plugins/`.
 - **Changes Applied**:
