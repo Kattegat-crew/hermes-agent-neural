@@ -19,9 +19,11 @@
 * **Unit Testing**: Every new tool, skill, adapter, or helper must have accompanying tests in `tests/`.
 * **Test Isolation**: Mock external APIs and network requests. Never perform unmocked live calls to third-party providers inside unit tests.
 * **Verification Command**:
-  ```bash
-  pytest tests/<target_module>/ -v
-  ```
+  - For Hermes core changes (`agent/`, `gateway/`, `hermes_cli/`, `tools/`, `tests/`), use the repository test wrapper per `AGENTS.md`:
+    ```bash
+    scripts/run_tests.sh tests/<target_module>/
+    ```
+  - For isolated plugin tests (e.g., `/opt/hermes-agent-data/plugins/*`) or quick single-file checks, run targeted `pytest` with `-p no:cacheprovider`.
 * **Exit Code Guarantee**: Always check and confirm exit code 0 (`$? == 0`) before marking any implementation task as complete.
 
 ### 3. Documentation Integrity
