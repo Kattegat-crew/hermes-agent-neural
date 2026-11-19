@@ -1,12 +1,23 @@
-"""Tests for SDD governance discovery in /opt/hermes-agent and SubdirectoryHintTracker behavior."""
+"""Tests for SDD governance discovery in the core repo and SubdirectoryHintTracker behavior."""
 
 from pathlib import Path
 
 from agent.prompt_builder import build_context_files_prompt
 from agent.subdirectory_hints import SubdirectoryHintTracker
 
+# Derived from this file's location so the test runs from any checkout (CI included):
+# <repo>/tests/agent/test_sdd_governance_discovery.py -> <repo>.
+CORE_ROOT = Path(__file__).resolve().parents[2]
 
-CORE_ROOT = Path("/opt/hermes-agent")
+GOVERNANCE_FILES = (
+    "PROJECT_MEMORY.md",
+    "ARCHITECTURE.md",
+    ".agents/rules/01-sdd-workflow.md",
+    ".agents/rules/02-vps-guardrails.md",
+    ".agents/rules/03-code-standards.md",
+    ".agents/rules/04-memory-and-reuse.md",
+    ".atl/skill-registry.md",
+)
 
 
 def test_core_agents_md_includes_sdd_header_and_respects_size_cap() -> None:
@@ -25,15 +36,7 @@ def test_core_agents_md_includes_sdd_header_and_respects_size_cap() -> None:
     assert "## What Hermes Is" in rendered
     assert "## Contribution rubric" in rendered
 
-    for rel in (
-        "PROJECT_MEMORY.md",
-        "ARCHITECTURE.md",
-        ".agents/rules/01-sdd-workflow.md",
-        ".agents/rules/02-vps-guardrails.md",
-        ".agents/rules/03-code-standards.md",
-        ".agents/rules/04-memory-and-reuse.md",
-        ".atl/skill-registry.md",
-    ):
+    for rel in GOVERNANCE_FILES:
         assert (CORE_ROOT / rel).is_file(), f"Missing core governance file: {CORE_ROOT / rel}"
 
 
@@ -49,12 +52,12 @@ def test_subdirectory_hints_activate_when_cwd_is_not_home(tmp_path: Path, monkey
     (plugin_dir / "AGENTS.md").write_text("# Pre-Lector Cognitivo\n", encoding="utf-8")
     (plugin_dir / "__init__.py").write_text("# plugin\n", encoding="utf-8")
 
+    # Observable behavior: a home-like cwd suppresses hint discovery entirely.
     home_tracker = SubdirectoryHintTracker(str(fake_home))
-    assert home_tracker._home_is_working_dir is True
+    assert home_tracker.check_tool_call("read_file", {"path": str(plugin_dir / "__init__.py")}) is None
 
+    # A real project workspace injects the subdirectory's AGENTS.md once.
     root_tracker = SubdirectoryHintTracker(str(data_root))
-    assert root_tracker._home_is_working_dir is False
-
     hint = root_tracker.check_tool_call("read_file", {"path": str(plugin_dir / "__init__.py")})
     assert hint is not None
     assert "Pre-Lector Cognitivo" in hint
