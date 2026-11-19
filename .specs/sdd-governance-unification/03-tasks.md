@@ -21,7 +21,7 @@
   - *Verification*: Read-only check of `_truncate_content` limit in `agent/prompt_builder.py`.
 - [x] **Task 1.2**: Add a governance verification test (`tests/agent/test_sdd_governance_discovery.py` or standalone test) asserting `build_context_files_prompt` loads SDD headers for both `/opt/hermes-agent` and `/opt/hermes-agent-data`, and `SubdirectoryHintTracker("/opt/hermes-agent-data")` activates subdirectory hints for `plugins/typesafe-skill-router/`.
   - *Skill*: `/opt/hermes-agent/.skills/python-testing-patterns/SKILL.md`
-  - *Verification*: `/usr/local/bin/pytest -p no:cacheprovider tests/agent/test_sdd_governance_discovery.py -v` (2 passed) & `/opt/hermes-agent-data/scripts/tests/test_sdd_governance.py` (3 passed).
+  - *Verification*: `scripts/run_tests.sh tests/agent/test_sdd_governance_discovery.py` (2 passed) & `/opt/hermes-agent-data/scripts/tests/test_sdd_governance.py` (3 passed). El wrapper del repo es la vía canónica; el carve-out de `pytest` directo para un archivo suelto queda documentado en `.agents/rules/03-code-standards.md`.
 
 ### Phase 2: `/opt/hermes-agent` SDD Alignment (Option A)
 - [x] **Task 2.1**: Prepend the compact NCL SDD Governance & Repo Boundary header to `/opt/hermes-agent/AGENTS.md` preserving all Nous rules below.
