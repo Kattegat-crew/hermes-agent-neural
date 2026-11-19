@@ -43,3 +43,18 @@
 ### Phase 4: Final Verification & Handover
 - [x] **Task 4.1**: Verify `hermes:hermes` ownership on all touched files, run governance tests, update `PROJECT_MEMORY.md` in both repos, save to Engram, and mark `.specs/README.md` as `Completed`.
   - *Verification*: `find ... -user root` returned empty; `test_sdd_governance_discovery.py` (`2 passed`) and `test_sdd_governance.py` (`3 passed`).
+
+---
+
+## Evidence Map (cross-repo)
+
+`Status: Completed` covers both trees. The parts that cannot be reproduced from a checkout of `/opt/hermes-agent` alone are listed here so a reviewer can re-run them on the host:
+
+| Claim | Where the evidence lives | Command |
+|---|---|---|
+| Data-tree governance docs exist | `/opt/hermes-agent-data/{AGENTS.md,ARCHITECTURE.md,PROJECT_MEMORY.md,.agents/rules/01..04,.specs/README.md}` | `ls -l` those paths |
+| Data-tree discovery test passes | `/opt/hermes-agent-data/scripts/tests/test_sdd_governance.py` (3 tests) | `cd /opt/hermes-agent-data/scripts && /opt/hermes-agent/.venv/bin/pytest tests/test_sdd_governance.py -q` |
+| `terminal.cwd` no longer home-anchored | `config.yaml` + `profiles/default/config.yaml` | `grep -n "cwd" /opt/hermes-agent-data/config.yaml` |
+| `AGENTS.md` size cap | `scripts/ci/check_agents_md_size.py` | `python3 scripts/ci/check_agents_md_size.py` |
+
+Items 2–4 require the runtime tree; the reviewer of the core PR only needs item 1 plus the in-tree test to validate the core half.

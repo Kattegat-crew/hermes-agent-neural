@@ -16,7 +16,7 @@
 ## 2. Core Invariants
 1. **Prompt Caching (KV-Cache)**: System prompt stays byte-stable per conversation; per-turn dynamic context (`pre_llm_call`) injects strictly into the user turn (`agent/turn_context.py`).
 2. **Narrow Waist**: Keep `agent/` minimal; extend via `$HERMES_HOME/plugins/`, skills, or service-gated tools.
-3. **Context File Precedence**: `prompt_builder.py` checks `HERMES.md` -> `AGENTS.override.md` -> `AGENTS.md` -> `CLAUDE.md` -> `.cursorrules` per directory up to nearest `.git`. `SubdirectoryHintTracker` disables automatically if `working_dir == Path.home()`.
+3. **Context File Precedence**: `.hermes.md` / `HERMES.md` wins when present (nearest match walking up to the git root). Then the AGENTS chain runs git root → cwd, each directory contributing the first **non-empty** of `AGENTS.override.md` → `AGENTS.md` → `agents.md`. `CLAUDE.md` / `claude.md` are cwd-only (first non-empty) and `.cursorrules` plus `.cursor/rules/*.mdc` are cwd-only and concatenated. `SubdirectoryHintTracker` disables itself while the working dir is home-like — `Path.home()`, a container home (`/home`, `/root`, `/workspace`), a child of one, or any path whose parts include `.home` / `host-home` / `host_home` — so a Desktop/container fallback cwd cannot vacuously pull every `AGENTS.md` under the user's home.
 
 ---
 
