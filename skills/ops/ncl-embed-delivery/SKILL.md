@@ -4,10 +4,11 @@ description: "Cron a Discord: embed canónico ncl-embed/1."
 version: 1.0.0
 author: Ragnar (NeuralCrew Labs)
 license: proprietary
+platforms: [linux]
 metadata:
   hermes:
     tags: [discord, embed, cron, delivery, formato]
-    related_skills: [discord-server-ops, hermes-agent]
+    related_skills: [hermes-agent]
 ---
 
 # Entregas de cron a Discord con embed canónico
@@ -26,7 +27,18 @@ web/mobile»), así que el embed se publica por REST del bot, no por el gateway.
 ## Helper
 
 `/opt/hermes-agent-data/scripts/ncl_embed.py` — contrato `ncl-embed/1`.
-Tests: `/opt/hermes-agent-data/scripts/tests/test_ncl_embed.py`.
+Tests: `skills/ops/ncl-embed-delivery/tests/` (helper, runner y regresiones de seguridad de credenciales).
+
+## Redacción de credenciales en la entrega
+
+El texto que llega a un embed se redacta antes de publicarse (`scrub()` en el runner). Dos capas:
+patrones de valor (token de bot, webhooks, `ghp_`, `sk-`, `xox`, `AIza`, `AKIA`) y **regla de línea**:
+si una línea menciona una clave sensible —`token`, `secret`, `password`, `pass`, `pwd`, `pw`, `key`,
+`apikey`, `passphrase`, `credential`, `contraseña`, `clave`, `secreto`— se redacta la línea **entera**
+y también la siguiente, porque el valor puede estar en cualquier parte.
+
+Sobre-redactar es deliberado: el embed acaba en un canal del guild. Una credencial opaca sin clave ni
+etiqueta adyacente no es detectable; no prometas lo contrario.
 
 ## Paleta y formato canónico
 
@@ -80,6 +92,34 @@ embed = embed_from_spec({
 post_embed("1567216974113542184", embed)
 print(f"diagnóstico: {n} pedidos, {fallos} fallos")  # ya no es la entrega
 ```
+
+## Runner para jobs `--no-agent` (recomendado)
+
+No reescribas el script original: envuélvelo. `ncl_cron_embed.py` ejecuta el comando, mide duración,
+detecta el estado y publica el embed. El stdout deja de ser la entrega.
+
+```json
+"script": "embed_<job>.sh", "deliver": "local", "no_agent": true
+```
+
+```bash
+#!/bin/bash
+exec /usr/bin/python3 /opt/hermes-agent-data/scripts/ncl_cron_embed.py \
+  --job "mi-job" --channel "1567587946373062667" \
+  --title "Módulo · mi-job — $(TZ=America/Bogota date '+%d %b %H:%M')" \
+  --footer "NeuralCrew Labs · Módulo" --timeout 600 \
+  --run "/opt/hermes-agent-data/scripts/mi_script_original.sh"
+```
+
+- **Silencio por defecto**: sin stdout, sin stderr y exit 0 → no publica. Usa `--always` solo si el
+  cron debe hablar todos los días aunque no haya novedad.
+- **exit != 0** → embed rojo con el stderr recortado. El exit se propaga para que el scheduler lo marque.
+- **exit 0 con stderr** → ámbar (ejecutó, pero avisó de algo).
+- `--timeout` corta el proceso y publica `exit 124`.
+- Los `script` de cron NO admiten argumentos: por eso cada job necesita su `.sh` de una línea.
+  Los `.sh` deben ser **archivos reales** dentro de `/opt/hermes-agent-data/scripts/`; un symlink que
+  apunte fuera se rechaza con *"Script path escapes the scripts directory via traversal"*.
+- `deliver` debe pasar a `local` en el job, o el gateway publicará además el stdout del wrapper.
 
 ## Reglas duras
 
