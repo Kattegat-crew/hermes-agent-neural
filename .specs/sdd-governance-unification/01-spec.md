@@ -77,7 +77,7 @@
 ---
 
 ## 6. Applicable Project Skills
-- [ ] `/opt/hermes-agent/.skills/hermes-agent/SKILL.md`
-- [ ] `/opt/hermes-agent/.skills/codebase-inspection/SKILL.md`
-- [ ] `/opt/hermes-agent/.skills/code-review-and-quality/SKILL.md`
-- [ ] `/opt/hermes-agent/.skills/python-testing-patterns/SKILL.md`
+- [x] `/opt/hermes-agent/.skills/hermes-agent/SKILL.md`
+- [x] `/opt/hermes-agent/.skills/codebase-inspection/SKILL.md`
+- [x] `/opt/hermes-agent/.skills/code-review-and-quality/SKILL.md`
+- [x] `/opt/hermes-agent/.skills/python-testing-patterns/SKILL.md`

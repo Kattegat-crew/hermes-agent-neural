@@ -26,7 +26,7 @@ flowchart TD
 
 ### A. `/opt/hermes-agent` (Core Repo)
 1. **`/opt/hermes-agent/AGENTS.md` (Option A Header Block)**:
-   * Prepend a compact (~25 lines) `## NeuralCrew Labs — SDD Governance & Repo Boundary` block at line 1, keeping the total file well below `12,000` chars (currently `11,450` chars -> keep total `~13k` or trim redundant whitespace if needed, noting `prompt_builder.py` default per-file cap; let's check `_truncate_content` limit before Phase 4 so nothing gets truncated!).
+   * Prepend a compact (~25 lines) `## NeuralCrew Labs — SDD Governance & Repo Boundary` block at line 1, keeping the total file below `12,000` chars (verified final size: **`11,943` bytes** <= `12,000`, enforced by `scripts/ci/check_agents_md_size.py`; `_truncate_content`'s per-file cap in `agent/prompt_builder.py` is far above that, so nothing downstream is truncated).
    * Explicitly mandate:
      1. Pre-flight read of `PROJECT_MEMORY.md`, `ARCHITECTURE.md`, `.agents/rules/01-sdd-workflow.md`..`04-memory-and-reuse.md`, `.atl/skill-registry.md`, and active `.specs/`.
      2. 4-phase SDD gate before non-trivial code changes.
