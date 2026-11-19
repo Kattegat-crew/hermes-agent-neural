@@ -19,6 +19,7 @@ This directory contains specifications, architectural designs, and implementatio
 | `memoria-dev` | DEV Memory Continuity and Delivery | Approved (spec + design); scoped tasks ready/gated | Codex | `.specs/memoria-dev/` | 2026-10-08 |
 | `fleet-latency-and-routing` | Fleet Latency, Zero-Default-Load Routing & Model Specialization | Completed | Argon / Senior Architect | `.specs/fleet-latency-and-routing/` | 2026-11-03 |
 | `whatsapp-multibubble-and-busy-coalescing` | WhatsApp Multi-Bubble Coalescing, Typing-Presence Extension & Multimodal Busy Redirect/Steer | In Progress | Argon / Senior Architect | `.specs/whatsapp-multibubble-and-busy-coalescing/` | 2026-11-03 |
+| `killguard-sigterm` | HERMES-KILLGUARD — identity-checked process signalling (fix de SIGTERM -15 por PID reciclado) | Completed (verificado pre-merge; PR pendiente) | Ragnar | `.specs/killguard-sigterm/` | 2026-11-14 |
 
 ---
 
