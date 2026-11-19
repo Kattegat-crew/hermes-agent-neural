@@ -1,7 +1,6 @@
 ---
 name: maps
-description: "Use when geocoding, POIs, routes, distances, timezones"
-tags: [maps, geocoding, pois, rutas, osm, nominatim, osrm, ubicacion]
+description: "Geocode, POIs, routes, timezones via OpenStreetMap/OSRM."
 version: 1.2.0
 author: Mibayy
 license: MIT

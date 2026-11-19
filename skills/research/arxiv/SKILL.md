@@ -1,7 +1,6 @@
 ---
 name: arxiv
-description: "Use when searching arXiv papers or their citation data"
-tags: [arxiv, papers, investigacion, academico, citas, semantic-scholar, bibtex]
+description: "Search arXiv papers by keyword, author, category, or ID."
 version: 1.0.0
 author: Hermes Agent
 license: MIT

@@ -1,7 +1,6 @@
 ---
 name: competitor-news-monitor
-description: "Use when monitoring named competitors for material news."
-tags: [competencia, noticias, monitoreo, cron, digest, inteligencia]
+description: "Watch named companies for material news; cited digests."
 version: 0.1.0
 author: Ben Barclay (benbarclay), Hermes Agent
 license: MIT

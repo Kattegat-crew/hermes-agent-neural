@@ -1,7 +1,6 @@
 ---
 name: architecture-diagram
-description: "Use when drawing a dark SVG architecture diagram."
-tags: [arquitectura, diagramas, svg, html, infraestructura, cloud, dark, architecture]
+description: "Dark-themed SVG architecture/cloud/infra diagrams as HTML."
 version: 1.0.0
 author: Cocoon AI (hello@cocoon-ai.com), ported by Hermes Agent
 license: MIT

@@ -1172,4 +1172,25 @@ class TestOnDemandCompactMemoryIndex:
         assert "Golden Game" not in res_hyphen["matches"][0]["content"]
 
 
+def test_split_markdown_sections_ignores_code_blocks_and_tags():
+    from tools.memory_tool_store import _split_markdown_sections
+
+    content = """# Section 1
+This is text with #hashtag and #tag inside.
+
+```python
+# This is a comment inside code
+def foo():
+    return 1
+```
+
+## Section 2
+Final text.
+"""
+    sections = _split_markdown_sections(content)
+    headings = [h for h, _ in sections]
+    assert headings == ["Section 1", "Section 2"]
+
+
+
 
