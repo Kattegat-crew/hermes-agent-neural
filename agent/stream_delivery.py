@@ -11,9 +11,106 @@ from typing import Any, Dict, List
 from agent.memory_context import sanitize_context
 from agent.message_content import flatten_message_text
 from agent.history_commentary import COMMENTARY_WITHHELD, commentary_items, visible_commentary
+from agent.dsml_guard import _LEAK_START_RE
 
 # Same logger name as the origin module so log records / caplog filters are unchanged.
 logger = logging.getLogger("run_agent")
+
+# The delivery layer must recognise exactly what the turn-final guard will recover
+# (``agent/dsml_guard.py``), otherwise it either shows markup or swallows a real reply. The
+# guard's own opener regex is the single source of truth; these are its terminals.
+_DSML_PIPES = "|｜"
+# Ordered most-specific-first; "inv" mirrors the guard's ``inv(?:ok\w*)?`` so a leak truncated
+# mid-keyword (``<||DSML||inv name="…">``) is still recognised as a block.
+_DSML_KEYWORDS = ("invoke", "calls", "tool_calls", "toolcalls", "inv")
+# A marker prefix is short by construction; this bound only keeps a future grammar change from
+# holding a whole reply hostage.
+_DSML_STREAM_HOLD_MAX = 4096
+
+
+def _consume_marker_word(rest: str, word: str) -> tuple[str | None, str]:
+    """Advance over ``word`` at the head of ``rest``: ('ok', remainder) when it is spelled out,
+    ('partial', '') while ``rest`` may still grow into it, (None, '') when it cannot.
+
+    Case-sensitive on purpose: ``_LEAK_START_RE`` is, and the delivery layer must never hold text
+    the guard would not recover (``<||dsml||invoke`` is shown, exactly as it is today).
+    """
+    if rest.startswith(word):
+        return "ok", rest[len(word):]
+    if word.startswith(rest):
+        return "partial", ""
+    return None, ""
+
+
+def _dsml_marker_state(text: str) -> str | None:
+    """Classify a response opening against the guard's leak grammar.
+
+    ``"partial"`` — may still grow into a marker (hold, emit nothing).
+    ``"complete"`` — a DSML opener (marker + invocation keyword, what ``_LEAK_START_RE``
+    matches) is spelled out: it is a leaked block, hold it to the response boundary.
+    ``None`` — cannot be a marker any more (a genuine divergence: release and pass through).
+
+    Whitespace between tokens is tolerated, pipes may be ASCII or fullwidth, 1 or 2 per side,
+    and the invocation keyword may be truncated — the dominant production leak is truncated
+    mid-token, so ``<||DSML||inv`` must already count as a block.
+    """
+    s = text
+    i = 0
+    while i < len(s) and s[i].isspace():
+        i += 1
+    if i == len(s):
+        return "partial" if s else None  # whitespace only: the marker may still start
+    if s[i] != "<":
+        return None
+    i += 1
+    while i < len(s) and s[i].isspace():
+        i += 1
+    if s[i:] and s[i] not in _DSML_PIPES:
+        state, rest = _consume_marker_word(s[i:], "toolcalls")
+        if state == "partial":
+            return "partial"
+        if state is None:
+            return None
+        rest = rest.lstrip()
+        if not rest:
+            return "partial"
+        return "complete" if rest.startswith(">") else None
+    pipes = 0
+    while i < len(s) and s[i] in _DSML_PIPES:
+        pipes += 1
+        i += 1
+        if pipes == 2:
+            break
+    if i < len(s) and s[i] in _DSML_PIPES:
+        return None  # three pipes is not a marker
+    while i < len(s) and s[i].isspace():
+        i += 1
+    state, rest = _consume_marker_word(s[i:], "DSML")
+    if state != "ok":
+        return state  # 'partial' while DSML is incomplete, None when the text cannot be one
+    i = 0
+    while i < len(rest) and rest[i].isspace():
+        i += 1
+    pipes = 0
+    while i < len(rest) and rest[i] in _DSML_PIPES:
+        pipes += 1
+        i += 1
+        if pipes == 2:
+            break
+    if i < len(rest) and rest[i] in _DSML_PIPES:
+        return None
+    if pipes == 0:
+        return "partial" if i == len(rest) else None
+    while i < len(rest) and rest[i].isspace():
+        i += 1
+    rest = rest[i:]
+    if not rest:
+        return "partial"
+    for word in _DSML_KEYWORDS:
+        state, _ = _consume_marker_word(rest, word)
+        if state in ("ok", "partial"):
+            return "complete" if state == "ok" else "partial"
+    return None
 
 
 def withhold_held_row(agent: Any, assistant_msg: dict[str, Any]) -> dict[str, Any]:
@@ -59,13 +156,134 @@ class StreamDeliveryMixin:
         except Exception:
             return False
 
-    def _deliver_to_stream_callbacks(self, text: str) -> bool:
+    def _deliver_to_stream_callbacks(self, text: str | None) -> bool:
         """Send ``text`` to the display + TTS delta callbacks; True if at least one accepted it.
-        Nothing leaves while a ``hold_stream`` plugin holds this turn's reply (``_hold_stream``)."""
+        Nothing leaves while a ``hold_stream`` plugin holds this turn's reply (``_hold_stream``),
+        and a response that opens like DSML markup is withheld by the prefix buffer."""
         if getattr(self, "_hold_stream", False):
             return False
+        if isinstance(text, str):
+            text = self._buffer_dsml_stream_prefix(text)
+            if not text:
+                return False
+        return self._emit_stream_text(text)
+
+    def _emit_stream_text(self, text: str | None) -> bool:
+        """Hand ``text`` straight to the display + TTS delta callbacks (no prefix buffering)."""
         results = [self._call_quietly(cb, text) for cb in (self.stream_delta_callback, self._stream_callback)]
         return any(results)
+
+    def _release_stream_text(self, text: str, *, display_only: bool = False, record: bool = True) -> bool:
+        """Emit text that was withheld by the DSML buffer: fence, callbacks, plugin hook, record.
+
+        A boundary release is a real delta for every consumer, so it goes through the same
+        single-writer fence and ``on_stream_delta`` hook as a live delta. ``display_only`` keeps
+        a suppressed-content release off the TTS sink it never belonged to.
+        """
+        if self._stream_writer_superseded():
+            self._note_dropped_stream_writer("_release_stream_text")
+            return False
+        if display_only:
+            delivered = bool(self._call_quietly(getattr(self, "stream_delta_callback", None), text))
+        else:
+            delivered = self._emit_stream_text(text)
+        self._enqueue_stream_hook("on_stream_delta", delta=text, kind="text")
+        if delivered and record:
+            self._record_streamed_assistant_text(text)
+        return delivered
+
+    def _buffer_dsml_stream_prefix(self, text: str, *, display_only: bool = False) -> str:
+        """Withhold a response that opens like DSML markup; return what may be emitted now.
+
+        The turn-final guard (``agent/dsml_guard.py``) needs the whole block, so a streaming
+        client used to receive the raw markup token by token. Only the START of a response is a
+        candidate — a marker mid-prose is ordinary text. Once the buffer is a marker without a
+        divergence it keeps holding to the response boundary (``_close_dsml_stream_buffer``); a
+        response that diverges before completing a marker is released exactly once, in order, and
+        then passes straight through. A block that is already ``complete`` is never released early
+        — however large — because the guard can only recover what it receives whole.
+
+        ``""`` means this delta may not be shown yet.
+        """
+        if not isinstance(text, str) or not text:
+            return text
+        if getattr(self, "_hold_stream", False):
+            return ""
+        if getattr(self, "_dsml_stream_passthrough", False):
+            return text
+        held = getattr(self, "_dsml_stream_buffer", "")
+        buffer = held + text
+        state = _dsml_marker_state(buffer)
+        # The cap only guards a PARTIAL opening that never resolves (a future grammar change);
+        # a complete block is what the guard recovers, so size must not turn it into a leak.
+        if state == "complete" or (state == "partial" and len(buffer) <= _DSML_STREAM_HOLD_MAX):
+            self._dsml_stream_buffer = buffer
+            self._dsml_stream_display_only = display_only or bool(
+                getattr(self, "_dsml_stream_display_only", False) and held
+            )
+            return ""
+        self._dsml_stream_buffer = ""
+        self._dsml_stream_display_only = False
+        if state == "partial":
+            # Only the latency cap can land here: the opening still looks like a marker but never
+            # resolved. Release what was held and keep probing the deltas that follow — flipping
+            # the whole response to passthrough would let a marker right after the runaway run
+            # reach the client raw, which is exactly the leak this buffer exists to stop.
+            self._note_dsml_stream_held("released by cap", buffer)
+            return buffer
+        self._dsml_stream_passthrough = True
+        if held:
+            # A benign prefix ('<', '\n<') that turned out not to be a marker: not a hold.
+            logger.debug("HERMES-DSML-GUARD: benign stream prefix released (prefix=%r)", held)
+        return buffer
+
+    def _note_dsml_stream_held(self, why: str, buffer: str) -> None:
+        self._dsml_stream_held = int(getattr(self, "_dsml_stream_held", 0) or 0) + 1
+        logger.info(
+            "HERMES-DSML-GUARD: stream buffered (%s, prefix=%r, bytes=%d, model=%s, provider=%s, total holds=%d)",
+            why, buffer[:24], len(buffer.encode("utf-8", "replace")),
+            getattr(self, "model", "") or "", getattr(self, "provider", "") or "",
+            self._dsml_stream_held,
+        )
+
+    def _close_dsml_stream_buffer(self) -> None:
+        """Response boundary: drop a leaked block, release a harmless partial opening.
+
+        Only a buffer that the guard itself would recover (``_LEAK_START_RE``: marker plus an
+        invocation keyword) is discarded — a reply that legitimately opens by mentioning a
+        marker, or that simply ends on ``<``, is ordinary text and must be shown.
+        """
+        buffer = getattr(self, "_dsml_stream_buffer", "")
+        display_only = bool(getattr(self, "_dsml_stream_display_only", False))
+        self._dsml_stream_buffer = ""
+        self._dsml_stream_display_only = False
+        self._dsml_stream_passthrough = False
+        if not buffer:
+            return
+        if _LEAK_START_RE.match(buffer.lstrip()):
+            self._note_dsml_stream_held("discarded at close", buffer)
+            # The deferred paragraph break belonged to a block nobody will ever see.
+            self._stream_needs_break = False
+            return
+        if getattr(self, "_hold_stream", False):
+            return
+        # A pending paragraph break belongs to the delta that finally reaches the client; the
+        # boundary release is that delta, so it must not land bare right after a tool round.
+        if getattr(self, "_stream_needs_break", False) and buffer.strip():
+            self._stream_needs_break = False
+            buffer = "\n\n" + buffer
+        self._release_stream_text(buffer, display_only=display_only)
+
+    def _reset_dsml_stream_state(self) -> None:
+        """Clear the per-response prefix-buffer state at the top of a turn.
+
+        The buffer belongs to one model response, not to the session: a delivery path that never
+        reaches ``_reset_stream_delivery_tracking`` (codex app-server) would otherwise inherit a
+        stale buffer or passthrough flag and either withhold a clean reply or leak the next block.
+        """
+        self._dsml_stream_buffer = ""
+        self._dsml_stream_passthrough = False
+        self._dsml_stream_display_only = False
 
     def _enqueue_stream_hook(self, event: str, *, label: str | None = None, **fields: Any) -> None:
         """Best-effort plugin stream hook enqueue; never raises into the stream path."""
@@ -110,6 +328,10 @@ class StreamDeliveryMixin:
             deliver(ctx_scrubber.feed(think_tail) if think_tail and ctx_scrubber is not None else think_tail)
         if ctx_scrubber is not None:
             deliver(ctx_scrubber.flush())
+        # The DSML prefix buffer closes LAST: the scrubber tails above run through
+        # ``_deliver_to_stream_callbacks`` and may legitimately add to the buffer (a trailing
+        # '<' the think scrubber held), so the boundary must cover them too.
+        self._close_dsml_stream_buffer()
         self._current_streamed_assistant_text = ""
 
     @property
@@ -327,6 +549,10 @@ class StreamDeliveryMixin:
         self._enqueue_stream_hook("on_stream_start")
 
     def _emit_stream_end(self, *, final_text: str, finished: bool, error: str | None) -> None:
+        # Response boundary: a reply that ended inside a DSML marker prefix is resolved here —
+        # a leaked block is dropped (the turn-final guard recovers it), ordinary trailing text
+        # is released. ``_reset_stream_delivery_tracking`` closes it too; both are idempotent.
+        self._close_dsml_stream_buffer()
         self._enqueue_stream_hook("on_stream_end", final_text=final_text, finished=finished, error=error)
 
     def _fire_stream_delta(self, text: str) -> None:
@@ -337,11 +563,10 @@ class StreamDeliveryMixin:
             self._note_dropped_stream_writer("_fire_stream_delta")
             return
         # One paragraph break before the first text delta after a tool iteration, without
-        # stacking blank lines across back-to-back tool iterations.
-        prepended_break = bool(getattr(self, "_stream_needs_break", False) and text and text.strip())
-        if prepended_break:
-            self._stream_needs_break = False
-            text = "\n\n" + text
+        # stacking blank lines across back-to-back tool iterations. It is applied to the text
+        # that is actually emitted, never to the DSML prefix probe: a synthetic "\n\n" would
+        # hide the marker and let the raw block through.
+        wants_break = bool(getattr(self, "_stream_needs_break", False) and text and text.strip())
         if isinstance(text, str):
             # Stateful scrubbers: per-delta regex stripping destroyed downstream state machines when a
             # tag was split across deltas; memory-context spans split across chunks must not leak to
@@ -358,11 +583,17 @@ class StreamDeliveryMixin:
             text = scrubber.feed(text) if scrubber is not None else sanitize_context(text)
             # Only strip leading newlines on the first delta — mid-stream "\n" is legitimate markdown.
             # Check the parts list, not the joined property (joining per token copies the whole reply).
-            if not prepended_break and not getattr(self, "_streamed_assistant_text_parts", None):
+            if not wants_break and not getattr(self, "_streamed_assistant_text_parts", None):
                 text = text.lstrip("\n")
         if not text:
             return
-        delivered = self._deliver_to_stream_callbacks(text)
+        text = self._buffer_dsml_stream_prefix(text)
+        if not text:
+            return  # withheld by the DSML prefix buffer; the pending break stays pending
+        if wants_break:
+            self._stream_needs_break = False
+            text = "\n\n" + text
+        delivered = self._emit_stream_text(text)
         self._enqueue_stream_hook("on_stream_delta", delta=text, kind="text")
         if delivered:
             self._record_streamed_assistant_text(text)

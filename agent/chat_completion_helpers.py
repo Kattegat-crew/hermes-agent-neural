@@ -2827,7 +2827,16 @@ class _StreamingCall(StreamingWaitMonitor):
         the delta callback for tag extraction (the CLI drops non-reasoning text
         once the stream box is closed)."""
         if self.agent.stream_delta_callback and not getattr(self.agent, "_hold_stream", False):
-            self._quiet(lambda: (self.agent.stream_delta_callback(text), self.agent._record_streamed_assistant_text(text)))
+            def deliver() -> None:
+                # Same DSML prefix buffer as the ordinary delta path: suppressed-content turns
+                # carry model text too, so they must not be a second leak sink. This route only
+                # ever fed the display callback, so a boundary release stays off TTS as well.
+                shown = self.agent._buffer_dsml_stream_prefix(text, display_only=True)
+                if shown:
+                    self.agent.stream_delta_callback(shown)
+                    self.agent._record_streamed_assistant_text(shown)
+
+            self._quiet(deliver)
 
     def _new_diag(self) -> dict:
         diag = self.agent._stream_diag_init()
