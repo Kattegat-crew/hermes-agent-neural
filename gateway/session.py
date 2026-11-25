@@ -1146,7 +1146,11 @@ class SessionStore(
         Internal bookkeeping must not advance the user-activity clock used by housekeeping
         and restart recovery.
         """
-        return self._update_entry(session_key, lambda e: e.metadata.__setitem__(key, value))
+        return self._update_entry(
+            session_key,
+            lambda e: e.metadata.__setitem__(key, value),
+            fast=True,
+        )
 
     def set_model_override(self, session_key: str, override: Optional[dict[str, Any]]) -> None:
         """Persist (or clear, with ``None``) the /model override; non-secret keys only."""

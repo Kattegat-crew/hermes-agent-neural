@@ -1,5 +1,41 @@
 # Hermes Project Memory & Session Continuity
 
+## Initiative Record — Unified SDD Governance Across `/opt/hermes-agent` & `/opt/hermes-agent-data` (2026-11-17)
+- **Context & Scope**: Executed `.specs/sdd-governance-unification/` (Option A) to close SDD discovery blind spots for external coding agents and self-editing Hermes daemons across `/opt/hermes-agent`, `/opt/hermes-agent-data`, and `$HERMES_HOME/plugins/`.
+- **Changes Applied**:
+  1. `/opt/hermes-agent`: Prepended compact NCL SDD Mandate header to `AGENTS.md` (`11,943` bytes <= `12,000` cap), created `ARCHITECTURE.md`, and reconciled `scripts/run_tests.sh` vs targeted plugin `pytest` in `.agents/rules/03-code-standards.md`.
+  2. `/opt/hermes-agent-data`: Created `PROJECT_MEMORY.md`, `ARCHITECTURE.md`, `.agents/rules/01-sdd-workflow.md`..`04-memory-and-reuse.md`, `.specs/README.md`; updated `AGENTS.md` (skills SSOT `/opt/hermes-agent-data/skills/` + Hermes Self-Editing SDD Gate); deduplicated SDD boilerplate in all 11 `profiles/*/AGENTS.md`; whitelisted SDD artifacts in `.gitignore`.
+  3. **Daemon Hint Reactivation**: Added top-level `terminal.cwd: /opt/hermes-agent-data` (and updated `agent.cwd`) in `config.yaml` and `profiles/default/config.yaml` so `TERMINAL_CWD` no longer resolves to `Path.home()` and `SubdirectoryHintTracker` stays active. *(Service restart for `hermes-agent.service` / `hermes-agent-roshi.service` pending explicit user confirmation.)*
+- **Verification**:
+  - `tests/agent/test_sdd_governance_discovery.py`: `2 passed in 1.70s`.
+  - `/opt/hermes-agent-data/scripts/tests/test_sdd_governance.py`: `3 passed in 0.03s`.
+  - `scripts/ci/check_agents_md_size.py`: `AGENTS.md` and core area chains within caps (only pre-existing `.agents/skills/react-best-practices/AGENTS.md` at `108,212` chars fails).
+  - YAML & `load_config_readonly()` verified; zero root-owned files on touched paths.
+
+## Initiative Record — Local Skills Catalog Hygiene, Discovery Exclusions & Memory Heading Fix (2026-11-17)
+- **Status**: Completed & Verified.
+- **Actions Executed**:
+  1. **Purged Legacy Backup & Rollback Artifacts**:
+     - Permanently deleted `/opt/hermes-agent-data/skills/.backup_pre_consolidation` (108 MB, 975 `SKILL.md` files) and 6 `*.rollback-broken` directories.
+     - Resolved duplicate packages: removed partial `creative/hyperframes*` (preserving root symlinks to `/root/.claude/skills/hyperframes*`), merged `api-key-rotation-verification.md` from `devops/devops-infrastructure` into `core/devops-infrastructure` before pruning, and eliminated redundant duplicates across `web/`, `email/`, `media/`, `note-taking/`, `software-development/`, and `social-media/`.
+  2. **Core Discovery Protection (`agent/skill_utils.py`)**:
+     - Added `.backup_pre_consolidation` to `EXCLUDED_SKILL_DIRS`.
+     - Hardened `iter_skill_index_files()` and `is_excluded_skill_path()` to prune any dotdir (except root `.hermes`/`.agents`) and any directory ending in `.rollback-broken`.
+  3. **MemoryStore ATX Heading Fix (`tools/memory_tool_store.py`)**:
+     - Upgraded `_split_markdown_sections()` to require CommonMark ATX syntax `^#{1,6}\s+\S` and track code fences (` ``` ` / `~~~`), preventing `#tag` lines and Python `# comments` from falsely fragmenting memory entries.
+  4. **Verification & Metric Impact**:
+     - Test suite (`test_skill_utils.py`, `test_skills_tool.py`, `test_memory_tool.py`): **149/149 passed**.
+     - Live catalog: `_skill_catalog(skip_disabled=True)` reduced from 974 phantom entries / 594 shadowed / 189 ambiguous to **397 unique skills, 0 ambiguous, 0 shadowed**.
+     - Verified all permissions remain `hermes:hermes`.
+
+## Initiative Record — Pre-Lector Cognitivo (`typesafe-skill-router`) & Forensic Audit (2026-11-15 / 2026-11-17)
+- **Canonical Name**: **Pre-Lector Cognitivo** (approved 2026-11-17) — refers specifically to our live custom pre-turn selective context architecture implemented in `/opt/hermes-agent-data/plugins/typesafe-skill-router/` (commits `0db271f`..`2a172b6`, 2026-11-15), distinct from `/opt/hermes_focus_plugin` (upstream PR `#153896`, not installed in `/opt/hermes-agent-data`) and from core `MemoryStore.search()` (`tools/memory_tool_store.py`, 2026-11-11).
+- **2026-11-17 Forensic Audit Findings**:
+  - Live log (`/opt/hermes-agent-data/logs/typesafe-skill-router.log`) recorded `62/62` `triage:direct_reply` (~0 ms) in `pre_llm_call` because `typesafe_router/triage.py:199` passed `system_prompt=` to `PluginLlm.complete()` (which does not accept `system_prompt`), raising `TypeError` caught silently and masked by `MagicMock` tests.
+  - Additional gaps identified: dead `ctx.agent` access, reserved config key `model` warning spam, `has_llm` preventing graph fallback on triage errors, Telegram multimodal `list` guard skipping captioned media, missing `conversation_history` forwarding, unenforced `max_context_tokens`, unimplemented `engram.db` probing, and unscoped `state.db` scan.
+  - Companion core finding in `tools/memory_tool_store.py:109`: `_split_markdown_sections()` treats single-line `#` paragraphs (e.g., `#ElevenLabs...`) as Markdown headings, triggering heading-only suppression (line `882`) that drops unheaded body matches.
+  - SDD governance & hardening plan created in `/opt/hermes-agent-data/plugins/typesafe-skill-router/.specs/pre-lector-cognitivo-hardening/`.
+
 ## Initiative Record — Focus Port into Native `MemoryStore` & `typesafe-skill-router` (2026-11-11)
 - **Context & Scope**:
   - Ported the core architectural breakthroughs from `hermes_focus_plugin` (`c34c1fb`) directly into Hermes native on-demand memory and skill routing while preserving 100% session KV-cache stability (`Zero-Default-Load`).

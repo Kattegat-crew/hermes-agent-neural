@@ -149,15 +149,33 @@ class SessionLifecycleMixin:
         """Only explicit suspension replaces a routed conversation; time never does."""
         return "suspended" if entry.suspended else None
 
-    def _update_entry(self, session_key: str, mutate) -> bool:
-        """Apply ``mutate(entry)`` under ``_lock`` and full-save; False when the entry is missing
-        or *mutate* returned False (nothing to persist)."""
+    def _update_entry(self, session_key: str, mutate, *, fast: bool = False) -> bool:
+        """Apply ``mutate(entry)`` under ``_lock`` and persist; False when the entry is missing
+        or *mutate* returned False (nothing to persist).
+
+        ``fast=True`` persists through the single-row UPSERT (``_save_entry``) instead of the
+        full routing-index rewrite. Use it for metadata-only writes: the full rewrite is O(n)
+        rows plus a multi-MB ``sessions.json`` mirror and, running on the gateway event loop,
+        stalls every platform (2026-11-23 outage: 28.8k rows, 10-40 s per inbound message,
+        Discord heartbeat stale + Telegram updates unconsumed). Structural transitions keep the
+        full rewrite as the default.
+        """
         with self._lock:
             entry = self._entry_locked(session_key)
             if entry is None or mutate(entry) is False:
                 return False
-            self._save()
-            return True
+            if not fast:
+                self._save()
+                return True
+            # Persist under the same lock that ordered the mutation: _save_entry assigns the
+            # routing generation when it runs, so releasing _lock first would let a concurrent
+            # scalar write obtain a higher generation with a NEWER snapshot while this older
+            # snapshot overwrites it in state.db (lost update). entry_data also routes the
+            # no-DB/failed-upsert fallback through _entries_as_dicts + _persist_routing_data;
+            # without it the fallback calls _save_entries(), which re-acquires the non-reentrant
+            # _lock held here and deadlocks. Same pattern as update_session.
+            self._save_entry(session_key, entry_data=entry.to_dict(), lock_held=True)
+        return True
 
     def _update_all_entries_locked(self, mutate) -> int:
         """Apply ``mutate(entry) -> bool`` to every entry under ``_lock``; save once if any

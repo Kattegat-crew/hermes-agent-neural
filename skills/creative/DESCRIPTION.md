@@ -1,3 +1,3 @@
 ---
-description: Skills for working with media content — YouTube transcripts, GIF search, music generation, and audio visualization.
+description: Creative content generation — ASCII art, hand-drawn style diagrams, and visual design tools.
 ---

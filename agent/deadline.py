@@ -474,6 +474,18 @@ def kill_process_tree(pid: int, *, sig: Optional[int] = None) -> bool:
     if sig is None:
         sig = _signal.SIGKILL
 
+    # HERMES-KILLGUARD-PID (19-oct-2026): identidad del pid ANTES de señalar. Si el pid
+    # muere y su número se recicla, os.kill(pid) mataría a un proceso ajeno.
+    _kgp = None
+    _pid_stamp = None
+    try:
+        from agent import killguard as _kgp_mod
+        _kgp = _kgp_mod
+        _pid_stamp = _kgp.proc_starttime(pid)
+        _kgp.log_signal("agent.deadline.kill_process_tree.pid", pid, pid, _pid_stamp)
+    except Exception:
+        _kgp = None
+
     with _process_tree_snapshot(int(pid), hard_kill=sig == _signal.SIGKILL) as descendants:
         signalled = False
         # Signal descendants while their ownership ancestry is still observable.
@@ -491,13 +503,36 @@ def kill_process_tree(pid: int, *, sig: Optional[int] = None) -> bool:
             pgid = os.getpgid(pid)
         except (ProcessLookupError, PermissionError, OSError):
             pgid = None
+        # HERMES-KILLGUARD (18-oct-2026): el líder del grupo pudo morir y su PID reciclarse.
+        _kg = None
+        _stamp = None
+        if pgid is not None:
+            try:
+                from agent import killguard as _kgm
+                _kg = _kgm
+                _stamp = _kgm.proc_starttime(pgid)
+                _kgm.log_signal("agent.deadline.kill_process_tree", pid, pgid, _stamp)
+            except Exception:
+                _kg = None
         try:
             if pgid is not None and pgid == pid:
                 # pid leads its own group (the == check avoids signalling the caller's group).
-                os.killpg(pgid, sig)  # windows-footgun: ok — POSIX-only branch (win32 returns above)
+                if _kg is not None and _stamp is not None:
+                    if _kg.safe_killpg(pgid, sig, expected_starttime=_stamp,
+                                       site="agent.deadline.kill_process_tree"):
+                        signalled = True
+                else:
+                    os.killpg(pgid, sig)  # windows-footgun: ok — POSIX-only branch (win32 returns above)
+                    signalled = True
             else:
-                os.kill(pid, sig)
-            signalled = True
+                # HERMES-KILLGUARD-PID: solo si sigue siendo el mismo proceso.
+                if _kgp is not None:
+                    if _kgp.safe_kill(pid, sig, expected_starttime=_pid_stamp,
+                                      site="agent.deadline.kill_process_tree.pid"):
+                        signalled = True
+                else:
+                    os.kill(pid, sig)
+                    signalled = True
         except ProcessLookupError:
             pass
         except (PermissionError, OSError):

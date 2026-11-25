@@ -1,8 +1,7 @@
 ---
 name: codex
-description: "Use when delegating coding to the Codex CLI"
-tags: [codex, openai, coding-agent, cli, delegacion, pr-review, refactor, pty]
-version: 1.0.2
+description: "Delegate coding to OpenAI Codex CLI (features, PRs)."
+version: 1.0.1
 author: Hermes Agent
 license: MIT
 platforms: [linux, macos, windows]
@@ -67,26 +66,6 @@ process(action="submit", session_id="<id>", data="yes")
 # Kill if needed
 process(action="kill", session_id="<id>")
 ```
-
-## Resume an Interrupted Session
-
-If a Codex session was closed by accident (or the SSH/PTY dropped), past
-sessions persist on disk and reopen where they left off:
-
-```
-# most recent session on this machine
-codex resume --last
-
-# by session id
-codex resume <session-uuid>
-```
-
-- Session files: `~/.codex/sessions/YYYY/MM/DD/rollout-<timestamp>-<uuid>.jsonl`
-  — the first JSON line of each file carries the cwd it ran in.
-- Over SSH, rank candidates by mtime: `ls -lt ~/.codex/sessions/*/*/* | head`.
-- Resuming keeps full prior context. A still-running `codex` process on a pts
-  (check `ps aux | grep codex`) is a separate live session — verify before
-  assuming it died.
 
 ## Key Flags
 

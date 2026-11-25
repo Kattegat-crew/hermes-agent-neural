@@ -350,3 +350,6 @@ apps/desktop/.dist-build*
 /fixture/
 /owned/
 /target/
+
+# artefactos de revision: se guardan en brain/ops/, no en el repo
+ops/buzon/.review/

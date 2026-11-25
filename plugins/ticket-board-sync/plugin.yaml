@@ -1,0 +1,8 @@
+name: ticket-board-sync
+version: "1.0.0"
+description: "Regenera el tablero de prioridades del foro de tickets cuando cambia un tag del foro."
+author: "NeuralCrew Labs"
+provides_hooks:
+  - gateway_platform_event
+hooks:
+  - gateway_platform_event

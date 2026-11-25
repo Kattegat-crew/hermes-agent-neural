@@ -1,7 +1,6 @@
 ---
 name: p5js
-description: "Use when building p5.js sketches: art, shaders, 3D"
-tags: [p5js, creative-coding, arte-generativo, shaders, webgl, visualizacion, animacion]
+description: "p5.js sketches: gen art, shaders, interactive, 3D."
 version: 1.0.0
 author: SHL0MS, Hermes Agent
 license: MIT

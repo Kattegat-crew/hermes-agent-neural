@@ -1,5 +1,7 @@
 # Hermes Agent - Development Guide
 
+> **NCL SDD Mandate (Mandatory Pre-Flight):** Before non-trivial edits, read `PROJECT_MEMORY.md`, `ARCHITECTURE.md`, `.agents/rules/01-sdd-workflow.md`..`04-memory-and-reuse.md`, `.atl/skill-registry.md`, and active `.specs/` (`01-spec.md` -> `02-design.md` -> `03-tasks.md` -> Phase 4). Use `.skills/` (15 repo skills) — NEVER bulk-load `skills/`. Runtime state, profiles, and user plugins (e.g. Pre-Lector Cognitivo in `plugins/typesafe-skill-router/`) live in `/opt/hermes-agent-data/`.
+
 For AI coding assistants and developers working on hermes-agent. This root file is a hub: what
 applies everywhere, then a routing table. Each area's `AGENTS.md` loads automatically when you work
 in that directory; read it before editing there. `python scripts/check` caps this file at 12k chars
