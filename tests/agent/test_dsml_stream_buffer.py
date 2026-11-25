@@ -363,6 +363,50 @@ def test_suppressed_route_release_stays_off_tts():
     assert spoken == []
 
 
+def test_cap_release_keeps_probing_instead_of_passthrough(monkeypatch):
+    """A runaway *partial* opening must not turn the rest of the response into passthrough."""
+    monkeypatch.setattr(stream_delivery, "_DSML_STREAM_HOLD_MAX", 20)
+    agent = _Agent()
+    runaway = "<||DSML||" + " " * 40
+    assert _feed(agent, "<||DSML||", " " * 40) == [runaway]
+    # A real block arrives right after the runaway run: it is withheld, never streamed raw.
+    assert _feed(agent, '<||DSML||invoke name="terminal">') == [runaway]
+    agent._close_dsml_stream_buffer()
+    assert agent.shown == [runaway]
+
+
+def test_cap_release_is_accounted_as_a_hold(monkeypatch):
+    """The digest counts recovered blocks *and* capped releases; a silent cap hides a leak."""
+    monkeypatch.setattr(stream_delivery, "_DSML_STREAM_HOLD_MAX", 20)
+    agent = _Agent()
+    _feed(agent, "<||DSML||", " " * 40)
+    assert agent._dsml_stream_held == 1
+
+
+def test_boundary_release_carries_the_pending_paragraph_break():
+    """The release is a real delta: it must not land bare right after a tool round."""
+    agent = _Agent()
+    agent._stream_needs_break = True
+    assert _feed(agent, "<||DSML||") == []
+    agent._close_dsml_stream_buffer()
+    assert agent.shown == ["\n\n<||DSML||"]
+    assert agent._stream_needs_break is False
+
+
+def test_per_turn_reset_clears_a_stale_buffer():
+    """codex app-server never calls the stream reset; the per-turn hook must clear the state."""
+    agent = _Agent()
+    agent._dsml_stream_buffer = "<||DSML||invoke"
+    agent._dsml_stream_passthrough = True
+    agent._dsml_stream_display_only = True
+    agent._reset_dsml_stream_state()
+    assert agent._dsml_stream_buffer == ""
+    assert agent._dsml_stream_passthrough is False
+    assert agent._dsml_stream_display_only is False
+    # A clean reply after the reset streams from its first delta.
+    assert _feed(agent, "Hola") == ["Hola"]
+
+
 # ── end to end: the real agent loop, a real SSE stream ────────────────────────────────
 
 

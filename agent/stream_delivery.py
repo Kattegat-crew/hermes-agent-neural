@@ -224,9 +224,16 @@ class StreamDeliveryMixin:
             return ""
         self._dsml_stream_buffer = ""
         self._dsml_stream_display_only = False
+        if state == "partial":
+            # Only the latency cap can land here: the opening still looks like a marker but never
+            # resolved. Release what was held and keep probing the deltas that follow — flipping
+            # the whole response to passthrough would let a marker right after the runaway run
+            # reach the client raw, which is exactly the leak this buffer exists to stop.
+            self._note_dsml_stream_held("released by cap", buffer)
+            return buffer
         self._dsml_stream_passthrough = True
         if held:
-            # A benign prefix ('<', '\\n<') that turned out not to be a marker: not a hold.
+            # A benign prefix ('<', '\n<') that turned out not to be a marker: not a hold.
             logger.debug("HERMES-DSML-GUARD: benign stream prefix released (prefix=%r)", held)
         return buffer
 
@@ -260,7 +267,23 @@ class StreamDeliveryMixin:
             return
         if getattr(self, "_hold_stream", False):
             return
+        # A pending paragraph break belongs to the delta that finally reaches the client; the
+        # boundary release is that delta, so it must not land bare right after a tool round.
+        if getattr(self, "_stream_needs_break", False) and buffer.strip():
+            self._stream_needs_break = False
+            buffer = "\n\n" + buffer
         self._release_stream_text(buffer, display_only=display_only)
+
+    def _reset_dsml_stream_state(self) -> None:
+        """Clear the per-response prefix-buffer state at the top of a turn.
+
+        The buffer belongs to one model response, not to the session: a delivery path that never
+        reaches ``_reset_stream_delivery_tracking`` (codex app-server) would otherwise inherit a
+        stale buffer or passthrough flag and either withhold a clean reply or leak the next block.
+        """
+        self._dsml_stream_buffer = ""
+        self._dsml_stream_passthrough = False
+        self._dsml_stream_display_only = False
 
     def _enqueue_stream_hook(self, event: str, *, label: str | None = None, **fields: Any) -> None:
         """Best-effort plugin stream hook enqueue; never raises into the stream path."""

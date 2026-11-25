@@ -125,4 +125,25 @@ worktree (bloque de 6 KB retenido y descartado; release con hook y registro; bre
 La ronda 3 queda pendiente de repetir cuando el proveedor vuelva: es el único gate del protocolo
 que no tiene veredicto registrado.
 
+### R3 re-ejecutada (24-nov-2026)
+
+El proveedor `build · big-pickle` no volvió a probarse; la ronda se repitió con un revisor de
+contexto aislado (sin historial de la implementación, read-only, sin poder editar ni commitear),
+declarado como tal y no como el mismo perfil original.
+
+| Ronda | Commit revisado | Veredicto | Resultado |
+|---|---|---|---|
+| R3 | `77f426775d` | APPROVE | 0 blockers, 0 majors, 4 minors |
+
+Minors y su cierre (commit `fix(stream): …` de esta misma tanda):
+
+1. Un `partial` que rebasaba el tope dejaba la respuesta en passthrough para siempre: un bloque
+   justo después de la racha se emitía en crudo. Ahora el tope libera lo retenido, **cuenta la
+   retención** y sigue sondeando.
+2. La liberación en el boundary no llevaba el `"\n\n"` de iteración de tools pendiente.
+3. Ese mismo release por tope no incrementaba el contador de observabilidad (leak invisible al
+   digest diario).
+4. El reset por turno (`turn_context`) no tenía prueba: se extrajo a
+   `StreamDeliveryMixin._reset_dsml_stream_state` y se cubre con test propio.
+
 

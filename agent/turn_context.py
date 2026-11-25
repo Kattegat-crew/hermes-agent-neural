@@ -728,9 +728,9 @@ def _reset_per_turn_agent_state(agent: Any) -> None:
     # DSML prefix buffer state is per response, not per session: a turn that starts on a
     # delivery path which never calls ``_reset_stream_delivery_tracking`` (codex app-server)
     # must not inherit a stale buffer or passthrough flag from the previous one.
-    agent._dsml_stream_buffer = ""
-    agent._dsml_stream_passthrough = False
-    agent._dsml_stream_display_only = False
+    reset_dsml_state = getattr(agent, "_reset_dsml_stream_state", None)
+    if reset_dsml_state is not None:
+        reset_dsml_state()
 
 
 def _stage_turn_user_message(
